@@ -17,6 +17,39 @@ body,
   height: 100%;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Keep forms and wide report tables usable on small phones. */
+input,
+select,
+textarea,
+button {
+  max-width: 100%;
+}
+
+main .overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 639px) {
+  main table {
+    min-width: max-content;
+  }
+
+  /* Recharts calculates from its container; this prevents a clipped chart
+     while Safari is showing/hiding its browser controls. */
+  .recharts-responsive-container {
+    min-width: 0;
+  }
+}
+
 /*
  * Keep every desktop data table consistent.  Most pages previously aligned
  * their headings to the right while their cell values started on the left,

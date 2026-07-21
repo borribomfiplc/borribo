@@ -212,7 +212,7 @@ function App() {
 
   return (
     <div
-      className={`h-screen overflow-hidden flex ${darkMode ? "bg-[#151827] text-white" : "bg-[#F5F6FA]"}`}
+      className={`h-screen h-dvh overflow-hidden flex ${darkMode ? "bg-[#151827] text-white" : "bg-[#F5F6FA]"}`}
       style={{ fontFamily: "'Noto Sans Khmer','Inter',sans-serif" }}
     >
       {/* Mobile overlay backdrop */}
@@ -258,7 +258,7 @@ function App() {
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Topbar */}
-        <header className="h-16 bg-white border-b border-[#EBEDF3] flex items-center gap-2 sm:gap-4 px-3 sm:px-5 shrink-0 z-20">
+        <header className="h-14 sm:h-16 bg-white border-b border-[#EBEDF3] flex items-center gap-1.5 sm:gap-4 px-2.5 sm:px-5 shrink-0 z-20">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             aria-label={sidebarOpen ? "បិទម៉ឺនុយចំហៀង" : "បើកម៉ឺនុយចំហៀង"}
@@ -291,7 +291,7 @@ function App() {
             {branchMenuOpen && <div className="absolute left-0 top-full mt-2 min-w-56 rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-40 overflow-hidden">{branches.map((branch) => <button key={branch.id} onClick={() => { setSelectedBranch(branch.name); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span>{branch.name}</span>{selectedBranch === branch.name && <Check size={16} className="text-[#2A3F8F]" />}</button>)}</div>}
           </div>
 
-          <div className="relative">
+          <div className="relative hidden min-[380px]:block">
             <button
               onClick={() => { setLanguageMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); setProfileMenuOpen(false); }}
               aria-expanded={languageMenuOpen}
@@ -320,7 +320,7 @@ function App() {
 
           <button onClick={() => setDarkMode((v) => !v)} aria-label="ប្តូររចនាប័ទ្មពន្លឺ/ងងឹត" className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0">{darkMode ? <Moon size={18} /> : <Sun size={18} />}</button>
 
-          <div className="relative flex items-center gap-2.5 pl-2 sm:border-l border-[#EBEDF3] shrink-0">
+          <div className="relative flex items-center gap-2 sm:gap-2.5 pl-1.5 sm:pl-2 sm:border-l border-[#EBEDF3] shrink-0">
           <button onClick={() => { setProfileMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); }} aria-expanded={profileMenuOpen} className="flex items-center gap-2.5 text-right">
             <div
               className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
@@ -392,7 +392,7 @@ function App() {
         )}
 
         {/* Content */}
-        <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 lg:p-6">
+        <main className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto p-3 sm:p-5 lg:p-6 pb-24 sm:pb-5 lg:pb-6">
         <Suspense fallback={<PageLoading />}>
         {active === "បញ្ជីបុគ្គលិក" ? (
           <EmployeeListPage
@@ -490,6 +490,35 @@ function App() {
         </Suspense>
         </main>
       </div>
+
+      {/* On phones, the important areas are one tap away.  The full sidebar
+          remains available from "More" for settings and reporting pages. */}
+      <nav className="fixed inset-x-0 bottom-0 z-20 flex h-[68px] items-stretch border-t border-[#EBEDF3] bg-white px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-6px_18px_rgba(30,35,51,0.06)] lg:hidden">
+        {[
+          { label: "ទំព័រដើម", icon: LayoutDashboard, page: "dashboard", section: null },
+          { label: "វត្តមាន", icon: Clock, page: "វត្តមានប្រចាំថ្ងៃ", section: "attendance" },
+          { label: "ច្បាប់ឈប់", icon: CalendarDays, page: "អនុម័តច្បាប់", section: "leave" },
+          { label: "បុគ្គលិក", icon: Users, page: "បញ្ជីបុគ្គលិក", section: "employees" },
+        ].map((item) => {
+          const Icon = item.icon;
+          const selected = active === item.page || (item.page === "dashboard" && active === "dashboard");
+          return (
+            <button
+              key={item.label}
+              onClick={() => { setActive(item.page); setOpenSection(item.section); setSidebarOpen(false); }}
+              className={`flex flex-1 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-medium transition-colors ${selected ? "text-[#2A3F8F]" : "text-[#8A8FA3]"}`}
+              aria-current={selected ? "page" : undefined}
+            >
+              <Icon size={19} strokeWidth={selected ? 2.5 : 2} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+        <button onClick={() => setSidebarOpen(true)} className="flex flex-1 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-medium text-[#8A8FA3]" aria-label="បើកមុខងារផ្សេងទៀត">
+          <Menu size={20} />
+          <span>ផ្សេងទៀត</span>
+        </button>
+      </nav>
     </div>
   );
 }

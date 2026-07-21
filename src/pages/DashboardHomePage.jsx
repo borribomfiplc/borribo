@@ -101,7 +101,7 @@ export default function DashboardHomePage({ employees = [], attendanceToday = []
                 <h3 className="font-semibold text-[#1E2333] text-[15px]">
                   ទិដ្ឋភាពទូទៅវត្តមាន <span className="text-[#8A8FA3] font-normal text-sm">(សប្តាហ៍នេះ)</span>
                 </h3>
-                <div className="flex items-center gap-4 text-xs text-[#8A8FA3]">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-[#8A8FA3]">
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: COLORS.primary }} />មានវត្តមាន</span>
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: COLORS.accent }} />យឺត</span>
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: COLORS.red }} />អវត្តមាន</span>
@@ -150,7 +150,7 @@ export default function DashboardHomePage({ employees = [], attendanceToday = []
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl border border-[#EBEDF3] p-5">
               <h3 className="font-semibold text-[#1E2333] text-[15px] mb-4">សង្ខេបច្បាប់ឈប់សម្រាក</h3>
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:gap-6">
                 <div className="relative w-[130px] h-[130px] shrink-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -166,7 +166,7 @@ export default function DashboardHomePage({ employees = [], attendanceToday = []
                     <span className="text-xl font-bold text-[#1E2333]">{total}</span>
                   </div>
                 </div>
-                <div className="flex-1 flex flex-col gap-2.5">
+                <div className="w-full flex-1 flex flex-col gap-2.5">
                   {leaveData.length ? leaveData.map((d) => (
                     <div key={d.name} className="flex items-center justify-between text-sm">
                       <span className="flex items-center gap-2 text-[#5B5F73]">

@@ -25,6 +25,54 @@ body {
   overflow-x: hidden;
 }
 
+/* The full interface, not only the Topbar, follows the selected dark theme.
+   Attribute selectors cover the Tailwind colour utilities already used across
+   the page modules without changing their existing component APIs. */
+html.dark body,
+html.dark #root {
+  background: #151827;
+  color: #edf0fa;
+}
+
+html.dark .bg-white,
+html.dark [class*="bg-[#F5F6FA]"],
+html.dark [class*="bg-[#F7F8FB]"] {
+  background-color: #202538 !important;
+}
+
+html.dark [class*="border-[#EBEDF3]"] {
+  border-color: #343b53 !important;
+}
+
+html.dark [class*="text-[#1E2333]"] {
+  color: #f4f6ff !important;
+}
+
+html.dark [class*="text-[#5B5F73]"],
+html.dark [class*="text-[#8A8FA3]"],
+html.dark [class*="text-[#B4B7C6]"] {
+  color: #b9c1d9 !important;
+}
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #171b2a !important;
+  color: #f4f6ff !important;
+  border-color: #414a67 !important;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #97a1bd !important;
+}
+
+html.dark .recharts-cartesian-grid line,
+html.dark .recharts-cartesian-axis-line,
+html.dark .recharts-cartesian-axis-tick-line {
+  stroke: #49536f !important;
+}
+
 /* Keep forms and wide report tables usable on small phones. */
 input,
 select,

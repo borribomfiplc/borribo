@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from "react";
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
 import {
   LayoutDashboard, Users, Clock, CalendarDays, Building2, Calendar,
   BarChart3, Settings, Search, Bell, ChevronDown, Sun, ChevronRight, ChevronLeft,
@@ -23,6 +23,7 @@ import { filterNavigation, isManager, ROLE_LABELS, ROLES } from "./auth/permissi
 import AccessDeniedPage from "./pages/AccessDeniedPage";
 import EmployeePortalPage from "./pages/EmployeePortalPage";
 import PwaInstallPrompt from "./components/PwaInstallPrompt";
+import { useEnglishUi } from "./i18n/useEnglishUi";
 
 // Every other page is code-split with React.lazy so the initial bundle only
 // pays for the dashboard home screen; each page's JS loads on first visit.
@@ -81,7 +82,9 @@ function App() {
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("borribo-theme") === "dark");
   const [language, setLanguage] = useState(() => localStorage.getItem("borribo-language") || "ខ្មែរ");
-  const [selectedBranch, setSelectedBranch] = useState("ការិយាល័យកណ្តាល");
+  const [selectedBranch, setSelectedBranch] = useState(() => localStorage.getItem("borribo-selected-branch") || "");
+  const topbarRef = useRef(null);
+  useEnglishUi(language);
 
   // A user can log out from any screen then sign in again without a full page
   // reload. Reset the workspace for each new signed-in account so the first
@@ -119,11 +122,38 @@ function App() {
   const [staffLoans, setStaffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
   const [telegramOutbox, setTelegramOutbox] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
 
+  // Branch is a reporting dimension. The Topbar selection deliberately scopes
+  // dashboard and report inputs without mutating records from other branches.
+  const filterByBranch = (rows = []) => selectedBranch ? rows.filter((row) => row.branch === selectedBranch) : rows;
+  const scopedEmployees = useMemo(() => filterByBranch(employees), [employees, selectedBranch]);
+  const scopedAttendanceToday = useMemo(() => filterByBranch(todaysAttendance), [todaysAttendance, selectedBranch]);
+  const scopedAttendanceHistory = useMemo(() => filterByBranch(attendanceHistory), [attendanceHistory, selectedBranch]);
+  const scopedLeaveRequests = useMemo(() => filterByBranch(leaveRequests), [leaveRequests, selectedBranch]);
+
   const [employeeQuery, setEmployeeQuery] = useState(""); // controlled search text for EmployeeListPage
   const [editingEmployee, setEditingEmployee] = useState(null); // employee currently open in AddEmployeePage's edit mode
 
   const deleteEmployee = (id) => setEmployees((list) => list.filter((e) => e.id !== id));
   const [headerQuery, setHeaderQuery] = useState(""); // topbar quick-search text
+
+  useEffect(() => {
+    localStorage.setItem("borribo-selected-branch", selectedBranch);
+  }, [selectedBranch]);
+
+  // Keep a stored selection valid after an administrator renames/deletes a branch.
+  useEffect(() => {
+    if (selectedBranch && branches.length && !branches.some((branch) => branch.name === selectedBranch)) setSelectedBranch("");
+  }, [branches, selectedBranch]);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event) => {
+      if (topbarRef.current && !topbarRef.current.contains(event.target)) {
+        setBranchMenuOpen(false); setNotificationOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, []);
 
   const headerResults = headerQuery.trim()
     ? employees
@@ -172,11 +202,31 @@ function App() {
     setLanguageMenuOpen(false);
   };
 
-  const topbarNotifications = [
-    "មានសំណើច្បាប់ថ្មីកំពុងរង់ចាំពិនិត្យ",
-    "បុគ្គលិក ៣ នាក់មកយឺតថ្ងៃនេះ",
-    "សូមពិនិត្យវត្តមានប្រចាំថ្ងៃ",
-  ];
+  const notificationStorageKey = `borribo-read-notifications-${authUser?.uid || "guest"}`;
+  const [readNotificationIds, setReadNotificationIds] = useState(() => new Set());
+  useEffect(() => {
+    try { setReadNotificationIds(new Set(JSON.parse(localStorage.getItem(notificationStorageKey) || "[]"))); }
+    catch { setReadNotificationIds(new Set()); }
+  }, [notificationStorageKey]);
+  const saveReadNotifications = (next) => {
+    setReadNotificationIds(next);
+    localStorage.setItem(notificationStorageKey, JSON.stringify([...next]));
+  };
+  const topbarNotifications = useMemo(() => {
+    const pendingLeaves = leaveRequests.filter((row) => row.status === "រង់ចាំពិនិត្យ");
+    const pendingCorrections = corrections.filter((row) => row.status === "រង់ចាំពិនិត្យ");
+    const lateToday = todaysAttendance.filter((row) => row.status === "យឺត");
+    return [
+      ...(managerAccess && pendingLeaves.length ? [{ id: `leave-${pendingLeaves.map((row) => row.id).join("-")}`, text: `មានសំណើច្បាប់ ${pendingLeaves.length} កំពុងរង់ចាំអនុម័ត`, detail: "ទៅកាន់ Leave Approval", page: "អនុម័តច្បាប់", section: "leave" }] : []),
+      ...(managerAccess && pendingCorrections.length ? [{ id: `correction-${pendingCorrections.map((row) => row.id).join("-")}`, text: `មានសំណើកែវត្តមាន ${pendingCorrections.length} កំពុងរង់ចាំពិនិត្យ`, detail: "ទៅកាន់ Attendance Correction", page: "កែតម្រូវវត្តមាន", section: "attendance" }] : []),
+      ...(lateToday.length ? [{ id: `late-${lateToday.map((row) => row.recordId || row.id).join("-")}`, text: `បុគ្គលិក ${lateToday.length} នាក់មកយឺតថ្ងៃនេះ`, detail: "ទៅកាន់ Daily Attendance", page: "វត្តមានប្រចាំថ្ងៃ", section: "attendance" }] : []),
+    ];
+  }, [leaveRequests, corrections, todaysAttendance, managerAccess]);
+  const unreadNotifications = topbarNotifications.filter((note) => !readNotificationIds.has(note.id));
+  const openNotification = (notification) => {
+    const next = new Set(readNotificationIds); next.add(notification.id); saveReadNotifications(next);
+    setActive(notification.page); setOpenSection(notification.section); setNotificationOpen(false);
+  };
 
   if (authUser === undefined) {
     // Brief flash while Firebase checks for a persisted session — avoids a
@@ -258,7 +308,7 @@ function App() {
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Topbar */}
-        <header className="h-14 sm:h-16 bg-white border-b border-[#EBEDF3] flex items-center gap-1.5 sm:gap-4 px-2.5 sm:px-5 shrink-0 z-20">
+        <header ref={topbarRef} className="h-14 sm:h-16 bg-white border-b border-[#EBEDF3] flex items-center gap-1.5 sm:gap-4 px-2.5 sm:px-5 shrink-0 z-20">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             aria-label={sidebarOpen ? "បិទម៉ឺនុយចំហៀង" : "បើកម៉ឺនុយចំហៀង"}
@@ -286,12 +336,12 @@ function App() {
 
           <button onClick={() => setSearchOpen((v) => !v)} aria-label="បើកប្រអប់ស្វែងរក" className="sm:hidden w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0"><Search size={18} /></button>
 
-          <div className="relative hidden md:block">
-            <button onClick={() => { setBranchMenuOpen((v) => !v); setNotificationOpen(false); setProfileMenuOpen(false); }} aria-expanded={branchMenuOpen} aria-label={`ជ្រើសរើសសាខា៖ ${selectedBranch}`} className="flex items-center gap-2 border border-[#EBEDF3] rounded-xl px-3.5 py-2 text-sm text-[#5B5F73] font-medium shrink-0"><Building2 size={15} />{selectedBranch}<ChevronDown size={14} /></button>
-            {branchMenuOpen && <div className="absolute left-0 top-full mt-2 min-w-56 rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-40 overflow-hidden">{branches.map((branch) => <button key={branch.id} onClick={() => { setSelectedBranch(branch.name); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span>{branch.name}</span>{selectedBranch === branch.name && <Check size={16} className="text-[#2A3F8F]" />}</button>)}</div>}
+          <div className="relative">
+            <button onClick={() => { setBranchMenuOpen((v) => !v); setNotificationOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={branchMenuOpen} aria-label={`ជ្រើសរើសសាខា៖ ${selectedBranch || "គ្រប់សាខា"}`} className="flex items-center gap-2 border border-[#EBEDF3] rounded-xl px-2.5 xl:px-3.5 py-2 text-sm text-[#5B5F73] font-medium shrink-0"><Building2 size={15} /><span className="hidden xl:inline max-w-40 truncate">{selectedBranch || "គ្រប់សាខា"}</span><ChevronDown size={14} className="hidden xl:block" /></button>
+            {branchMenuOpen && <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden"><button onClick={() => { setSelectedBranch(""); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span>គ្រប់សាខា</span>{!selectedBranch && <Check size={16} className="text-[#2A3F8F]" />}</button>{branches.map((branch) => <button key={branch.id} onClick={() => { setSelectedBranch(branch.name); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span className="truncate">{branch.name}</span>{selectedBranch === branch.name && <Check size={16} className="text-[#2A3F8F] shrink-0" />}</button>)}</div>}
           </div>
 
-          <div className="relative hidden min-[380px]:block">
+          <div className="relative">
             <button
               onClick={() => { setLanguageMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); setProfileMenuOpen(false); }}
               aria-expanded={languageMenuOpen}
@@ -300,10 +350,10 @@ function App() {
             >
               <Languages size={18} />
               <span className="hidden lg:inline">{language === "ខ្មែរ" ? "ខ្មែរ" : "EN"}</span>
-              <ChevronDown size={14} />
+              <ChevronDown size={14} className="hidden lg:block" />
             </button>
             {languageMenuOpen && (
-              <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 min-w-36 rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-40 overflow-hidden">
+              <div className="absolute right-0 top-full mt-2 min-w-36 rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden">
                 {["ខ្មែរ", "English"].map((option) => (
                   <button key={option} onClick={() => chooseLanguage(option)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]">
                     <span>{option}</span>{language === option && <Check size={16} className="text-[#2A3F8F]" />}
@@ -314,14 +364,14 @@ function App() {
           </div>
 
           <div className="relative">
-            <button onClick={() => { setNotificationOpen((v) => !v); setBranchMenuOpen(false); setProfileMenuOpen(false); }} aria-expanded={notificationOpen} aria-label="ការជូនដំណឹង (5 ថ្មី)" className="relative w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0"><Bell size={18} /><span className="absolute -top-0.5 -right-0.5 bg-[#D9614F] text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">5</span></button>
-            {notificationOpen && <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-40 overflow-hidden"><div className="px-4 py-3 border-b border-[#EBEDF3] text-sm font-semibold text-[#1E2333]">ការជូនដំណឹងថ្មី</div>{topbarNotifications.map((note) => <div key={note} className="px-4 py-3 text-sm text-[#5B5F73] border-b border-[#EBEDF3] last:border-0">{note}</div>)}</div>}
+            <button onClick={() => { setNotificationOpen((v) => !v); setBranchMenuOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={notificationOpen} aria-label={`ការជូនដំណឹង (${unreadNotifications.length} ថ្មី)`} className="relative w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0"><Bell size={18} />{unreadNotifications.length > 0 && <span className="absolute -top-0.5 -right-0.5 bg-[#D9614F] text-white text-[10px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center">{unreadNotifications.length}</span>}</button>
+            {notificationOpen && <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden"><div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#EBEDF3]"><div className="text-sm font-semibold text-[#1E2333]">ការជូនដំណឹងថ្មី</div>{unreadNotifications.length > 0 && <button onClick={() => saveReadNotifications(new Set(topbarNotifications.map((note) => note.id)))} className="text-xs font-medium text-[#2A3F8F] whitespace-nowrap">សម្គាល់ថាបានអានទាំងអស់</button>}</div>{topbarNotifications.length ? topbarNotifications.map((note) => <button key={note.id} onClick={() => openNotification(note)} className={`w-full px-4 py-3 text-right border-b border-[#EBEDF3] last:border-0 hover:bg-[#F7F8FB] ${readNotificationIds.has(note.id) ? "" : "bg-[#F7F8FB]"}`}><div className="text-sm text-[#1E2333]">{note.text}</div><div className="text-xs text-[#2A3F8F] mt-1">{note.detail}</div></button>) : <div className="px-4 py-5 text-sm text-[#8A8FA3] text-center">មិនមានការជូនដំណឹងថ្មីទេ</div>}</div>}
           </div>
 
           <button onClick={() => setDarkMode((v) => !v)} aria-label="ប្តូររចនាប័ទ្មពន្លឺ/ងងឹត" className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0">{darkMode ? <Moon size={18} /> : <Sun size={18} />}</button>
 
           <div className="relative flex items-center gap-2 sm:gap-2.5 pl-1.5 sm:pl-2 sm:border-l border-[#EBEDF3] shrink-0">
-          <button onClick={() => { setProfileMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); }} aria-expanded={profileMenuOpen} className="flex items-center gap-2.5 text-right">
+          <button onClick={() => { setProfileMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); setLanguageMenuOpen(false); }} aria-expanded={profileMenuOpen} className="flex items-center gap-2.5 text-right">
             <div
               className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
               style={{ background: COLORS.primary }}
@@ -335,7 +385,7 @@ function App() {
             <ChevronDown size={14} className="hidden sm:block text-[#B4B7C6]" />
           </button>
           {profileMenuOpen && (
-            <div className="absolute left-0 top-full mt-2 w-52 rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-40 overflow-hidden">
+            <div className="absolute right-0 top-full mt-2 w-52 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden">
               <div className="px-4 py-3 border-b border-[#EBEDF3]"><div className="text-sm font-semibold text-[#1E2333] truncate">{profile.name || authUser.email}</div><div className="text-xs text-[#8A8FA3]">{ROLE_LABELS[profile.role] || profile.role}</div></div>
               <button onClick={handleLogout} className="w-full flex items-center gap-2 px-4 py-3 text-sm text-[#D9614F] hover:bg-[#FBEBE8]"><LogOut size={16} /> ចាកចេញ</button>
             </div>
@@ -460,11 +510,11 @@ function App() {
         ) : active === "កម្ចីបុគ្គលិក" ? (
           <StaffLoanPage employees={employees} loans={staffLoans} setLoans={setStaffLoans} />
         ) : active === "របាយការណ៍វត្តមាន" ? (
-          <AttendanceReportPage historyData={attendanceHistory} />
+          <AttendanceReportPage historyData={scopedAttendanceHistory} />
         ) : active === "របាយការណ៍ច្បាប់" ? (
-          <LeaveReportPage leaveRequests={leaveRequests} />
+          <LeaveReportPage leaveRequests={scopedLeaveRequests} />
         ) : active === "របាយការណ៍ប្រចាំខែ" ? (
-          <MonthlyReportPage historyData={attendanceHistory} />
+          <MonthlyReportPage historyData={scopedAttendanceHistory} />
         ) : active === "ក្រុមហ៊ុន" ? (
           <CompanySettingsPage />
         ) : active === "អ្នកប្រើប្រាស់ និងតួនាទី" ? (
@@ -485,7 +535,7 @@ function App() {
         ) : active === "Telegram Bot" ? (
           <TelegramBotPage outbox={telegramOutbox} setOutbox={setTelegramOutbox} />
         ) : (
-          <DashboardHomePage employees={employees} attendanceToday={todaysAttendance} attendanceHistory={attendanceHistory} leaveRequests={leaveRequests} profile={profile} setActive={setActive} setOpenSection={setOpenSection} setEditingEmployee={setEditingEmployee} />
+          <DashboardHomePage employees={scopedEmployees} attendanceToday={scopedAttendanceToday} attendanceHistory={scopedAttendanceHistory} leaveRequests={scopedLeaveRequests} profile={profile} setActive={setActive} setOpenSection={setOpenSection} setEditingEmployee={setEditingEmployee} />
         )}
         </Suspense>
         </main>

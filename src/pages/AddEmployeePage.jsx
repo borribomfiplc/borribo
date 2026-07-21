@@ -43,12 +43,18 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
   );
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const nextId = `EMP-${String(employees.length + 1).padStart(3, "0")}`;
+  const highestEmployeeNumber = employees.reduce((highest, employee) => {
+    const match = String(employee.id || "").match(/^EMP-(\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+  const nextId = `EMP-${String(highestEmployeeNumber + 1).padStart(3, "0")}`;
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     if (!form.name.trim() || !form.phone.trim() || !form.position.trim()) {
       setError("សូមបំពេញឈ្មោះ តួនាទី និងលេខទូរស័ព្ទឲ្យបានគ្រប់ជាមុនសិន");
       return;
@@ -62,17 +68,38 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
       branch: form.branch,
       phone: form.phone.trim(),
       status: form.status,
+      gender: form.gender,
+      dob: form.dob,
+      email: form.email.trim(),
+      address: form.address.trim(),
+      employmentType: form.employmentType,
+      startDate: form.startDate,
+      shift: form.shift,
     };
-    if (isEditing) {
-      setEmployees((list) => list.map((emp) => (emp.id === editingEmployee.id ? { ...emp, ...employeeData } : emp)));
-    } else {
-      setEmployees((list) => [employeeData, ...list]);
+    setSaving(true);
+    try {
+      if (isEditing) {
+        await setEmployees((list) => list.map((emp) => (emp.id === editingEmployee.id ? { ...emp, ...employeeData } : emp)));
+      } else {
+        await setEmployees((list) => [employeeData, ...list]);
+      }
+      setSaved(true);
+      window.setTimeout(() => {
+        onSave && onSave(employeeData);
+      }, 700);
+    } catch (err) {
+      const isPermissionError = err?.code === "permission-denied" || err?.code === "firestore/permission-denied";
+      const isNetworkError = err?.code === "unavailable" || err?.code === "firestore/unavailable";
+      setError(
+        isPermissionError
+          ? "មិនអាចរក្សាទុកបានទេ៖ គណនីនេះមិនមានសិទ្ធិ Admin ឬ HR ក្នុង Firebase។ សូមចូលជា Admin/HR ហើយពិនិត្យ Firestore Rules។"
+          : isNetworkError
+            ? "មិនអាចភ្ជាប់ Firebase បានទេ។ សូមពិនិត្យអ៊ីនធឺណិត រួចសាកល្បងម្ដងទៀត។"
+            : "មិនអាចរក្សាទុកព័ត៌មានបុគ្គលិកបានទេ។ សូមសាកល្បងម្ដងទៀត។"
+      );
+    } finally {
+      setSaving(false);
     }
-    setSaved(true);
-    setTimeout(() => {
-      setSaved(false);
-      onSave && onSave(employeeData);
-    }, 900);
   };
 
   return (
@@ -101,11 +128,12 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center gap-2 text-white text-sm font-semibold rounded-xl px-4 sm:px-5 py-2.5 whitespace-nowrap"
+            disabled={saving}
+            className="flex items-center gap-2 text-white text-sm font-semibold rounded-xl px-4 sm:px-5 py-2.5 whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: COLORS.primary }}
           >
             <Save size={16} />
-            {isEditing ? "រក្សាទុកការកែប្រែ" : "រក្សាទុកបុគ្គលិក"}
+            {saving ? "កំពុងរក្សាទុក..." : isEditing ? "រក្សាទុកការកែប្រែ" : "រក្សាទុកបុគ្គលិក"}
           </button>
         </div>
       </div>
@@ -225,11 +253,12 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
         </button>
         <button
           onClick={handleSave}
-          className="flex-1 flex items-center justify-center gap-2 text-white text-sm font-semibold rounded-xl py-3"
+          disabled={saving}
+          className="flex-1 flex items-center justify-center gap-2 text-white text-sm font-semibold rounded-xl py-3 disabled:opacity-60 disabled:cursor-not-allowed"
           style={{ background: COLORS.primary }}
         >
           <Save size={16} />
-          {isEditing ? "រក្សាទុកការកែប្រែ" : "រក្សាទុកបុគ្គលិក"}
+          {saving ? "កំពុងរក្សាទុក..." : isEditing ? "រក្សាទុកការកែប្រែ" : "រក្សាទុកបុគ្គលិក"}
         </button>
       </div>
     </>

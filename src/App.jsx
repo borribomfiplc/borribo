@@ -397,7 +397,7 @@ function App() {
         ) : active === "បន្ថែមបុគ្គលិក" ? (
           <AddEmployeePage
             onCancel={() => { setEditingEmployee(null); setActive("បញ្ជីបុគ្គលិក"); }}
-            onSave={() => { setEditingEmployee(null); setActive("បញ្ជីបុគ្គលិក"); }}
+            onSave={() => { setEditingEmployee(null); setEmployeeQuery(""); setActive("បញ្ជីបុគ្គលិក"); }}
             employees={employees}
             setEmployees={setEmployees}
             editingEmployee={editingEmployee}

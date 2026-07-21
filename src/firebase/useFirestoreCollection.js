@@ -85,11 +85,16 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
       setDataState(next);
       try {
         await batch.commit();
+        return next;
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(`[firestore] Write failed on "${collectionName}":`, err);
         setError(err);
         setDataState(prev); // roll back optimistic update
+        // Let the page that initiated the save display a useful error to the
+        // person using the system. Previously this error was swallowed, which
+        // made a failed Firebase write look like a successful save.
+        throw err;
       }
     },
     [collectionName, enabled, idField]

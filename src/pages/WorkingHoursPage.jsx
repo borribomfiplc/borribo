@@ -6,27 +6,24 @@ import { COLORS } from "../data/theme";
 import { FieldLabel, TextField } from "../components/shared/FormFields";
 import { SettingsSaveBar } from "../components/shared/SettingsWidgets";
 import { loadSettingsDoc, saveSettingsDoc } from "../firebase/settingsDoc";
-
-const DEFAULT_WORKING_HOURS = {
-  shifts: {
-    morning: { start: "08:00", end: "17:00", grace: "15" },
-    evening: { start: "13:00", end: "21:00", grace: "15" },
-  },
-  workDays: ["ច័ន្ទ", "អង្គារ", "ពុធ", "ព្រហ", "សុក្រ", "សៅរ៍"],
-};
+import { DEFAULT_WORKING_HOURS } from "../utils/attendance";
 
 export default function WorkingHoursPage() {
   const [shifts, setShifts] = useState(DEFAULT_WORKING_HOURS.shifts);
   const [workDays, setWorkDays] = useState(DEFAULT_WORKING_HOURS.workDays);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     loadSettingsDoc("workingHours", DEFAULT_WORKING_HOURS).then((data) => {
       if (!cancelled) {
-        setShifts(data.shifts);
-        setWorkDays(data.workDays);
+        setShifts({
+          morning: { ...DEFAULT_WORKING_HOURS.shifts.morning, ...(data.shifts?.morning || {}) },
+          evening: { ...DEFAULT_WORKING_HOURS.shifts.evening, ...(data.shifts?.evening || {}) },
+        });
+        setWorkDays(Array.isArray(data.workDays) ? data.workDays : DEFAULT_WORKING_HOURS.workDays);
         setLoading(false);
       }
     });
@@ -42,9 +39,23 @@ export default function WorkingHoursPage() {
     setWorkDays((list) => (list.includes(d) ? list.filter((x) => x !== d) : [...list, d]));
 
   const handleSave = async () => {
-    await saveSettingsDoc("workingHours", { shifts, workDays });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    const invalidShift = Object.values(shifts).some((shift) => {
+      const start = Number(shift.start?.replace(":", ""));
+      const end = Number(shift.end?.replace(":", ""));
+      return !shift.start || !shift.end || start >= end || Number(shift.grace) < 0;
+    });
+    if (invalidShift || workDays.length === 0) {
+      setError("សូមកំណត់ម៉ោងចេញឱ្យក្រោយម៉ោងចូល រយៈពេលអនុគ្រោះមិនអវិជ្ជមាន និងជ្រើសថ្ងៃធ្វើការយ៉ាងហោចណាស់ ១ ថ្ងៃ");
+      return;
+    }
+    try {
+      setError("");
+      await saveSettingsDoc("workingHours", { shifts, workDays });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
+      setError("មិនអាចរក្សាទុកម៉ោងធ្វើការបានទេ។ សូមព្យាយាមម្ដងទៀត");
+    }
   };
 
   if (loading) {
@@ -58,6 +69,7 @@ export default function WorkingHoursPage() {
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">កំណត់វេនធ្វើការ រយៈពេលអនុគ្រោះ និងថ្ងៃធ្វើការ</p>
       </div>
       <SettingsSaveBar onSave={handleSave} saved={saved} />
+      {error && <p className="mb-4 rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#D9614F]">{error}</p>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-2xl border border-[#EBEDF3] p-5">
@@ -123,6 +135,7 @@ export default function WorkingHoursPage() {
             </button>
           ))}
         </div>
+        <p className="mt-4 text-xs text-[#8A8FA3]">Check-in/Check-out ថ្មីនឹងគណនា មកយឺត, ចេញមុន និងរយៈពេលធ្វើការ តាមការកំណត់នេះដោយស្វ័យប្រវត្តិ។</p>
       </div>
     </>
   );

@@ -3,7 +3,9 @@ import {
   ScanLine, LogIn, LogOut, X, CheckCircle2
 } from "lucide-react";
 import { COLORS } from "../data/theme";
-import { attendanceHistoryRecord, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
+import { getDoc, doc } from "firebase/firestore";
+import { db } from "../firebase/config";
+import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
 
 export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, onExit }) {
   const [pin, setPin] = useState("");
@@ -38,13 +40,24 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
 
   const backspace = () => setPin((p) => p.slice(0, -1));
 
-  const handleCheckIn = () => {
-    const time = timeNow();
-    const h = new Date().getHours();
-    const m = new Date().getMinutes();
-    const isLate = h > 8 || (h === 8 && m > 15);
+  const loadWorkingHours = async () => {
+    const snap = await getDoc(doc(db, "settings", "workingHours"));
+    return snap.exists() ? snap.data() : DEFAULT_WORKING_HOURS;
+  };
+
+  const handleCheckIn = async () => {
+    setError("");
+    const capturedAt = new Date();
+    const time = timeNow(capturedAt);
+    let metrics;
+    try {
+      metrics = calculateAttendanceMetrics({ shift: matchedEmployee.shift, workingHours: await loadWorkingHours(), checkInAt: capturedAt });
+    } catch {
+      setError("មិនអាចទាញយកការកំណត់ម៉ោងធ្វើការបានទេ");
+      return;
+    }
     setAttendanceToday((list) => {
-      const existing = list.find((a) => a.id === matchedEmployee.id);
+      const existing = list.find((a) => a.id === matchedEmployee.id && a.dateISO === todayISO());
       const dateISO = todayISO();
       const record = {
         ...existing,
@@ -55,37 +68,53 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
         name: matchedEmployee.name,
         role: matchedEmployee.role,
         branch: matchedEmployee.branch,
-        shift: "ព្រឹក",
+        shift: metrics.shift,
         checkIn: time,
+        checkInClientAt: capturedAt.toISOString(),
         checkOut: "—",
-        hours: "កំពុងធ្វើការ",
-        status: isLate ? "យឺត" : "មានវត្តមាន",
+        ...metrics,
+        source: "kiosk",
       };
       return existing ? list.map((a) => (a.id === matchedEmployee.id ? record : a)) : [record, ...list];
     });
     const record = {
       id: matchedEmployee.id, recordId: `${matchedEmployee.id}_${todayISO()}`, docId: `${matchedEmployee.id}_${todayISO()}`,
       dateISO: todayISO(), date: formatKhmerDate(todayISO()), name: matchedEmployee.name, role: matchedEmployee.role,
-      branch: matchedEmployee.branch, shift: "ព្រឹក", checkIn: time, checkOut: "—", hours: "កំពុងធ្វើការ",
-      status: isLate ? "យឺត" : "មានវត្តមាន", source: "kiosk",
+      branch: matchedEmployee.branch, shift: metrics.shift, checkIn: time, checkInClientAt: capturedAt.toISOString(), checkOut: "—",
+      ...metrics, source: "kiosk",
     };
     setAttendanceHistory((list) => {
       const exists = list.some((item) => item.docId === record.docId);
       return exists ? list.map((item) => item.docId === record.docId ? record : item) : [record, ...list];
     });
-    setMessage({ type: "in", time });
+    setMessage({ type: "in", time, note: metrics.isLate ? `មកយឺត ${metrics.lateMinutes} នាទី` : "" });
     setTimeout(reset, 2500);
   };
 
-  const handleCheckOut = () => {
-    const time = timeNow();
+  const handleCheckOut = async () => {
+    setError("");
+    const capturedAt = new Date();
+    const time = timeNow(capturedAt);
+    let metrics;
+    try {
+      metrics = calculateAttendanceMetrics({
+        shift: todayRecord?.shift || matchedEmployee.shift,
+        workingHours: await loadWorkingHours(),
+        checkInAt: todayRecord?.checkInClientAt || `${todayISO()}T${todayRecord?.checkIn || "08:00"}:00`,
+        checkOutAt: capturedAt,
+      });
+    } catch {
+      setError("មិនអាចទាញយកការកំណត់ម៉ោងធ្វើការបានទេ");
+      return;
+    }
     setAttendanceToday((list) =>
-      list.map((a) => (a.id === matchedEmployee.id ? { ...a, checkOut: time, hours: "បញ្ចប់ការងារ" } : a))
+      list.map((a) => (a.id === matchedEmployee.id && a.dateISO === todayISO()
+        ? { ...a, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics } : a))
     );
     setAttendanceHistory((list) => list.map((item) => item.docId === `${matchedEmployee.id}_${todayISO()}`
-      ? { ...item, checkOut: time, hours: "បញ្ចប់ការងារ" }
+      ? { ...item, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics }
       : item));
-    setMessage({ type: "out", time });
+    setMessage({ type: "out", time, note: metrics.isEarlyLeave ? `ចេញមុន ${metrics.earlyLeaveMinutes} នាទី` : "" });
     setTimeout(reset, 2500);
   };
 
@@ -171,6 +200,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
             <div className="text-sm text-[#8A8FA3] mt-1">
               {message.type === "in" ? `បានចូលធ្វើការម៉ោង ${message.time}` : `បានចេញពីការងារម៉ោង ${message.time}`}
             </div>
+            {message.note && <div className="text-xs text-[#B97913] mt-1">{message.note}</div>}
           </div>
         ) : (
           <div className="text-center py-4">

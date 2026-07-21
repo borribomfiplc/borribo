@@ -8,6 +8,9 @@ import { FieldLabel, TextField, SelectField } from "../components/shared/FormFie
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase/config";
+import { calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, todayISO } from "../utils/attendance";
 
 export default function DailyAttendancePage({ employees, attendanceToday, setAttendanceToday }) {
   const [query, setQuery] = useState("");
@@ -54,20 +57,43 @@ export default function DailyAttendancePage({ employees, attendanceToday, setAtt
   const saveManualEntry = async () => {
     const employee = employees.find((item) => item.id === manualForm.employeeId);
     if (!employee) return;
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const dateISO = todayISO();
     const absent = manualForm.status === "អវត្តមាន" || manualForm.status === "ច្បាប់";
+    let metrics = {};
+    if (!absent) {
+      try {
+        const settings = await getDoc(doc(db, "settings", "workingHours"));
+        const workingHours = settings.exists() ? settings.data() : DEFAULT_WORKING_HOURS;
+        metrics = calculateAttendanceMetrics({
+          shift: employee.shift,
+          workingHours,
+          checkInAt: new Date(`${dateISO}T${manualForm.checkIn}:00+07:00`),
+          checkOutAt: new Date(`${dateISO}T${manualForm.checkOut}:00+07:00`),
+        });
+      } catch {
+        metrics = calculateAttendanceMetrics({
+          shift: employee.shift,
+          workingHours: DEFAULT_WORKING_HOURS,
+          checkInAt: new Date(`${dateISO}T${manualForm.checkIn}:00+07:00`),
+          checkOutAt: new Date(`${dateISO}T${manualForm.checkOut}:00+07:00`),
+        });
+      }
+    }
     const nextRecord = {
       id: employee.id,
       name: employee.name,
       role: employee.role,
       branch: employee.branch,
-      shift: "ព្រឹក",
+      shift: employee.shift === "ល្ងាច" ? "ល្ងាច" : "ព្រឹក",
       checkIn: absent ? "—" : manualForm.checkIn,
       checkOut: absent ? "—" : manualForm.checkOut,
-      hours: absent ? "—" : "បានកត់ត្រាដោយដៃ",
-      status: manualForm.status,
-      dateISO: todayISO,
-      recordId: `${employee.id}_${todayISO}`,
+      checkInClientAt: absent ? null : `${dateISO}T${manualForm.checkIn}:00+07:00`,
+      checkOutClientAt: absent ? null : `${dateISO}T${manualForm.checkOut}:00+07:00`,
+      hours: absent ? "—" : metrics.hours,
+      status: absent ? manualForm.status : metrics.status,
+      ...metrics,
+      dateISO,
+      recordId: `${employee.id}_${dateISO}`,
       updatedAt: new Date().toISOString(),
     };
     await setAttendanceToday((records) => {

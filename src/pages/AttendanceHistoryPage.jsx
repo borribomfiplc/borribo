@@ -46,7 +46,7 @@ export default function AttendanceHistoryPage({ historyData }) {
     ? (((counts.present + counts.late) / filtered.length) * 100).toFixed(0)
     : 0;
   const exportCsv = () => {
-    const rows = [["Employee ID", "Name", "Branch", "Date", "Check-in", "Check-out", "Status"], ...filtered.map((a) => [a.id, a.name, a.branch, a.dateISO, a.checkIn, a.checkOut, a.status])];
+    const rows = [["Employee ID", "Name", "Branch", "Date", "Shift", "Check-in", "Check-out", "Working hours", "Late (minutes)", "Early leave (minutes)", "Status"], ...filtered.map((a) => [a.id, a.name, a.branch, a.dateISO, a.shift, a.checkIn, a.checkOut, a.hours, a.lateMinutes || 0, a.earlyLeaveMinutes || 0, a.status])];
     const csv = "\ufeff" + rows.map((row) => row.map((v) => `\"${String(v ?? "").replaceAll("\"", "\"\"")}\"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "attendance-history.csv"; link.click(); URL.revokeObjectURL(url);
@@ -223,6 +223,7 @@ export default function AttendanceHistoryPage({ historyData }) {
                       <StIcon size={12} />
                       {a.status}
                     </span>
+                    {(a.isLate || a.isEarlyLeave) && <div className="mt-1 text-[11px] text-[#B97913]">{a.isLate ? `យឺត ${a.lateMinutes} នាទី` : ""}{a.isLate && a.isEarlyLeave ? " · " : ""}{a.isEarlyLeave ? `ចេញមុន ${a.earlyLeaveMinutes} នាទី` : ""}</div>}
                   </td>
                 </tr>
               );
@@ -285,6 +286,7 @@ export default function AttendanceHistoryPage({ historyData }) {
                   <div className="text-[#1E2333] font-medium">{a.hours}</div>
                 </div>
               </div>
+              {(a.isLate || a.isEarlyLeave) && <div className="mt-3 text-[11px] text-[#B97913]">{a.isLate ? `មកយឺត ${a.lateMinutes} នាទី` : ""}{a.isLate && a.isEarlyLeave ? " · " : ""}{a.isEarlyLeave ? `ចេញមុន ${a.earlyLeaveMinutes} នាទី` : ""}</div>}
             </div>
           );
         })}

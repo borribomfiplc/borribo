@@ -86,14 +86,14 @@ service cloud.firestore {
         hasRole('employee')
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.id == request.auth.token.employeeId
-        && request.resource.data.status == 'មានវត្តមាន'
+        && request.resource.data.status in ['មានវត្តមាន', 'យឺត']
       );
       allow update: if manager() || kiosk() || (
         hasRole('employee')
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.id == resource.data.id
-        && request.resource.data.status == 'មានវត្តមាន'
+        && request.resource.data.status in ['មានវត្តមាន', 'យឺត']
       );
       allow delete: if manager();
     }
@@ -136,7 +136,9 @@ service cloud.firestore {
     }
 
     match /settings/{settingId} {
-      allow get: if manager();
+      // Employees and a kiosk need the shift schedule only to calculate their
+      // own attendance. Other settings remain manager-only.
+      allow get: if manager() || kiosk() || (signedIn() && settingId == 'workingHours');
       allow create, update: if manager();
       allow delete: if administrator();
     }

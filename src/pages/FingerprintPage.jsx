@@ -1,7 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { Download, Fingerprint, Upload } from "lucide-react";
+import { doc, getDoc } from "firebase/firestore";
 import StatCard from "../components/shared/StatCard";
 import { COLORS } from "../data/theme";
+import { db } from "../firebase/config";
+import { calculateAttendanceMetrics, DEFAULT_WORKING_HOURS } from "../utils/attendance";
 
 const todayISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Phnom_Penh" }).format(new Date());
 const normaliseAction = (value) => /^(in|checkin|check-in|ចូល)$/i.test(String(value || "").trim()) ? "in" : "out";
@@ -25,9 +28,11 @@ export default function FingerprintPage({ employees = [], attendanceToday = [], 
   };
   const importRows = async () => {
     if (!valid.length) { setError("គ្មានទិន្នន័យត្រឹមត្រូវសម្រាប់នាំចូល"); return; }
+    let workingHours = DEFAULT_WORKING_HOURS;
+    try { const snap = await getDoc(doc(db, "settings", "workingHours")); if (snap.exists()) workingHours = snap.data(); } catch { /* Default schedule is used offline. */ }
     const byKey = new Map();
     [...attendanceHistory, ...attendanceToday].forEach((record) => byKey.set(`${record.id}-${record.dateISO}`, { ...record }));
-    valid.forEach((row) => { const key=`${row.employee.id}-${row.date}`; const current=byKey.get(key) || { id:row.employee.id, uid:row.employee.uid||"", name:row.employee.name, role:row.employee.role, branch:row.employee.branch, dateISO:row.date, status:"មានវត្តមាន", docId:key, recordId:key, source:"fingerprint" }; const time = row.time.slice(0,5); if(row.action==="in") { if(!current.checkIn || time<current.checkIn) { current.checkIn=time; current.checkInClientAt=`${row.date}T${time}:00`; } } else if(!current.checkOut || time>current.checkOut) { current.checkOut=time; current.checkOutClientAt=`${row.date}T${time}:00`; } if(current.checkIn&&current.checkOut){const [h1,m1]=current.checkIn.split(":").map(Number); const [h2,m2]=current.checkOut.split(":").map(Number); const mins=Math.max(0,h2*60+m2-h1*60-m1);current.workDuration=`${Math.floor(mins/60)}h ${mins%60}m`;} byKey.set(key,current); });
+    valid.forEach((row) => { const key=`${row.employee.id}-${row.date}`; const current=byKey.get(key) || { id:row.employee.id, uid:row.employee.uid||"", name:row.employee.name, role:row.employee.role, branch:row.employee.branch, shift:row.employee.shift === "ល្ងាច" ? "ល្ងាច" : "ព្រឹក", dateISO:row.date, status:"មានវត្តមាន", docId:key, recordId:key, source:"fingerprint" }; const time = row.time.slice(0,5); if(row.action==="in") { if(!current.checkIn || time<current.checkIn) { current.checkIn=time; current.checkInClientAt=`${row.date}T${time}:00+07:00`; } } else if(!current.checkOut || time>current.checkOut) { current.checkOut=time; current.checkOutClientAt=`${row.date}T${time}:00+07:00`; } const metrics=calculateAttendanceMetrics({shift:current.shift,workingHours,checkInAt:current.checkInClientAt,checkOutAt:current.checkOutClientAt}); Object.assign(current,metrics); byKey.set(key,current); });
     const all=Array.from(byKey.values()); const today=todayISO();
     await setAttendanceHistory(all);
     await setAttendanceToday(all.filter((record)=>record.dateISO===today));

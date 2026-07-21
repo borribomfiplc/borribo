@@ -65,8 +65,24 @@ npm run provision-users
 
 The default email addresses are `admin@borribo.com`, `hr@borribo.com`, and
 `employee@borribo.com`. You can override them with `ADMIN_EMAIL`, `HR_EMAIL`,
-and `EMPLOYEE_EMAIL`. Do not add any of these passwords or
+and `EMPLOYEE_EMAIL`. The matching default usernames are `admin`, `hr`, and
+`employee`; override them with `ADMIN_USERNAME`, `HR_USERNAME`, and
+`EMPLOYEE_USERNAME` (2-32 English letters/numbers plus `.`, `_`, or `-`). Do not add any of these passwords or
 `serviceAccountKey.json` to GitHub.
+
+### Username login for an existing account
+
+After deploying the Firestore rules below, add a username for each existing
+Firebase Auth account. This keeps email login working too.
+
+```powershell
+$env:LOGIN_EMAIL = "hunrina@borribo.com.kh"
+$env:LOGIN_USERNAME = "hunrina"
+npm run set-username
+```
+
+Then the person can sign in with either `hunrina` or
+`hunrina@borribo.com.kh`, using the same password.
 
 ### 6. Deploy the Firestore security rules
 ```bash

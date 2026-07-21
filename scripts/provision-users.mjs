@@ -27,6 +27,7 @@ const db = admin.firestore();
 const accounts = [
   {
     email: process.env.ADMIN_EMAIL || "admin@borribo.com",
+    username: process.env.ADMIN_USERNAME || "admin",
     password: required("ADMIN_PASSWORD"),
     name: process.env.ADMIN_NAME || "Borribo Admin",
     role: "admin",
@@ -34,6 +35,7 @@ const accounts = [
   },
   {
     email: process.env.HR_EMAIL || "hr@borribo.com",
+    username: process.env.HR_USERNAME || "hr",
     password: required("HR_PASSWORD"),
     name: process.env.HR_NAME || "Borribo HR",
     role: "hr",
@@ -41,6 +43,7 @@ const accounts = [
   },
   {
     email: process.env.EMPLOYEE_EMAIL || "employee@borribo.com",
+    username: process.env.EMPLOYEE_USERNAME || "employee",
     password: required("EMPLOYEE_PASSWORD"),
     name: process.env.EMPLOYEE_NAME || "Borribo Employee",
     role: "employee",
@@ -50,6 +53,10 @@ const accounts = [
 ];
 
 for (const account of accounts) {
+  const username = account.username.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(username)) {
+    throw new Error(`Invalid username "${account.username}". Use 2-32 English letters, numbers, dots, underscores, or hyphens.`);
+  }
   let user;
   try {
     user = await admin.auth().getUserByEmail(account.email);
@@ -64,6 +71,7 @@ for (const account of accounts) {
   await db.collection("profiles").doc(user.uid).set({
     uid: user.uid,
     email: account.email,
+    username,
     name: account.name,
     role: account.role,
     branch: account.branch,
@@ -74,10 +82,17 @@ for (const account of accounts) {
   await db.collection("users").doc(user.uid).set({
     id: user.uid,
     email: account.email,
+    username,
     name: account.name,
     role: account.role,
     branch: account.branch,
     status: "សកម្ម",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  await db.collection("usernames").doc(username).set({
+    email: account.email,
+    active: true,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
@@ -88,7 +103,7 @@ for (const account of accounts) {
       email: account.email,
     }, { merge: true });
   }
-  console.log(`✓ ${account.role}: ${account.email}`);
+  console.log(`✓ ${account.role}: ${username} / ${account.email}`);
 }
 
 console.log("\nAccounts are ready. Each person should sign out/in once to receive the new role.");

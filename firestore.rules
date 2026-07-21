@@ -32,6 +32,15 @@ service cloud.firestore {
       allow create, update, delete: if administrator();
     }
 
+    // A login screen is not authenticated yet, so it can read one known
+    // username document but can never list this directory. These documents
+    // contain only the email needed by Firebase Email/Password Auth.
+    match /usernames/{username} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if administrator();
+    }
+
     match /employees/{employeeId} {
       allow get, list: if manager() || kiosk() || (signedIn() && resource.data.uid == request.auth.uid);
       allow create, update, delete: if manager();

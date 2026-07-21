@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "seed": "node scripts/seed.mjs",
     "provision-users": "node scripts/provision-users.mjs",
+    "set-username": "node scripts/set-username.mjs",
     "migrate-attendance": "node scripts/migrate-attendance.mjs",
     "deploy": "npm run build && wrangler pages deploy dist"
   },

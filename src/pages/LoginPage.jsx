@@ -8,15 +8,15 @@ import { login, authErrorMessage, sendPasswordReset } from "../firebase/auth";
 export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(true);
-  const [username, setUsername] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleLogin = async () => {
-    if (!username.trim() || !password.trim()) {
-      setError("សូមបំពេញឈ្មោះអ្នកប្រើប្រាស់ និងលេខសម្ងាត់");
+    if (!identifier.trim() || !password.trim()) {
+      setError("សូមបំពេញ Username/អ៊ីមែល និងលេខសម្ងាត់");
       return;
     }
     setError("");
@@ -25,7 +25,7 @@ export default function LoginPage() {
     try {
       // App.jsx listens for the auth state change and switches to the
       // dashboard automatically — no local "loggedIn" flag needed here.
-      await login(username.trim(), password, remember);
+      await login(identifier, password, remember);
     } catch (err) {
       setError(authErrorMessage(err));
     } finally {
@@ -34,14 +34,14 @@ export default function LoginPage() {
   };
 
   const handlePasswordReset = async () => {
-    if (!username.trim()) {
-      setError("សូមបញ្ចូលអ៊ីមែលរបស់អ្នកជាមុនសិន");
+    if (!identifier.trim()) {
+      setError("សូមបញ្ចូល Username ឬអ៊ីមែលរបស់អ្នកជាមុនសិន");
       return;
     }
     setError("");
     setNotice("");
     try {
-      await sendPasswordReset(username.trim());
+      await sendPasswordReset(identifier);
       setNotice("បានផ្ញើតំណប្តូរលេខសម្ងាត់ទៅអ៊ីមែលរបស់អ្នករួចហើយ");
     } catch (err) {
       setError(authErrorMessage(err));
@@ -109,9 +109,10 @@ export default function LoginPage() {
               <div className="relative">
                 <User size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#B4B7C6]" />
                 <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="bora.chhun@mfi.com"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="bora.chhun ឬ bora.chhun@mfi.com"
+                  autoComplete="username"
                   className="w-full bg-[#F5F6FA] rounded-xl pl-4 pr-10 py-3 text-sm text-[#1E2333] placeholder:text-[#B4B7C6] outline-none focus:ring-2 focus:ring-[#2A3F8F]/25 border border-transparent focus:border-[#2A3F8F]/20"
                 />
               </div>

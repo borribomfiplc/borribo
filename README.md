@@ -37,7 +37,7 @@ cp .env.example .env
 ```
 Fill in `.env` with the config values from step 1 (`VITE_FIREBASE_*`).
 
-### 4. Seed demo data (optional but recommended for a first look)
+### 4. Seed initial data (run once for a new project)
 1. Firebase Console → **Project settings (gear icon) → Service accounts →
    Generate new private key** → save the downloaded file as
    `serviceAccountKey.json` in the project root (already gitignored).
@@ -48,17 +48,36 @@ Fill in `.env` with the config values from step 1 (`VITE_FIREBASE_*`).
    This pushes the existing demo employees, branches, leave requests, etc.
    into Firestore so the dashboard isn't empty on first load.
 
-### 5. Lock down access
+### 5. Create the first real accounts and roles
+
+This app does **not** create Firebase users in the browser. Run this locally
+with the service-account key from step 4. It creates Firebase Auth accounts,
+custom claims, and Firestore profiles together.
+
+Windows PowerShell:
+
+```powershell
+$env:ADMIN_PASSWORD = "choose-a-strong-admin-password"
+$env:HR_PASSWORD = "choose-a-strong-hr-password"
+$env:EMPLOYEE_PASSWORD = "choose-a-strong-employee-password"
+npm run provision-users
+```
+
+The default email addresses are `admin@borribo.com`, `hr@borribo.com`, and
+`employee@borribo.com`. You can override them with `ADMIN_EMAIL`, `HR_EMAIL`,
+and `EMPLOYEE_EMAIL`. Do not add any of these passwords or
+`serviceAccountKey.json` to GitHub.
+
+### 6. Deploy the Firestore security rules
 ```bash
 npx firebase-tools login
 npx firebase-tools use --add        # pick your project
 npx firebase-tools deploy --only firestore:rules
 ```
-This publishes `firestore.rules`, which requires sign-in for all reads and
-writes — see the comment in that file if you later want per-role permissions
-(e.g. employees can only edit their own leave requests).
+This publishes the Admin / HR / Employee security rules. A Cloudflare deploy
+updates only the frontend; it does **not** deploy these Firebase rules.
 
-### 6. Run it
+### 7. Run it
 ```bash
 npm run dev
 ```
@@ -140,6 +159,22 @@ when you click into it.
 
 ## Notes
 
+### Security and deployment checklist
+
+- The `profiles/{uid}` document and Firebase custom claim must agree on the
+  user's role. Run `npm run provision-users` for every initial account.
+- Employees can access only their own leave requests. HR and Admin can manage
+  HR data; only Admin can manage user-role records.
+- `VITE_FIREBASE_*` values are web-app configuration, not private server
+  secrets. Put the same values in Cloudflare Pages for both Production and
+  Preview. Keep `.env`, `serviceAccountKey.json`, and passwords local.
+- Add both your Cloudflare Pages domain and `localhost` to Firebase
+  Authentication → Settings → Authorized domains.
+- Commit `.gitattributes` once. It prevents the Windows CRLF/LF issue that
+  previously showed every source file as changed.
+- Never include `.git`, `node_modules`, `dist`, `.env`, or
+  `serviceAccountKey.json` when sharing a ZIP of this project.
+
 - **Data model**: `employees`, `leaveRequests`, `attendanceToday`,
   `attendanceHistory`, `corrections`, `branches`, `departments`, `jobRoles`,
   `holidays`, `users`, and `roles` are all live Firestore collections (see
@@ -154,4 +189,3 @@ when you click into it.
 - Icons: [lucide-react](https://lucide.dev/). Charts: [recharts](https://recharts.org/).
 - Styling uses Tailwind CSS utility classes throughout — no separate CSS
   files per component.
-

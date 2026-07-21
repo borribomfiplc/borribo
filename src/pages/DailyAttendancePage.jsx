@@ -9,11 +9,13 @@ import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
 
-export default function DailyAttendancePage({ attendanceToday }) {
+export default function DailyAttendancePage({ employees, attendanceToday, setAttendanceToday }) {
   const [query, setQuery] = useState("");
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
   const [showManual, setShowManual] = useState(false);
+  const [editingRecord, setEditingRecord] = useState(null);
+  const [manualForm, setManualForm] = useState({ employeeId: "", checkIn: "08:00", checkOut: "17:00", status: "មានវត្តមាន" });
 
   const branches = ["ទាំងអស់", ...Array.from(new Set(attendanceToday.map((a) => a.branch)))];
   const statuses = ["ទាំងអស់", "មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"];
@@ -33,16 +35,60 @@ export default function DailyAttendancePage({ attendanceToday }) {
     absent: attendanceToday.filter((a) => a.status === "អវត្តមាន").length,
     leave: attendanceToday.filter((a) => a.status === "ច្បាប់").length,
   };
+  const total = attendanceToday.length || 1;
+  const todayLabel = new Intl.DateTimeFormat("km-KH", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+  }).format(new Date());
+
+  const openManualEntry = () => {
+    setManualForm((form) => ({ ...form, employeeId: form.employeeId || employees[0]?.id || "" }));
+    setShowManual(true);
+  };
+
+  const editRecord = (record) => {
+    setManualForm({ employeeId: record.id, checkIn: record.checkIn === "—" ? "08:00" : record.checkIn, checkOut: record.checkOut === "—" ? "17:00" : record.checkOut, status: record.status });
+    setEditingRecord(record.id);
+    setShowManual(true);
+  };
+
+  const saveManualEntry = async () => {
+    const employee = employees.find((item) => item.id === manualForm.employeeId);
+    if (!employee) return;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const absent = manualForm.status === "អវត្តមាន" || manualForm.status === "ច្បាប់";
+    const nextRecord = {
+      id: employee.id,
+      name: employee.name,
+      role: employee.role,
+      branch: employee.branch,
+      shift: "ព្រឹក",
+      checkIn: absent ? "—" : manualForm.checkIn,
+      checkOut: absent ? "—" : manualForm.checkOut,
+      hours: absent ? "—" : "បានកត់ត្រាដោយដៃ",
+      status: manualForm.status,
+      dateISO: todayISO,
+      recordId: `${employee.id}_${todayISO}`,
+      updatedAt: new Date().toISOString(),
+    };
+    await setAttendanceToday((records) => {
+      const exists = records.some((record) => record.id === employee.id);
+      return exists
+        ? records.map((record) => (record.id === employee.id ? { ...record, ...nextRecord } : record))
+        : [nextRecord, ...records];
+    });
+    setEditingRecord(null);
+    setShowManual(false);
+  };
 
   return (
     <>
       <div className="flex items-start justify-between mb-5 sm:mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">វត្តមានប្រចាំថ្ងៃ</h1>
-          <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">ថ្ងៃអាទិត្យ ១៩ កក្កដា ២០២៦ · បច្ចុប្បន្នភាពរហូតដល់ម៉ោងនេះ</p>
+          <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">{todayLabel} · បច្ចុប្បន្នភាពរហូតដល់ម៉ោងនេះ</p>
         </div>
         <button
-          onClick={() => setShowManual(true)}
+          onClick={openManualEntry}
           className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap"
           style={{ background: COLORS.primary }}
         >
@@ -57,7 +103,7 @@ export default function DailyAttendancePage({ attendanceToday }) {
           icon={CheckCircle2}
           label="មានវត្តមាន"
           value={counts.present}
-          sub={`${((counts.present / attendanceToday.length) * 100).toFixed(0)}% នៃចំនួនសរុប`}
+          sub={`${((counts.present / total) * 100).toFixed(0)}% នៃចំនួនសរុប`}
           iconBg={COLORS.greenLight}
           iconColor={COLORS.green}
           chartColor={COLORS.green}
@@ -66,7 +112,7 @@ export default function DailyAttendancePage({ attendanceToday }) {
           icon={AlertCircle}
           label="មកយឺត"
           value={counts.late}
-          sub={`${((counts.late / attendanceToday.length) * 100).toFixed(0)}% នៃចំនួនសរុប`}
+          sub={`${((counts.late / total) * 100).toFixed(0)}% នៃចំនួនសរុប`}
           iconBg={COLORS.amberLight}
           iconColor={COLORS.accent}
           chartColor={COLORS.accent}
@@ -75,7 +121,7 @@ export default function DailyAttendancePage({ attendanceToday }) {
           icon={XCircle}
           label="អវត្តមាន"
           value={counts.absent}
-          sub={`${((counts.absent / attendanceToday.length) * 100).toFixed(0)}% នៃចំនួនសរុប`}
+          sub={`${((counts.absent / total) * 100).toFixed(0)}% នៃចំនួនសរុប`}
           iconBg={COLORS.redLight}
           iconColor={COLORS.red}
           chartColor={COLORS.red}
@@ -84,7 +130,7 @@ export default function DailyAttendancePage({ attendanceToday }) {
           icon={Clock}
           label="ឈប់សម្រាក"
           value={counts.leave}
-          sub={`${((counts.leave / attendanceToday.length) * 100).toFixed(0)}% នៃចំនួនសរុប`}
+          sub={`${((counts.leave / total) * 100).toFixed(0)}% នៃចំនួនសរុប`}
           iconBg={COLORS.purpleLight}
           iconColor={COLORS.purple}
           chartColor={COLORS.purple}
@@ -185,7 +231,7 @@ export default function DailyAttendancePage({ attendanceToday }) {
                     </span>
                   </td>
                   <td className="px-5 py-3.5 text-left">
-                    <button className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] ml-auto">
+                    <button onClick={() => editRecord(a)} aria-label={`កែវត្តមាន ${a.name}`} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] ml-auto">
                       <Pencil size={14} />
                     </button>
                   </td>
@@ -263,9 +309,9 @@ export default function DailyAttendancePage({ attendanceToday }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-bold text-[#1E2333] text-lg">កត់ត្រាវត្តមានដោយដៃ</h3>
+              <h3 className="font-bold text-[#1E2333] text-lg">{editingRecord ? "កែតម្រូវវត្តមាន" : "កត់ត្រាវត្តមានដោយដៃ"}</h3>
               <button
-                onClick={() => setShowManual(false)}
+                onClick={() => { setShowManual(false); setEditingRecord(null); }}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]"
               >
                 <X size={18} />
@@ -274,32 +320,33 @@ export default function DailyAttendancePage({ attendanceToday }) {
             <div className="flex flex-col gap-3.5">
               <div>
                 <FieldLabel>ជ្រើសរើសបុគ្គលិក</FieldLabel>
-                <SelectField options={attendanceToday.map((a) => a.name)} defaultValue={attendanceToday[0].name} />
+                <SelectField options={employees.map((employee) => ({ label: `${employee.name} · ${employee.id}`, value: employee.id }))} value={manualForm.employeeId} onChange={(e) => setManualForm({ ...manualForm, employeeId: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <FieldLabel>ម៉ោងចូល</FieldLabel>
-                  <TextField type="time" defaultValue="08:00" />
+                  <TextField type="time" value={manualForm.checkIn} onChange={(e) => setManualForm({ ...manualForm, checkIn: e.target.value })} />
                 </div>
                 <div>
                   <FieldLabel>ម៉ោងចេញ</FieldLabel>
-                  <TextField type="time" defaultValue="17:00" />
+                  <TextField type="time" value={manualForm.checkOut} onChange={(e) => setManualForm({ ...manualForm, checkOut: e.target.value })} />
                 </div>
               </div>
               <div>
                 <FieldLabel>ស្ថានភាព</FieldLabel>
-                <SelectField options={["មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"]} defaultValue="មានវត្តមាន" />
+                <SelectField options={["មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"]} value={manualForm.status} onChange={(e) => setManualForm({ ...manualForm, status: e.target.value })} />
               </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowManual(false)}
+                onClick={() => { setShowManual(false); setEditingRecord(null); }}
                 className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#5B5F73]"
               >
                 បោះបង់
               </button>
               <button
-                onClick={() => setShowManual(false)}
+                onClick={saveManualEntry}
+                disabled={!manualForm.employeeId}
                 className="flex-1 text-white rounded-xl py-2.5 text-sm font-semibold"
                 style={{ background: COLORS.primary }}
               >

@@ -14,6 +14,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
 
   const nowLabel = () =>
     new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  const todayISO = () => new Date().toISOString().slice(0, 10);
 
   const reset = () => {
     setPin("");
@@ -46,8 +47,13 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
     const m = new Date().getMinutes();
     const isLate = h > 8 || (h === 8 && m > 15);
     setAttendanceToday((list) => {
+      const existing = list.find((a) => a.id === matchedEmployee.id);
+      const dateISO = todayISO();
       const record = {
+        ...existing,
         id: matchedEmployee.id,
+        recordId: `${matchedEmployee.id}_${dateISO}`,
+        dateISO,
         name: matchedEmployee.name,
         role: matchedEmployee.role,
         branch: matchedEmployee.branch,
@@ -57,8 +63,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
         hours: "កំពុងធ្វើការ",
         status: isLate ? "យឺត" : "មានវត្តមាន",
       };
-      const exists = list.some((a) => a.id === matchedEmployee.id);
-      return exists ? list.map((a) => (a.id === matchedEmployee.id ? record : a)) : [record, ...list];
+      return existing ? list.map((a) => (a.id === matchedEmployee.id ? record : a)) : [record, ...list];
     });
     setMessage({ type: "in", time });
     setTimeout(reset, 2500);

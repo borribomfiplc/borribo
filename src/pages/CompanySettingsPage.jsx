@@ -22,6 +22,7 @@ export default function CompanySettingsPage() {
   const [form, setForm] = useState(DEFAULT_COMPANY);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
+  const [logoPreview, setLogoPreview] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +41,11 @@ export default function CompanySettingsPage() {
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
+  const chooseLogo = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setLogoPreview(URL.createObjectURL(file));
+  };
 
   if (loading) {
     return <div className="py-24 text-center text-sm text-[#8A8FA3]">កំពុងផ្ទុក...</div>;
@@ -55,14 +61,15 @@ export default function CompanySettingsPage() {
 
       <div className="flex flex-col gap-5">
         <div className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5 flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-[#EEF1FB] text-[#2A3F8F] text-xl font-bold flex items-center justify-center shrink-0">
-            {form.name.slice(0, 1)}
+          <div className="w-16 h-16 rounded-2xl bg-[#EEF1FB] text-[#2A3F8F] text-xl font-bold flex items-center justify-center shrink-0 overflow-hidden">
+            {logoPreview ? <img src={logoPreview} alt="រូបសញ្ញាក្រុមហ៊ុន" className="w-full h-full object-cover" /> : form.name.slice(0, 1)}
           </div>
           <div>
             <div className="font-semibold text-[#1E2333] text-sm">{form.name}</div>
-            <button className="text-xs text-[#2A3F8F] font-medium mt-1 flex items-center gap-1.5">
+            <label className="cursor-pointer text-xs text-[#2A3F8F] font-medium mt-1 flex items-center gap-1.5">
               <Camera size={13} /> ប្តូររូបសញ្ញា
-            </button>
+              <input type="file" accept="image/*" onChange={chooseLogo} className="sr-only" />
+            </label>
           </div>
         </div>
 

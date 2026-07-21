@@ -1,16 +1,19 @@
 import React from "react";
-import {
-  CalendarDays, CheckCircle2, XCircle, AlertCircle
-} from "lucide-react";
+import { CalendarDays, CheckCircle2, XCircle, AlertCircle, Trophy } from "lucide-react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell
 } from "recharts";
 import { COLORS } from "../data/theme";
-import { leaveData, leaveTypeStyle } from "../data/mockData";
+import { leaveTypeStyle, leaveTypes } from "../data/mockData";
 import ReportHeader from "../components/shared/ReportHeader";
 import StatCard from "../components/shared/StatCard";
 
 export default function LeaveReportPage({ leaveRequests }) {
+  const leaveData = leaveTypes.map((name, index) => ({
+    name,
+    value: leaveRequests.filter((request) => request.leaveType === name).length,
+    color: [COLORS.primary, COLORS.green, COLORS.accent, COLORS.purple][index],
+  })).filter((item) => item.value > 0);
   const total = leaveData.reduce((a, b) => a + b.value, 0);
   const counts = {
     approved: leaveRequests.filter((r) => r.status === "បានអនុម័ត").length,
@@ -18,6 +21,14 @@ export default function LeaveReportPage({ leaveRequests }) {
     rejected: leaveRequests.filter((r) => r.status === "បានបដិសេធ").length,
   };
   const totalDays = leaveRequests.reduce((a, r) => a + (r.days || 0), 0);
+  const employeesWithMostCases = Object.values(leaveRequests.reduce((acc, request) => {
+    const key = request.empId || request.name;
+    if (!acc[key]) acc[key] = { id: key, name: request.name, role: request.role, branch: request.branch, cases: 0, days: 0, pending: 0 };
+    acc[key].cases += 1;
+    acc[key].days += Number(request.days) || 0;
+    if (request.status === "រង់ចាំពិនិត្យ") acc[key].pending += 1;
+    return acc;
+  }, {})).sort((a, b) => b.cases - a.cases || b.days - a.days).slice(0, 5);
 
   return (
     <>
@@ -37,7 +48,7 @@ export default function LeaveReportPage({ leaveRequests }) {
             <div className="relative w-[130px] h-[130px] shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={leaveData} dataKey="value" innerRadius={40} outerRadius={62} paddingAngle={2}>
+                  <Pie data={leaveData.length ? leaveData : [{ name: "មិនទាន់មាន", value: 1, color: "#E5E7EB" }]} dataKey="value" innerRadius={40} outerRadius={62} paddingAngle={2}>
                     {leaveData.map((d, i) => (
                       <Cell key={i} fill={d.color} stroke="none" />
                     ))}
@@ -107,6 +118,21 @@ export default function LeaveReportPage({ leaveRequests }) {
           </table>
         </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
+        <div className="px-5 py-4 border-b border-[#EBEDF3] flex items-center gap-2">
+          <Trophy size={17} className="text-[#E8A33D]" />
+          <div><h3 className="font-semibold text-[#1E2333] text-[15px]">បុគ្គលិកដែលមានករណីច្រើនបំផុត</h3><p className="text-xs text-[#8A8FA3] mt-0.5">តម្រៀបតាមចំនួនសំណើច្បាប់សរុប</p></div>
+        </div>
+        {employeesWithMostCases.length ? <div className="divide-y divide-[#EBEDF3]">
+          {employeesWithMostCases.map((employee, index) => <div key={employee.id} className="flex items-center gap-3 px-5 py-3.5">
+            <span className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: index === 0 ? COLORS.amberLight : COLORS.primaryLight, color: index === 0 ? COLORS.accent : COLORS.primary }}>{index + 1}</span>
+            <div className="w-9 h-9 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-xs font-bold flex items-center justify-center">{employee.name?.slice(0, 1)}</div>
+            <div className="flex-1 min-w-0"><div className="font-medium text-[#1E2333] text-sm truncate">{employee.name}</div><div className="text-xs text-[#8A8FA3] truncate">{employee.role} · {employee.branch}</div></div>
+            <div className="text-left"><div className="font-bold text-[#1E2333] text-sm">{employee.cases} ករណី</div><div className="text-xs text-[#8A8FA3]">{employee.days} ថ្ងៃ {employee.pending ? `· រង់ចាំ ${employee.pending}` : ""}</div></div>
+          </div>)}
+        </div> : <div className="py-10 text-center text-sm text-[#8A8FA3]">មិនទាន់មានទិន្នន័យសំណើច្បាប់ទេ</div>}
       </div>
     </>
   );

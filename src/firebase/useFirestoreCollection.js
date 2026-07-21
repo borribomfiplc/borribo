@@ -16,10 +16,9 @@ import { db } from "./config";
  *
  * How it works:
  * - Subscribes to the collection with onSnapshot for real-time data.
- * - If the collection is empty on first load, it is seeded once from
- *   `seedData` (handy for a fresh Firebase project — see scripts/seed.mjs
- *   for seeding from the command line instead, which is preferred for
- *   production so the client doesn't need write access to an empty db).
+ * - Production data must be seeded by the admin script. The browser never
+ *   writes demo records automatically: an authenticated employee must not be
+ *   able to populate or overwrite a new database.
  * - The returned setter diffs the next array against the current one by
  *   `idField` and writes only the adds/updates/removes to Firestore in a
  *   single batch; the UI then updates from the next onSnapshot event, so
@@ -30,37 +29,25 @@ import { db } from "./config";
  * @param {string} idField Field on each item that becomes the Firestore doc ID.
  * @returns {[Array<object>, Function, boolean, Error|null]} [data, setData, loading, error]
  */
-export function useFirestoreCollection(collectionName, seedData = [], idField = "id") {
+export function useFirestoreCollection(collectionName, seedData = [], idField = "id", enabled = true) {
   const [data, setDataState] = useState(seedData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const dataRef = useRef(data);
   dataRef.current = data;
-  const hasSeededRef = useRef(false);
 
   useEffect(() => {
-    hasSeededRef.current = false;
+    if (!enabled) {
+      setDataState([]);
+      setLoading(false);
+      setError(null);
+      return undefined;
+    }
     const colRef = collection(db, collectionName);
 
     const unsubscribe = onSnapshot(
       colRef,
       async (snapshot) => {
-        if (snapshot.empty && !hasSeededRef.current && seedData.length) {
-          hasSeededRef.current = true;
-          try {
-            const batch = writeBatch(db);
-            seedData.forEach((item) => {
-              batch.set(doc(db, collectionName, String(item[idField])), item);
-            });
-            await batch.commit();
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(`[firestore] Failed to seed "${collectionName}":`, err);
-            setError(err);
-            setLoading(false);
-          }
-          return; // onSnapshot fires again once the seed write lands
-        }
         setDataState(snapshot.docs.map((d) => d.data()));
         setLoading(false);
       },
@@ -74,10 +61,11 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
 
     return () => unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectionName]);
+  }, [collectionName, enabled]);
 
   const setData = useCallback(
     async (updater) => {
+      if (!enabled) throw new Error(`No permission to write ${collectionName}`);
       const prev = dataRef.current;
       const next = typeof updater === "function" ? updater(prev) : updater;
 
@@ -104,7 +92,7 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
         setDataState(prev); // roll back optimistic update
       }
     },
-    [collectionName, idField]
+    [collectionName, enabled, idField]
   );
 
   return [data, setData, loading, error];

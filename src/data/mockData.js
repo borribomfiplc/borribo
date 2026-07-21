@@ -2,7 +2,9 @@
 // (see scripts/seed.mjs) and as local fallbacks. Once Firestore has data,
 // the app reads live from the database, not from this file.
 import { CheckCircle2, AlertCircle, XCircle, Clock } from "lucide-react";
-import { COLORS } from "./theme";
+// Node.js runs this module for `npm run seed`; unlike Vite it requires the
+// explicit extension for local ES module imports.
+import { COLORS } from "./theme.js";
 
 export const weekData = [
   { day: "ច័ន្ទ", present: 118, late: 10, absent: 8, leave: 4 },
@@ -52,7 +54,7 @@ export const statusStyle = {
   "អសកម្ម": { bg: "#F1F2F6", fg: "#8A8FA3" },
 };
 
-export const attendanceToday = [
+const attendanceTodayRaw = [
   { id: "EMP-001", name: "សុខ ស្រីលក្ខណ៍", role: "មន្ត្រីទីផ្សារ", branch: "ការិយាល័យកណ្តាល", shift: "ព្រឹក", checkIn: "08:05 AM", checkOut: "05:02 PM", hours: "8ម៉ោង 57នាទី", status: "មានវត្តមាន" },
   { id: "EMP-002", name: "ឈយ វីរៈ", role: "ផ្នែកព័ត៌មានវិទ្យា", branch: "ការិយាល័យកណ្តាល", shift: "ព្រឹក", checkIn: "08:12 AM", checkOut: "05:10 PM", hours: "8ម៉ោង 58នាទី", status: "មានវត្តមាន" },
   { id: "EMP-003", name: "ង៉ែត សុភ័ណ្ណា", role: "គណនេយ្យករ", branch: "សាខាទួលគោក", shift: "ព្រឹក", checkIn: "08:35 AM", checkOut: "05:00 PM", hours: "8ម៉ោង 25នាទី", status: "យឺត" },
@@ -62,6 +64,15 @@ export const attendanceToday = [
   { id: "EMP-007", name: "លី សុជាតា", role: "គិតលុយ", branch: "សាខាទួលគោក", shift: "ព្រឹក", checkIn: "—", checkOut: "—", hours: "—", status: "អវត្តមាន" },
   { id: "EMP-008", name: "ហេង ចាន់ថា", role: "អ្នកសវនកម្មផ្ទៃក្នុង", branch: "ការិយាល័យកណ្តាល", shift: "ព្រឹក", checkIn: "08:48 AM", checkOut: "05:15 PM", hours: "8ម៉ោង 27នាទី", status: "យឺត" },
 ];
+
+// One employee gets one record per day. `recordId` is the Firestore document
+// key; `id` remains the human employee ID used throughout the UI.
+const seedAttendanceDate = new Date().toISOString().slice(0, 10);
+export const attendanceToday = attendanceTodayRaw.map((row) => ({
+  ...row,
+  dateISO: seedAttendanceDate,
+  recordId: `${row.id}_${seedAttendanceDate}`,
+}));
 
 const historyDataRaw = [
   { id: "EMP-001", name: "សុខ ស្រីលក្ខណ៍", role: "មន្ត្រីទីផ្សារ", branch: "ការិយាល័យកណ្តាល", date: "១៩ កក្កដា ២០២៦", dateISO: "2026-07-19", shift: "ព្រឹក", checkIn: "08:05 AM", checkOut: "05:02 PM", hours: "8ម៉ោង 57នាទី", status: "មានវត្តមាន" },

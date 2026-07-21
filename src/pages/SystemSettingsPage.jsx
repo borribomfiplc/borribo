@@ -12,7 +12,6 @@ const DEFAULT_SYSTEM_SETTINGS = {
   autoLock: true,
   autoBackup: true,
   darkMode: false,
-  language: "ខ្មែរ",
   sessionTimeout: "៣០ នាទី",
   backupFreq: "ប្រចាំថ្ងៃ",
 };
@@ -35,7 +34,7 @@ export default function SystemSettingsPage() {
 
   const {
     emailNotif, pushNotif, autoLock, autoBackup, darkMode,
-    language, sessionTimeout, backupFreq,
+    sessionTimeout, backupFreq,
   } = settings;
   const set = (key) => (value) => setSettings((s) => ({ ...s, [key]: value }));
 
@@ -53,7 +52,7 @@ export default function SystemSettingsPage() {
     <>
       <div className="mb-5 sm:mb-6">
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ប្រព័ន្ធ</h1>
-        <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">ការជូនដំណឹង សុវត្ថិភាព ភាសា និងការបម្រុងទុកទិន្នន័យ</p>
+        <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">ការជូនដំណឹង សុវត្ថិភាព ការបង្ហាញ និងការបម្រុងទុកទិន្នន័យ</p>
       </div>
       <SettingsSaveBar onSave={handleSave} saved={saved} />
 
@@ -101,10 +100,7 @@ export default function SystemSettingsPage() {
           <div className="flex flex-col divide-y divide-[#EBEDF3]">
             <ToggleRow label="ម៉ូតងងឹត" desc="ប្តូររូបរាងកម្មវិធីទៅជាពណ៌ងងឹត" checked={darkMode} onChange={set("darkMode")} />
           </div>
-          <div className="mt-3">
-            <FieldLabel>ភាសា</FieldLabel>
-            <SelectField options={["ខ្មែរ", "English"]} value={language} onChange={(e) => set("language")(e.target.value)} />
-          </div>
+          <p className="mt-3 text-xs leading-relaxed text-[#8A8FA3]">ភាសាត្រូវបានផ្លាស់ប្ដូរពី topbar ខាងលើ។</p>
         </div>
       </div>
     </>

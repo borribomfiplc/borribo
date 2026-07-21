@@ -1,36 +1,27 @@
 import React, { useState } from "react";
-import {
-  X, Mail, Shield
-} from "lucide-react";
+import { Shield, Users, UserCheck, UserX } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { statusStyle } from "../data/mockData";
-import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
-import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
+import { OrgHeader } from "../components/shared/OrgWidgets";
 
-export default function UserRolesPage({ users, setUsers, roles, branches }) {
+export default function UserRolesPage({ users, roles }) {
   const [tab, setTab] = useState("users");
-  const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", role: roles[0]?.name ?? "", branch: branches[0]?.name ?? "" });
-  const [error, setError] = useState("");
-
-  const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
-
-  const handleSubmit = () => {
-    if (!form.name.trim() || !form.email.trim()) {
-      setError("សូមបំពេញឈ្មោះ និងអ៊ីមែល");
-      return;
-    }
-    setUsers((list) => [{ id: `USR-${String(list.length + 1).padStart(3, "0")}`, status: "សកម្ម", ...form }, ...list]);
-    setError("");
-    setForm({ name: "", email: "", role: roles[0]?.name ?? "", branch: branches[0]?.name ?? "" });
-    setShowNew(false);
-  };
-
-  const remove = (id) => setUsers((list) => list.filter((u) => u.id !== id));
+  const activeUsers = users.filter((user) => user.status === "សកម្ម").length;
 
   return (
     <>
-      <OrgHeader title="អ្នកប្រើប្រាស់ និងតួនាទី" sub="គ្រប់គ្រងគណនីអ្នកប្រើប្រាស់ប្រព័ន្ធ និងសិទ្ធិចូលប្រើ" onAdd={() => setShowNew(true)} addLabel="បន្ថែមអ្នកប្រើប្រាស់" />
+      <OrgHeader title="អ្នកប្រើប្រាស់ និងតួនាទី" sub="តួនាទីត្រូវបានគ្រប់គ្រងដោយ Admin script ដើម្បីការពារសិទ្ធិ Firebase" />
+      <div className="mb-5 rounded-xl bg-[#EEF1FB] text-[#2A3F8F] px-4 py-3 text-xs leading-relaxed">
+        ការបង្កើត ឬលុបគណនីពិត ត្រូវធ្វើតាម <span className="font-semibold">npm run provision-users</span> ដើម្បីបង្កើត Firebase Auth, Profile និង Role ក្នុងពេលតែមួយ។
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        {[
+          { label: "អ្នកប្រើប្រាស់សរុប", value: users.length, icon: Users, bg: COLORS.primaryLight, color: COLORS.primary },
+          { label: "គណនីសកម្ម", value: activeUsers, icon: UserCheck, bg: COLORS.greenLight, color: COLORS.green },
+          { label: "គណនីអសកម្ម", value: users.length - activeUsers, icon: UserX, bg: COLORS.redLight, color: COLORS.red },
+        ].map(({ label, value, icon: Icon, bg, color }) => <div key={label} className="bg-white border border-[#EBEDF3] rounded-2xl px-5 py-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: bg }}><Icon size={18} color={color} /></div><div><div className="text-xs text-[#8A8FA3]">{label}</div><div className="text-xl font-bold text-[#1E2333]">{value}</div></div></div>)}
+      </div>
 
       <div className="flex items-center gap-2 mb-5 bg-white rounded-xl border border-[#EBEDF3] p-1 w-fit">
         {[
@@ -87,11 +78,7 @@ export default function UserRolesPage({ users, setUsers, roles, branches }) {
                       {u.status}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-left">
-                    <button onClick={() => remove(u.id)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] ml-auto">
-                      <X size={15} />
-                    </button>
-                  </td>
+                  <td className="px-5 py-3.5 text-left" />
                 </tr>
               ))}
             </tbody>
@@ -109,33 +96,10 @@ export default function UserRolesPage({ users, setUsers, roles, branches }) {
                 <div className="font-semibold text-[#1E2333] text-sm">{r.name}</div>
               </div>
               <p className="text-xs text-[#5B5F73] leading-relaxed">{r.description}</p>
-              <div className="text-xs text-[#8A8FA3] border-t border-[#EBEDF3] pt-3">
-                {users.filter((u) => u.role === r.name).length} អ្នកប្រើប្រាស់
-              </div>
+              <div className="text-xs text-[#8A8FA3] border-t border-[#EBEDF3] pt-3 flex justify-between"><span>{users.filter((u) => u.role === r.name).length} អ្នកប្រើប្រាស់</span><span className="font-medium text-[#2A3F8F]">សិទ្ធិកំណត់រួច</span></div>
             </div>
           ))}
         </div>
-      )}
-
-      {showNew && (
-        <OrgModal title="បន្ថែមអ្នកប្រើប្រាស់ថ្មី" onClose={() => setShowNew(false)} onSubmit={handleSubmit} submitLabel="រក្សាទុកអ្នកប្រើប្រាស់" error={error}>
-          <div>
-            <FieldLabel required>ឈ្មោះ</FieldLabel>
-            <TextField value={form.name} onChange={update("name")} placeholder="ឈ្មោះពេញ" />
-          </div>
-          <div>
-            <FieldLabel required>អ៊ីមែល</FieldLabel>
-            <TextField icon={Mail} dir="ltr" value={form.email} onChange={update("email")} placeholder="name@mfi.com.kh" />
-          </div>
-          <div>
-            <FieldLabel>តួនាទី</FieldLabel>
-            <SelectField options={roles.map((r) => r.name)} value={form.role} onChange={update("role")} />
-          </div>
-          <div>
-            <FieldLabel>សាខា</FieldLabel>
-            <SelectField options={branches.map((b) => b.name)} value={form.branch} onChange={update("branch")} />
-          </div>
-        </OrgModal>
       )}
     </>
   );

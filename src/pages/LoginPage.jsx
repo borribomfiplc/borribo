@@ -3,14 +3,15 @@ import {
   ScanLine, User, Eye, EyeOff, LogIn
 } from "lucide-react";
 import { COLORS } from "../data/theme";
-import { login, authErrorMessage } from "../firebase/auth";
+import { login, authErrorMessage, sendPasswordReset } from "../firebase/auth";
 
-export default function LoginPage({ onKiosk }) {
+export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleLogin = async () => {
@@ -19,6 +20,7 @@ export default function LoginPage({ onKiosk }) {
       return;
     }
     setError("");
+    setNotice("");
     setSubmitting(true);
     try {
       // App.jsx listens for the auth state change and switches to the
@@ -28,6 +30,21 @@ export default function LoginPage({ onKiosk }) {
       setError(authErrorMessage(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    if (!username.trim()) {
+      setError("សូមបញ្ចូលអ៊ីមែលរបស់អ្នកជាមុនសិន");
+      return;
+    }
+    setError("");
+    setNotice("");
+    try {
+      await sendPasswordReset(username.trim());
+      setNotice("បានផ្ញើតំណប្តូរលេខសម្ងាត់ទៅអ៊ីមែលរបស់អ្នករួចហើយ");
+    } catch (err) {
+      setError(authErrorMessage(err));
     }
   };
 
@@ -59,41 +76,26 @@ export default function LoginPage({ onKiosk }) {
             style={{ background: "#fff" }}
           />
           <div className="relative z-10">
-            <div className="flex items-center gap-2.5 mb-10">
-              <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center font-bold">
-                ម
-              </div>
-              <div className="leading-tight">
-                <div className="font-bold text-[15px]">ប្រព័ន្ធវត្តមាន MFI</div>
-                <div className="text-[11px] text-white/70">Attendance System</div>
-              </div>
+            <div className="mb-10 inline-flex rounded-xl bg-white px-3 py-2 shadow-sm">
+              <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-52 h-auto object-contain" />
             </div>
             <h2 className="text-2xl font-bold leading-snug mb-3">
-              គ្រប់គ្រងវត្តមាន<br />និងច្បាប់ឈប់សម្រាក<br />ដោយងាយស្រួល
+              ប្រព័ន្ធគ្រប់គ្រងវត្តមាន<br />និងច្បាប់ឈប់សម្រាក។
             </h2>
             <p className="text-sm text-white/70 leading-relaxed max-w-[280px]">
-              តាមដានវត្តមានបុគ្គលិក អនុម័តច្បាប់ និងបង្កើតរបាយការណ៍ គ្រប់សាខានៅកន្លែងតែមួយ។
+              ធ្វើអោយជីវិតអ្នកកាន់តែប្រសើរ
             </p>
           </div>
           <div className="relative z-10 flex items-center gap-6 text-xs text-white/60">
-            <span>© 2026 MFI Attendance</span>
+            <span>© 2026 BORRIBO MFI</span>
             <span>v1.0.0</span>
           </div>
         </div>
 
         {/* Right form panel */}
         <div className="p-8 sm:p-12 flex flex-col justify-center">
-          <div className="lg:hidden flex items-center gap-2.5 mb-8">
-            <div
-              className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-              style={{ background: `linear-gradient(135deg, ${COLORS.primary}, #4A5FC1)` }}
-            >
-              ម
-            </div>
-            <div className="leading-tight">
-              <div className="font-bold text-[15px] text-[#1E2333]">ប្រព័ន្ធវត្តមាន MFI</div>
-              <div className="text-[11px] text-[#8A8FA3]">Attendance System</div>
-            </div>
+          <div className="lg:hidden mb-8">
+            <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-48 h-auto object-contain object-left" />
           </div>
 
           <h1 className="text-xl sm:text-2xl font-bold text-[#1E2333] mb-1.5">ចូលប្រើប្រព័ន្ធ</h1>
@@ -139,6 +141,9 @@ export default function LoginPage({ onKiosk }) {
             {error && (
               <div className="text-xs text-[#D9614F] bg-[#FBEBE8] rounded-lg px-3 py-2">{error}</div>
             )}
+            {notice && (
+              <div className="text-xs text-[#25834A] bg-[#E9F7EF] rounded-lg px-3 py-2">{notice}</div>
+            )}
 
             <div className="flex items-center justify-between text-xs">
               <label className="flex items-center gap-2 text-[#5B5F73] cursor-pointer select-none">
@@ -150,7 +155,7 @@ export default function LoginPage({ onKiosk }) {
                 />
                 ចងចាំខ្ញុំ
               </label>
-              <button type="button" className="text-[#2A3F8F] font-medium hover:underline">
+              <button type="button" onClick={handlePasswordReset} className="text-[#2A3F8F] font-medium hover:underline">
                 ភ្លេចលេខសម្ងាត់?
               </button>
             </div>
@@ -167,14 +172,9 @@ export default function LoginPage({ onKiosk }) {
             </button>
           </form>
 
-          <button
-            type="button"
-            onClick={onKiosk}
-            className="flex items-center justify-center gap-2 border border-[#EBEDF3] rounded-xl py-3 text-sm font-medium text-[#5B5F73] mt-4 hover:bg-[#F5F6FA]"
-          >
-            <ScanLine size={16} />
-            ស្កេនវត្តមានបុគ្គលិក (Kiosk)
-          </button>
+          <div className="flex items-center justify-center gap-2 border border-[#EBEDF3] rounded-xl py-3 text-xs text-[#8A8FA3] mt-4">
+            <ScanLine size={16} /> Kiosk ត្រូវចូលដោយគណនី Kiosk ដែលបានកំណត់ដោយ Admin
+          </div>
 
           <p className="text-xs text-[#B4B7C6] text-center mt-7">
             មានបញ្ហាចូលប្រើ? សូមទាក់ទងផ្នែក{" "}

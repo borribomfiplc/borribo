@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ScanLine, MapPin
 } from "lucide-react";
 import { FieldLabel, SelectField } from "../components/shared/FormFields";
 import { ToggleRow, SettingsSaveBar } from "../components/shared/SettingsWidgets";
+import { loadSettingsDoc, saveSettingsDoc } from "../firebase/settingsDoc";
 
 export default function GpsQrPage({ branches }) {
   const [radii, setRadii] = useState(Object.fromEntries(branches.map((b) => [b.id, "150"])));
@@ -12,15 +13,41 @@ export default function GpsQrPage({ branches }) {
   const [qrInterval, setQrInterval] = useState("ប្រចាំថ្ងៃ");
   const [saved, setSaved] = useState(false);
   const [regenerated, setRegenerated] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [qrToken, setQrToken] = useState("");
 
-  const handleSave = () => {
+  useEffect(() => {
+    const defaults = {
+      radii: Object.fromEntries(branches.map((b) => [b.id, "150"])),
+      requireQr: true,
+      requireGps: true,
+      qrInterval: "ប្រចាំថ្ងៃ",
+      qrToken: crypto.randomUUID(),
+    };
+    loadSettingsDoc("gpsQr", defaults).then((data) => {
+      setRadii({ ...defaults.radii, ...(data.radii || {}) });
+      setRequireQr(Boolean(data.requireQr));
+      setRequireGps(Boolean(data.requireGps));
+      setQrInterval(data.qrInterval || defaults.qrInterval);
+      setQrToken(data.qrToken || defaults.qrToken);
+      setLoading(false);
+    });
+  }, [branches]);
+
+  const handleSave = async () => {
+    await saveSettingsDoc("gpsQr", { radii, requireQr, requireGps, qrInterval, qrToken });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
-  const handleRegenerate = () => {
+  const handleRegenerate = async () => {
+    const nextToken = crypto.randomUUID();
+    setQrToken(nextToken);
+    await saveSettingsDoc("gpsQr", { radii, requireQr, requireGps, qrInterval, qrToken: nextToken });
     setRegenerated(true);
     setTimeout(() => setRegenerated(false), 2000);
   };
+
+  if (loading) return <div className="py-24 text-center text-sm text-[#8A8FA3]">កំពុងផ្ទុក...</div>;
 
   return (
     <>
@@ -68,6 +95,7 @@ export default function GpsQrPage({ branches }) {
           <div className="w-full aspect-square max-w-[160px] mx-auto rounded-2xl bg-[#F7F8FB] border border-[#EBEDF3] flex items-center justify-center mb-4">
             <ScanLine size={56} className="text-[#B4B7C6]" />
           </div>
+          <p className="text-[10px] text-center text-[#8A8FA3] break-all mb-3" title={qrToken}>Token: {qrToken.slice(0, 12)}…</p>
           <ToggleRow label="តម្រូវឲ្យស្កេន QR" desc="ស្កេនកូដ QR របស់សាខាមុនកត់ត្រាវត្តមាន" checked={requireQr} onChange={setRequireQr} />
           <div className="mt-1 mb-4">
             <FieldLabel>ថេរវេលាបង្កើត QR ថ្មី</FieldLabel>
@@ -80,6 +108,7 @@ export default function GpsQrPage({ branches }) {
             <ScanLine size={15} />
             {regenerated ? "បានបង្កើត QR ថ្មីរួចរាល់!" : "បង្កើត QR ថ្មី"}
           </button>
+          <p className="mt-3 text-[11px] leading-relaxed text-[#8A8FA3]">ការកំណត់នេះត្រូវបានរក្សាទុកពិត។ ការស្កេនកាមេរ៉ា និងការផ្ទៀងផ្ទាត់ GPS នឹងត្រូវភ្ជាប់ជាមួយ kiosk API នៅជំហានបន្ទាប់។</p>
         </div>
       </div>
     </>

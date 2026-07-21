@@ -76,14 +76,22 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
       {/* Desktop table */}
       <div className="hidden md:block bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
         <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[900px] table-fixed text-sm">
+          <colgroup>
+            <col className="w-[27%]" />
+            <col className="w-[18%]" />
+            <col className="w-[18%]" />
+            <col className="w-[16%]" />
+            <col className="w-[12%]" />
+            <col className="w-[9%]" />
+          </colgroup>
           <thead>
             <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
-              <th className="text-right font-medium px-5 py-3">បុគ្គលិក</th>
-              <th className="text-right font-medium px-5 py-3">តួនាទី</th>
-              <th className="text-right font-medium px-5 py-3">សាខា</th>
-              <th className="text-right font-medium px-5 py-3">លេខទូរស័ព្ទ</th>
-              <th className="text-right font-medium px-5 py-3">ស្ថានភាព</th>
+              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">បុគ្គលិក</th>
+              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">តួនាទី</th>
+              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">សាខា</th>
+              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">លេខទូរស័ព្ទ</th>
+              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">ស្ថានភាព</th>
               <th className="text-right font-medium px-5 py-3"></th>
             </tr>
           </thead>
@@ -101,9 +109,9 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
                     </div>
                   </div>
                 </td>
-                <td className="px-5 py-3.5 text-[#5B5F73]">{e.role}</td>
-                <td className="px-5 py-3.5 text-[#5B5F73]">{e.branch}</td>
-                <td className="px-5 py-3.5 text-[#5B5F73]" dir="ltr">
+                <td className="px-5 py-3.5 text-[#5B5F73] truncate">{e.role}</td>
+                <td className="px-5 py-3.5 text-[#5B5F73] truncate">{e.branch}</td>
+                <td className="px-5 py-3.5 text-[#5B5F73] whitespace-nowrap" dir="ltr">
                   {e.phone}
                 </td>
                 <td className="px-5 py-3.5">

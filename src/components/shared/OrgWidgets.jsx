@@ -11,14 +11,16 @@ export function OrgHeader({ title, sub, onAdd, addLabel }) {
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">{title}</h1>
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">{sub}</p>
       </div>
-      <button
-        onClick={onAdd}
-        className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap"
-        style={{ background: COLORS.primary }}
-      >
-        <UserPlus size={16} />
-        {addLabel}
-      </button>
+      {onAdd && (
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap"
+          style={{ background: COLORS.primary }}
+        >
+          <UserPlus size={16} />
+          {addLabel}
+        </button>
+      )}
     </div>
   );
 }

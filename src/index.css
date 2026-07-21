@@ -10,3 +10,30 @@ body {
   margin: 0;
   background: #f5f6fa;
 }
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/*
+ * Keep every desktop data table consistent.  Most pages previously aligned
+ * their headings to the right while their cell values started on the left,
+ * which made each column look offset.  A column now has one alignment from
+ * its heading through every row; explicitly centred summary columns keep
+ * their centre alignment.
+ */
+main table > thead > tr > th {
+  text-align: left !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+main table > thead > tr > th.text-center {
+  text-align: center !important;
+}
+
+main table > tbody > tr > td {
+  vertical-align: middle;
+}

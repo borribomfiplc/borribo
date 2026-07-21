@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  ChevronRight, User, Eye, EyeOff, Camera, Mail, MapPin, Phone, Briefcase, Shield, Save
+  ChevronRight, User, Camera, Mail, MapPin, Phone, Briefcase, Shield, Save
 } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField, SectionCard } from "../components/shared/FormFields";
@@ -24,9 +24,6 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
           startDate: editingEmployee.startDate || "",
           shift: editingEmployee.shift || "ព្រឹក",
           status: editingEmployee.status || "សកម្ម",
-          username: editingEmployee.username || "",
-          password: "",
-          role: editingEmployee.systemRole || "បុគ្គលិក",
         }
       : {
           name: "",
@@ -42,12 +39,8 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
           startDate: "",
           shift: "ព្រឹក",
           status: "សកម្ម",
-          username: "",
-          password: "",
-          role: "បុគ្គលិក",
         }
   );
-  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -215,40 +208,10 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
           </div>
         </SectionCard>
 
-        {/* Account & access */}
         <SectionCard title="គណនី និងសិទ្ធិចូលប្រើ" icon={Shield}>
-          <div>
-            <FieldLabel>ឈ្មោះគណនី (Username)</FieldLabel>
-            <TextField dir="ltr" value={form.username} onChange={update("username")} placeholder="ឧ. sreyleak.sok" />
-          </div>
-          <div>
-            <FieldLabel>តួនាទីប្រព័ន្ធ (Role)</FieldLabel>
-            <SelectField options={["អ្នកគ្រប់គ្រង", "គ្រប់គ្រងសាខា", "បុគ្គលិក"]} value={form.role} onChange={update("role")} />
-          </div>
-          <div className="md:col-span-2">
-            <FieldLabel>លេខសម្ងាត់ដំបូង</FieldLabel>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowPw((v) => !v)}
-                aria-label={showPw ? "លាក់លេខសម្ងាត់" : "បង្ហាញលេខសម្ងាត់"}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#B4B7C6] hover:text-[#5B5F73]"
-              >
-                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-              <input
-                type={showPw ? "text" : "password"}
-                dir="ltr"
-                value={form.password}
-                onChange={update("password")}
-                placeholder="កំណត់លេខសម្ងាត់បណ្តោះអាសន្ន"
-                className="w-full bg-[#F5F6FA] rounded-xl pl-4 pr-10 py-2.5 text-sm text-[#1E2333] placeholder:text-[#B4B7C6] outline-none focus:ring-2 focus:ring-[#2A3F8F]/20"
-              />
-            </div>
-            <p className="text-[11px] text-[#B4B7C6] mt-1.5">
-              បុគ្គលិកនឹងត្រូវប្តូរលេខសម្ងាត់ក្នុងការចូលប្រើលើកដំបូង
-            </p>
-          </div>
+          <p className="md:col-span-2 text-sm text-[#5B5F73] leading-relaxed">
+            ការរក្សាទុកនៅទីនេះបង្កើតតែព័ត៌មានបុគ្គលិក។ ដើម្បីបង្កើតគណនីចូលប្រើ និងកំណត់ Role ពិតប្រាកដ សូមប្រើ <span className="font-semibold">npm run provision-users</span> ដោយ Admin។
+          </p>
         </SectionCard>
       </div>
 

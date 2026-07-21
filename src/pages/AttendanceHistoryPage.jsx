@@ -39,6 +39,12 @@ export default function AttendanceHistoryPage({ historyData }) {
   const attendanceRate = filtered.length
     ? (((counts.present + counts.late) / filtered.length) * 100).toFixed(0)
     : 0;
+  const exportCsv = () => {
+    const rows = [["Employee ID", "Name", "Branch", "Date", "Check-in", "Check-out", "Status"], ...filtered.map((a) => [a.id, a.name, a.branch, a.dateISO, a.checkIn, a.checkOut, a.status])];
+    const csv = "\ufeff" + rows.map((row) => row.map((v) => `\"${String(v ?? "").replaceAll("\"", "\"\"")}\"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "attendance-history.csv"; link.click(); URL.revokeObjectURL(url);
+  };
 
   return (
     <>
@@ -50,6 +56,7 @@ export default function AttendanceHistoryPage({ historyData }) {
           </p>
         </div>
         <button
+          onClick={exportCsv}
           className="flex items-center gap-2 border border-[#EBEDF3] rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-[#5B5F73] whitespace-nowrap"
         >
           <FileText size={16} />

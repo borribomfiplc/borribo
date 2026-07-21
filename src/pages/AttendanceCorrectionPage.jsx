@@ -9,7 +9,9 @@ import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
 
-export default function AttendanceCorrectionPage({ employees, attendanceToday, corrections, setCorrections }) {
+const formatKhmerDate = (dateISO) => new Intl.DateTimeFormat("km-KH", { year: "numeric", month: "long", day: "numeric" }).format(new Date(`${dateISO}T00:00:00`));
+
+export default function AttendanceCorrectionPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, corrections, setCorrections }) {
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
@@ -33,8 +35,43 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, c
     rejected: corrections.filter((c) => c.status === "បានបដិសេធ").length,
   };
 
-  const decide = (id, decision) => {
-    setCorrections((list) => list.map((c) => (c.id === id ? { ...c, status: decision } : c)));
+  const decide = async (id, decision) => {
+    const correction = corrections.find((item) => item.id === id);
+    if (!correction || correction.status !== "រង់ចាំពិនិត្យ") return;
+    await setCorrections((list) => list.map((item) => (item.id === id ? { ...item, status: decision, decidedAt: new Date().toISOString() } : item)));
+    if (decision !== "បានអនុម័ត") return;
+
+    const dateISO = correction.dateISO || new Date().toISOString().slice(0, 10);
+    const docId = `${correction.empId}_${dateISO}`;
+    const changes = {
+      id: correction.empId,
+      name: correction.name,
+      role: correction.role,
+      branch: correction.branch,
+      dateISO,
+      date: correction.date || formatKhmerDate(dateISO),
+      shift: "ព្រឹក",
+      checkIn: correction.newCheckIn,
+      checkOut: correction.newCheckOut,
+      hours: correction.newStatus === "អវត្តមាន" || correction.newStatus === "ច្បាប់" ? "—" : "បានកែតម្រូវ",
+      status: correction.newStatus,
+      docId,
+      correctedAt: new Date().toISOString(),
+      correctionId: correction.id,
+    };
+    await setAttendanceHistory((list) => {
+      const exists = list.some((record) => record.docId === docId);
+      return exists ? list.map((record) => record.docId === docId ? { ...record, ...changes } : record) : [changes, ...list];
+    });
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (dateISO === todayISO) {
+      await setAttendanceToday((list) => {
+        const todayRecord = { ...changes, recordId: `${correction.empId}_${todayISO}` };
+        return list.some((record) => record.id === correction.empId)
+          ? list.map((record) => record.id === correction.empId ? { ...record, ...todayRecord } : record)
+          : [todayRecord, ...list];
+      });
+    }
   };
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -45,14 +82,16 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, c
       return;
     }
     const emp = employees.find((e) => e.id === form.empId);
-    const existing = attendanceToday.find((a) => a.id === form.empId);
+    const existing = attendanceHistory.find((item) => item.id === form.empId && item.dateISO === form.date)
+      || (form.date === new Date().toISOString().slice(0, 10) ? attendanceToday.find((item) => item.id === form.empId) : null);
     const newCorrection = {
       id: `COR-${String(corrections.length + 1).padStart(3, "0")}`,
       empId: emp.id,
       name: emp.name,
       role: emp.role,
       branch: emp.branch,
-      date: form.date,
+      date: formatKhmerDate(form.date),
+      dateISO: form.date,
       originalCheckIn: existing ? existing.checkIn : "—",
       originalCheckOut: existing ? existing.checkOut : "—",
       originalStatus: existing ? existing.status : "អវត្តមាន",
@@ -65,7 +104,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, c
     };
     setError("");
     setCorrections((list) => [newCorrection, ...list]);
-    setForm({ empId: employees[0].id, date: "", checkIn: "", checkOut: "", status: "មានវត្តមាន", reason: "" });
+    setForm({ empId: employees[0].id, date: new Date().toISOString().slice(0, 10), checkIn: "", checkOut: "", status: "មានវត្តមាន", reason: "" });
     setShowNew(false);
   };
 
@@ -323,7 +362,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, c
               </div>
               <div>
                 <FieldLabel required>កាលបរិច្ឆេទត្រូវកែតម្រូវ</FieldLabel>
-                <TextField value={form.date} onChange={update("date")} placeholder="ឧ. ១៩ កក្កដា ២០២៦" />
+                <TextField type="date" dir="ltr" value={form.date} onChange={update("date")} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

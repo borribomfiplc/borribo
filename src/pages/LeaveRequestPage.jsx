@@ -33,11 +33,23 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
     setRequests((list) => list.map((r) => (r.id === id ? { ...r, status: decision } : r)));
   };
 
-  const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const update = (key) => (e) => setForm((current) => {
+    const next = { ...current, [key]: e.target.value };
+    if ((key === "startDate" || key === "endDate") && next.startDate && next.endDate) {
+      const start = new Date(`${next.startDate}T00:00:00`);
+      const end = new Date(`${next.endDate}T00:00:00`);
+      next.days = end >= start ? String(Math.floor((end - start) / 86400000) + 1) : "";
+    }
+    return next;
+  });
 
   const handleSubmit = () => {
-    if (!form.startDate.trim() || !form.endDate.trim() || !form.reason.trim()) {
+    if (!form.startDate || !form.endDate || !form.reason.trim()) {
       setError("សូមបំពេញកាលបរិច្ឆេទ និងហេតុផលនៃការស្នើសុំច្បាប់");
+      return;
+    }
+    if (new Date(`${form.endDate}T00:00:00`) < new Date(`${form.startDate}T00:00:00`)) {
+      setError("ថ្ងៃបញ្ចប់ត្រូវនៅក្រោយ ឬស្មើថ្ងៃចាប់ផ្តើម");
       return;
     }
     const emp = employees.find((e) => e.id === form.empId);
@@ -53,7 +65,7 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
       days: form.days ? Number(form.days) : 1,
       reason: form.reason,
       requestedBy: emp.name,
-      requestedOn: "១៩ កក្កដា ២០២៦",
+      requestedOn: new Intl.DateTimeFormat("km-KH", { year: "numeric", month: "long", day: "numeric" }).format(new Date()),
       status: "រង់ចាំពិនិត្យ",
     };
     setError("");
@@ -328,11 +340,11 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <FieldLabel required>ថ្ងៃចាប់ផ្តើម</FieldLabel>
-                  <TextField value={form.startDate} onChange={update("startDate")} placeholder="ឧ. ២០ កក្កដា ២០២៦" />
+                  <TextField type="date" dir="ltr" value={form.startDate} onChange={update("startDate")} />
                 </div>
                 <div>
                   <FieldLabel required>ថ្ងៃបញ្ចប់</FieldLabel>
-                  <TextField value={form.endDate} onChange={update("endDate")} placeholder="ឧ. ២១ កក្កដា ២០២៦" />
+                  <TextField type="date" dir="ltr" value={form.endDate} onChange={update("endDate")} />
                 </div>
               </div>
               <div>

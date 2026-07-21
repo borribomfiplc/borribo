@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Users, Clock, CalendarDays, Calendar, BarChart3, ChevronDown, ChevronRight,
   UserPlus, FileText, ScanLine, Cake, Gift
@@ -13,6 +13,8 @@ import StatCard from "../components/shared/StatCard";
 
 export default function DashboardHomePage({ setActive, setOpenSection, setEditingEmployee }) {
   const total = leaveData.reduce((a, b) => a + b.value, 0);
+  const [showDate, setShowDate] = useState(false);
+  const today = new Intl.DateTimeFormat("km-KH", { day: "numeric", month: "long", year: "numeric" }).format(new Date());
 
   return (
     <>
@@ -23,11 +25,12 @@ export default function DashboardHomePage({ setActive, setOpenSection, setEditin
                 សូមស្វាគមន៍មកវិញ ចាន់ បូរ៉ា! នេះជាសកម្មភាពថ្ងៃនេះ។
               </p>
             </div>
-            <button className="flex items-center gap-2 bg-white border border-[#EBEDF3] rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-[#1E2333] whitespace-nowrap">
+            <button onClick={() => setShowDate((v) => !v)} className="flex items-center gap-2 bg-white border border-[#EBEDF3] rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-[#1E2333] whitespace-nowrap">
               <Calendar size={15} className="shrink-0" />
-              ១៩ កក្កដា ២០២៦
+              {today}
               <ChevronDown size={14} className="text-[#B4B7C6] shrink-0" />
             </button>
+            {showDate && <p className="w-full text-xs text-[#8A8FA3]">ផ្ទាំងគ្រប់គ្រងកំពុងបង្ហាញទិន្នន័យសម្រាប់ថ្ងៃនេះ</p>}
           </div>
 
           {/* Stat cards */}
@@ -116,7 +119,7 @@ export default function DashboardHomePage({ setActive, setOpenSection, setEditin
                   </div>
                 ))}
               </div>
-              <button className="mt-4 text-sm font-medium text-[#2A3F8F] border border-[#EBEDF3] rounded-xl py-2.5 flex items-center justify-center gap-1.5">
+              <button onClick={() => { setOpenSection("attendance"); setActive("វត្តមានប្រចាំថ្ងៃ"); }} className="mt-4 text-sm font-medium text-[#2A3F8F] border border-[#EBEDF3] rounded-xl py-2.5 flex items-center justify-center gap-1.5">
                 មើលការចូលធ្វើការទាំងអស់ <ChevronRight size={14} />
               </button>
             </div>
@@ -186,7 +189,7 @@ export default function DashboardHomePage({ setActive, setOpenSection, setEditin
                 <h3 className="font-semibold text-[#1E2333] text-[15px] flex items-center gap-2">
                   <Cake size={16} className="text-[#E8A33D]" /> ថ្ងៃខួបកំណើតថ្ងៃនេះ
                 </h3>
-                <button className="text-xs text-[#2A3F8F] font-medium">មើលទាំងអស់</button>
+                <button onClick={() => { setOpenSection("employees"); setActive("បញ្ជីបុគ្គលិក"); }} className="text-xs text-[#2A3F8F] font-medium">មើលទាំងអស់</button>
               </div>
               <div className="flex flex-col gap-4">
                 {birthdays.map((b, i) => (

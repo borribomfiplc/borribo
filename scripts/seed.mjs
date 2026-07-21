@@ -7,8 +7,8 @@
 //      `serviceAccountKey.json` in the project root (it's gitignored).
 //   2. npm run seed
 //
-// Safe to re-run: it overwrites documents by their existing `id` field
-// rather than duplicating them.
+// Safe to re-run: it merges demo fields by existing `id` field, preserving
+// the uid/email link created later by scripts/provision-users.mjs.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -43,7 +43,6 @@ const {
   initialDepartments,
   initialJobRoles,
   initialHolidays,
-  initialUsers,
   initialRoles,
 } = await import("../src/data/mockData.js");
 
@@ -57,13 +56,12 @@ const collections = {
   departments: initialDepartments,
   jobRoles: initialJobRoles,
   holidays: initialHolidays,
-  users: initialUsers,
   roles: initialRoles,
 };
 
 for (const [name, rows] of Object.entries(collections)) {
   const batch = db.batch();
-  rows.forEach((row) => batch.set(db.collection(name).doc(String(row.docId ?? row.id)), row));
+  rows.forEach((row) => batch.set(db.collection(name).doc(String(row.docId ?? row.id)), row, { merge: true }));
   await batch.commit();
   console.log(`✅ Seeded ${rows.length} docs into "${name}"`);
 }

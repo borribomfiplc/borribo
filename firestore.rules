@@ -1,15 +1,110 @@
 rules_version = '2';
 
-// This app has one login tier (staff who can sign in to the dashboard), so
-// the rule is simple: you must be signed in with Firebase Auth to read or
-// write anything. If you later add row-level permissions (e.g. employees
-// can only edit their own leave requests), tighten the `write` rules for
-// each collection individually — this is intentionally a safe starting
-// point, not a finished permissions model.
+// Security model
+// - Custom claims are assigned only by scripts/provision-users.mjs (Firebase Admin SDK).
+// - The browser may read its own profile, but can never choose or elevate a role.
+// - Admin and HR are managers; employees can only access their own leave records.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return signedIn() && request.auth.token.role == role;
+    }
+
+    function manager() {
+      return hasRole('admin') || hasRole('hr');
+    }
+
+    function administrator() {
+      return hasRole('admin');
+    }
+
+    function kiosk() {
+      return hasRole('kiosk');
+    }
+
+    match /profiles/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow list: if administrator();
+      allow create, update, delete: if administrator();
+    }
+
+    match /employees/{employeeId} {
+      allow get, list: if manager() || kiosk() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if manager();
+    }
+
+    match /leaveRequests/{requestId} {
+      allow get, list: if manager() || (signedIn() && resource.data.employeeUid == request.auth.uid);
+      allow create: if hasRole('employee')
+        && request.resource.data.employeeUid == request.auth.uid
+        && request.resource.data.status == 'រង់ចាំពិនិត្យ';
+      allow update: if manager() || (
+        hasRole('employee')
+        && resource.data.employeeUid == request.auth.uid
+        && request.resource.data.employeeUid == request.auth.uid
+        && request.resource.data.status == 'រង់ចាំពិនិត្យ'
+        && request.resource.data.status == resource.data.status
+      );
+      allow delete: if manager() || (
+        hasRole('employee')
+        && resource.data.employeeUid == request.auth.uid
+        && resource.data.status == 'រង់ចាំពិនិត្យ'
+      );
+    }
+
+    // A kiosk is a dedicated device account. It has no access to leave,
+    // profiles, settings, roles, or employee administration.
+    match /attendanceToday/{recordId} {
+      // Employees use a stable per-day record ID and can only read/write the
+      // record that contains their own UID. A query/list is deliberately not
+      // exposed to employees, so they cannot enumerate other staff records.
+      allow get: if manager() || kiosk() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow list: if manager() || kiosk();
+      allow create: if manager() || kiosk() || (
+        hasRole('employee')
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.id == request.auth.token.employeeId
+        && request.resource.data.status == 'មានវត្តមាន'
+      );
+      allow update: if manager() || kiosk() || (
+        hasRole('employee')
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.status == 'មានវត្តមាន'
+      );
+      allow delete: if manager();
+    }
+
+    match /attendanceHistory/{recordId} {
+      allow get, list, create, update, delete: if manager();
+    }
+
+    match /corrections/{recordId} {
+      allow get, list, create, update, delete: if manager();
+    }
+
+    match /{collectionName}/{documentId} {
+      allow get, list, create, update, delete: if manager()
+        && collectionName in ['branches', 'departments', 'jobRoles', 'holidays'];
+    }
+
+    match /settings/{settingId} {
+      allow get: if manager();
+      allow create, update: if manager();
+      allow delete: if administrator();
+    }
+
+    match /users/{userId} {
+      allow get, list, create, update, delete: if administrator();
+    }
+
+    match /roles/{roleId} {
+      allow get, list, create, update, delete: if administrator();
     }
   }
 }

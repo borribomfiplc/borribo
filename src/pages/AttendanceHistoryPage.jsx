@@ -7,13 +7,19 @@ import { attendanceStatusStyle } from "../data/mockData";
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
+import { todayISO } from "../utils/attendance";
+
+const initialFromDate = () => {
+  const date = new Date(); date.setDate(date.getDate() - 30);
+  return todayISO(date);
+};
 
 export default function AttendanceHistoryPage({ historyData }) {
   const [query, setQuery] = useState("");
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
-  const [fromDate, setFromDate] = useState("2026-07-15");
-  const [toDate, setToDate] = useState("2026-07-19");
+  const [fromDate, setFromDate] = useState(initialFromDate);
+  const [toDate, setToDate] = useState(todayISO);
 
   const branches = ["ទាំងអស់", ...Array.from(new Set(historyData.map((a) => a.branch)))];
   const statuses = ["ទាំងអស់", "មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"];

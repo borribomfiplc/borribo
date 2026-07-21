@@ -3,18 +3,15 @@ import {
   ScanLine, LogIn, LogOut, X, CheckCircle2
 } from "lucide-react";
 import { COLORS } from "../data/theme";
+import { attendanceHistoryRecord, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
 
-export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, onExit }) {
+export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, onExit }) {
   const [pin, setPin] = useState("");
   const [matchedEmployee, setMatchedEmployee] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState(null); // { type: "in" | "out", time }
 
-  const todayRecord = matchedEmployee ? attendanceToday.find((a) => a.id === matchedEmployee.id) : null;
-
-  const nowLabel = () =>
-    new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
-  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const todayRecord = matchedEmployee ? attendanceToday.find((a) => a.id === matchedEmployee.id && a.dateISO === todayISO()) : null;
 
   const reset = () => {
     setPin("");
@@ -42,7 +39,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
   const backspace = () => setPin((p) => p.slice(0, -1));
 
   const handleCheckIn = () => {
-    const time = nowLabel();
+    const time = timeNow();
     const h = new Date().getHours();
     const m = new Date().getMinutes();
     const isLate = h > 8 || (h === 8 && m > 15);
@@ -54,6 +51,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
         id: matchedEmployee.id,
         recordId: `${matchedEmployee.id}_${dateISO}`,
         dateISO,
+        date: formatKhmerDate(dateISO),
         name: matchedEmployee.name,
         role: matchedEmployee.role,
         branch: matchedEmployee.branch,
@@ -65,15 +63,28 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
       };
       return existing ? list.map((a) => (a.id === matchedEmployee.id ? record : a)) : [record, ...list];
     });
+    const record = {
+      id: matchedEmployee.id, recordId: `${matchedEmployee.id}_${todayISO()}`, docId: `${matchedEmployee.id}_${todayISO()}`,
+      dateISO: todayISO(), date: formatKhmerDate(todayISO()), name: matchedEmployee.name, role: matchedEmployee.role,
+      branch: matchedEmployee.branch, shift: "ព្រឹក", checkIn: time, checkOut: "—", hours: "កំពុងធ្វើការ",
+      status: isLate ? "យឺត" : "មានវត្តមាន", source: "kiosk",
+    };
+    setAttendanceHistory((list) => {
+      const exists = list.some((item) => item.docId === record.docId);
+      return exists ? list.map((item) => item.docId === record.docId ? record : item) : [record, ...list];
+    });
     setMessage({ type: "in", time });
     setTimeout(reset, 2500);
   };
 
   const handleCheckOut = () => {
-    const time = nowLabel();
+    const time = timeNow();
     setAttendanceToday((list) =>
       list.map((a) => (a.id === matchedEmployee.id ? { ...a, checkOut: time, hours: "បញ្ចប់ការងារ" } : a))
     );
+    setAttendanceHistory((list) => list.map((item) => item.docId === `${matchedEmployee.id}_${todayISO()}`
+      ? { ...item, checkOut: time, hours: "បញ្ចប់ការងារ" }
+      : item));
     setMessage({ type: "out", time });
     setTimeout(reset, 2500);
   };

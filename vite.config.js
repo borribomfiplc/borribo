@@ -7,7 +7,6 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "assets/borribo-logo.png"],
       manifest: {
         name: "BORRIBO MFI Attendance",
         short_name: "BORRIBO HRMS",

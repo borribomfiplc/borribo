@@ -15,8 +15,8 @@ export default function LeaveBalancePage({ requests, employees }) {
 
   const usedDays = (empId, type) =>
     requests
-      .filter((r) => r.empId === empId && r.leaveType === type && r.status === "បានអនុម័ត")
-      .reduce((sum, r) => sum + r.days, 0);
+      .filter((r) => (r.employeeId === empId || r.empId === empId) && r.leaveType === type && r.status === "បានអនុម័ត")
+      .reduce((sum, r) => sum + Number(r.days || 0), 0);
 
   const totalQuota = leaveTypes.reduce((sum, t) => sum + leaveQuotas[t], 0);
 

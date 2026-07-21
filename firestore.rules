@@ -99,16 +99,40 @@ service cloud.firestore {
     }
 
     match /attendanceHistory/{recordId} {
-      allow get, list, create, update, delete: if manager();
+      allow get, list, create, update, delete: if manager() || kiosk();
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if hasRole('employee')
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.id == request.auth.token.employeeId
+        && request.resource.data.docId == recordId;
+      allow update: if hasRole('employee')
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.docId == recordId;
     }
 
     match /corrections/{recordId} {
       allow get, list, create, update, delete: if manager();
     }
 
+    match /branches/{branchId} {
+      allow get, list: if signedIn();
+      allow create, update, delete: if manager();
+    }
+
     match /{collectionName}/{documentId} {
       allow get, list, create, update, delete: if manager()
-        && collectionName in ['branches', 'departments', 'jobRoles', 'holidays'];
+        && collectionName in ['departments', 'jobRoles', 'holidays'];
+    }
+
+    // Employees may read the attendance requirements only. The QR value is
+    // displayed publicly at each branch, while all other system settings stay
+    // restricted to managers.
+    match /settings/gpsQr {
+      allow get: if signedIn();
+      allow create, update: if manager();
+      allow delete: if administrator();
     }
 
     match /settings/{settingId} {
@@ -123,6 +147,14 @@ service cloud.firestore {
 
     match /roles/{roleId} {
       allow get, list, create, update, delete: if administrator();
+    }
+
+    // Operational data used by the MFI management modules. Only HR/Admin
+    // accounts can view or change these records; employee accounts never
+    // receive salary, loan, KPI, or asset data.
+    match /{collectionName}/{documentId} {
+      allow get, list, create, update, delete: if manager()
+        && collectionName in ['kpis', 'assets', 'staffLoans', 'telegramOutbox'];
     }
   }
 }

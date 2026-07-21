@@ -20,7 +20,7 @@ export function allowedNavSections(role) {
   if (role === ROLES.ADMIN) return null; // null means every section is allowed
   if (role === ROLES.HR) {
     return new Set([
-      "dashboard", "employees", "attendance", "leave", "org", "calendar", "reports", "settings",
+      "dashboard", "employees", "attendance", "leave", "org", "calendar", "mfiOperations", "reports", "settings", "integrations",
     ]);
   }
   return new Set(["dashboard"]);
@@ -34,6 +34,7 @@ export function allowedNavItems(role) {
       "កែតម្រូវវត្តមាន", "សំណើសុំច្បាប់", "អនុម័តច្បាប់", "សមតុល្យច្បាប់",
       "សាខា", "នាយកដ្ឋាន", "តួនាទីការងារ", "របាយការណ៍វត្តមាន", "របាយការណ៍ច្បាប់",
       "របាយការណ៍ប្រចាំខែ", "ម៉ោងធ្វើការ", "ថ្ងៃឈប់សម្រាក", "GPS និង QR",
+      "KPI Dashboard", "គ្រប់គ្រងទ្រព្យសម្បត្តិ", "កម្ចីបុគ្គលិក", "Fingerprint ម៉ាស៊ីន", "Telegram Bot",
     ]);
   }
   return new Set();

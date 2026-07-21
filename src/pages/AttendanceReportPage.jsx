@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   CalendarDays, CheckCircle2, XCircle, AlertCircle
 } from "lucide-react";
@@ -6,11 +6,20 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend
 } from "recharts";
 import { COLORS } from "../data/theme";
-import { weekData } from "../data/mockData";
 import ReportHeader from "../components/shared/ReportHeader";
 import StatCard from "../components/shared/StatCard";
 
 export default function AttendanceReportPage({ historyData }) {
+  const weekData = useMemo(() => {
+    const dates = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(); date.setDate(date.getDate() - (6 - index));
+      return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Phnom_Penh" }).format(date);
+    });
+    return dates.map((dateISO) => {
+      const rows = historyData.filter((row) => row.dateISO === dateISO);
+      return { day: new Intl.DateTimeFormat("km-KH", { weekday: "short" }).format(new Date(`${dateISO}T12:00:00`)), present: rows.filter((row) => row.status === "មានវត្តមាន").length, late: rows.filter((row) => row.status === "យឺត").length, absent: rows.filter((row) => row.status === "អវត្តមាន").length, leave: rows.filter((row) => row.status === "ច្បាប់").length };
+    });
+  }, [historyData]);
   const totals = weekData.reduce(
     (acc, d) => ({
       present: acc.present + d.present,

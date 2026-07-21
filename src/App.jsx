@@ -47,6 +47,11 @@ const WorkingHoursPage = lazy(() => import("./pages/WorkingHoursPage"));
 const HolidaysSettingsPage = lazy(() => import("./pages/HolidaysSettingsPage"));
 const GpsQrPage = lazy(() => import("./pages/GpsQrPage"));
 const SystemSettingsPage = lazy(() => import("./pages/SystemSettingsPage"));
+const KpiDashboardPage = lazy(() => import("./pages/KpiDashboardPage"));
+const AssetManagementPage = lazy(() => import("./pages/AssetManagementPage"));
+const StaffLoanPage = lazy(() => import("./pages/StaffLoanPage"));
+const FingerprintPage = lazy(() => import("./pages/FingerprintPage"));
+const TelegramBotPage = lazy(() => import("./pages/TelegramBotPage"));
 
 function PageLoading() {
   return (
@@ -101,14 +106,18 @@ function App() {
   const [leaveRequests, setLeaveRequests] = useFirestoreCollection("leaveRequests", initialLeaveRequests, "id", managerAccess);
   const [employees, setEmployees] = useFirestoreCollection("employees", initialEmployees, "id", managerAccess || kioskAccess);
   const [todaysAttendance, setTodaysAttendance] = useFirestoreCollection("attendanceToday", attendanceToday, "recordId", managerAccess || kioskAccess);
-  const [attendanceHistory, setAttendanceHistory] = useFirestoreCollection("attendanceHistory", historyData, "docId", managerAccess);
+  const [attendanceHistory, setAttendanceHistory] = useFirestoreCollection("attendanceHistory", historyData, "docId", managerAccess || kioskAccess);
   const [corrections, setCorrections] = useFirestoreCollection("corrections", initialCorrections, "id", managerAccess);
-  const [branches, setBranches] = useFirestoreCollection("branches", initialBranches, "id", managerAccess);
+  const [branches, setBranches] = useFirestoreCollection("branches", initialBranches, "id", loggedIn);
   const [departments, setDepartments] = useFirestoreCollection("departments", initialDepartments, "id", managerAccess);
   const [jobRoles, setJobRoles] = useFirestoreCollection("jobRoles", initialJobRoles, "id", managerAccess);
   const [holidays, setHolidays] = useFirestoreCollection("holidays", initialHolidays, "id", managerAccess);
   const [users, setUsers] = useFirestoreCollection("users", initialUsers, "id", adminAccess);
   const [roles, setRoles] = useFirestoreCollection("roles", initialRoles, "id", adminAccess);
+  const [kpis, setKpis] = useFirestoreCollection("kpis", [], "kpiId", managerAccess);
+  const [assets, setAssets] = useFirestoreCollection("assets", [], "assetId", managerAccess);
+  const [staffLoans, setStaffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
+  const [telegramOutbox, setTelegramOutbox] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
 
   const [employeeQuery, setEmployeeQuery] = useState(""); // controlled search text for EmployeeListPage
   const [editingEmployee, setEditingEmployee] = useState(null); // employee currently open in AddEmployeePage's edit mode
@@ -192,11 +201,11 @@ function App() {
   }
 
   if (profile.role === ROLES.KIOSK) {
-    return <KioskCheckInPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} onExit={handleLogout} />;
+    return <KioskCheckInPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} onExit={handleLogout} />;
   }
 
   if (profile.role === ROLES.EMPLOYEE) {
-    return <EmployeePortalPage authUser={authUser} profile={profile} onLogout={handleLogout} />;
+    return <EmployeePortalPage authUser={authUser} profile={profile} branches={branches} onLogout={handleLogout} />;
   }
 
   const visibleNavSections = filterNavigation(navSections, profile.role);
@@ -444,6 +453,12 @@ function App() {
           />
         ) : active === "calendar" ? (
           <CalendarPage leaveRequests={leaveRequests} holidays={holidays} />
+        ) : active === "KPI Dashboard" ? (
+          <KpiDashboardPage employees={employees} kpis={kpis} setKpis={setKpis} />
+        ) : active === "គ្រប់គ្រងទ្រព្យសម្បត្តិ" ? (
+          <AssetManagementPage employees={employees} assets={assets} setAssets={setAssets} />
+        ) : active === "កម្ចីបុគ្គលិក" ? (
+          <StaffLoanPage employees={employees} loans={staffLoans} setLoans={setStaffLoans} />
         ) : active === "របាយការណ៍វត្តមាន" ? (
           <AttendanceReportPage historyData={attendanceHistory} />
         ) : active === "របាយការណ៍ច្បាប់" ? (
@@ -465,8 +480,12 @@ function App() {
           <GpsQrPage branches={branches} />
         ) : active === "ប្រព័ន្ធ" ? (
           <SystemSettingsPage />
+        ) : active === "Fingerprint ម៉ាស៊ីន" ? (
+          <FingerprintPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} />
+        ) : active === "Telegram Bot" ? (
+          <TelegramBotPage outbox={telegramOutbox} setOutbox={setTelegramOutbox} />
         ) : (
-          <DashboardHomePage setActive={setActive} setOpenSection={setOpenSection} setEditingEmployee={setEditingEmployee} />
+          <DashboardHomePage employees={employees} attendanceToday={todaysAttendance} attendanceHistory={attendanceHistory} leaveRequests={leaveRequests} profile={profile} setActive={setActive} setOpenSection={setOpenSection} setEditingEmployee={setEditingEmployee} />
         )}
         </Suspense>
         </main>

@@ -1,6 +1,7 @@
 import React from "react";
 import {
-  LayoutDashboard, Users, Clock, CalendarDays, Building2, Calendar, BarChart3, Settings
+  LayoutDashboard, Users, Clock, CalendarDays, Building2, Calendar, BarChart3, Settings,
+  Fingerprint, Send, Target, Package, WalletCards
 } from "lucide-react";
 
 export const navSections = [
@@ -36,6 +37,12 @@ export const navSections = [
   },
   { label: "ប្រតិទិន", icon: Calendar, single: true, key: "calendar" },
   {
+    label: "ប្រតិបត្តិការ MFI",
+    icon: Target,
+    key: "mfiOperations",
+    items: ["KPI Dashboard", "គ្រប់គ្រងទ្រព្យសម្បត្តិ", "កម្ចីបុគ្គលិក"],
+  },
+  {
     label: "របាយការណ៍",
     icon: BarChart3,
     key: "reports",
@@ -46,5 +53,11 @@ export const navSections = [
     icon: Settings,
     key: "settings",
     items: ["ក្រុមហ៊ុន", "អ្នកប្រើប្រាស់ និងតួនាទី", "ម៉ោងធ្វើការ", "ថ្ងៃឈប់សម្រាក", "GPS និង QR", "ប្រព័ន្ធ"],
+  },
+  {
+    label: "ការភ្ជាប់ប្រព័ន្ធ",
+    icon: Fingerprint,
+    key: "integrations",
+    items: ["Fingerprint ម៉ាស៊ីន", "Telegram Bot"],
   },
 ];

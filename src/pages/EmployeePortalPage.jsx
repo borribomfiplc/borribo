@@ -1,18 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { addDoc, collection, doc, onSnapshot, serverTimestamp, setDoc, query, where } from "firebase/firestore";
-import { CalendarDays, FileText, LogOut, MapPin, Clock3 } from "lucide-react";
+import { addDoc, collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, query, where } from "firebase/firestore";
+import { CalendarDays, FileText, LogOut, MapPin, Clock3, ScanLine } from "lucide-react";
 import { db } from "../firebase/config";
 import { COLORS } from "../data/theme";
+import { attendanceHistoryRecord, distanceInMeters, timeNow, todayISO, workingDuration } from "../utils/attendance";
 
 const leaveTypes = ["ច្បាប់ប្រចាំឆ្នាំ", "ច្បាប់ឈឺ", "ច្បាប់ពិសេស"];
-const todayISO = () => new Date().toISOString().slice(0, 10);
 const daysBetween = (start, end) => {
   if (!start || !end) return 0;
   const total = Math.round((new Date(`${end}T00:00:00`) - new Date(`${start}T00:00:00`)) / 86400000) + 1;
   return Math.max(0, total);
 };
-const timeNow = () => new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }).format(new Date());
-
 function readLocation() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({ gpsStatus: "not-supported" });
@@ -24,13 +22,16 @@ function readLocation() {
   });
 }
 
-export default function EmployeePortalPage({ authUser, profile, onLogout }) {
+export default function EmployeePortalPage({ authUser, profile, onLogout, branches = [] }) {
   const [requests, setRequests] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [form, setForm] = useState({ leaveType: leaveTypes[0], startDate: "", endDate: "", reason: "" });
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [attendanceMessage, setAttendanceMessage] = useState("");
+  const [qrValue, setQrValue] = useState("");
+  const [scanning, setScanning] = useState(false);
   const employeeId = profile.employeeId || authUser.uid;
   const dateISO = todayISO();
   const attendanceId = `${employeeId}_${dateISO}`;
@@ -42,6 +43,50 @@ export default function EmployeePortalPage({ authUser, profile, onLogout }) {
   }, [authUser.uid]);
 
   useEffect(() => onSnapshot(doc(db, "attendanceToday", attendanceId), (snap) => setAttendance(snap.exists() ? snap.data() : null)), [attendanceId]);
+
+  const validateAttendanceRequirements = async (location) => {
+    const settingsSnap = await getDoc(doc(db, "settings", "gpsQr"));
+    const settings = settingsSnap.exists() ? settingsSnap.data() : { requireGps: false, requireQr: false };
+    const branch = branches.find((item) => item.name === profile.branch);
+    const radius = Number(settings.radii?.[branch?.id] || 150);
+    if (settings.requireGps) {
+      if (location.gpsStatus !== "recorded") throw new Error("សូមអនុញ្ញាត GPS មុនពេលកត់ត្រាវត្តមាន");
+      const branchLocation = settings.locations?.[branch?.id];
+      if (!branchLocation?.latitude || !branchLocation?.longitude) throw new Error("សាខារបស់អ្នកមិនទាន់កំណត់ទីតាំង GPS ទេ។ សូមទាក់ទង HR");
+      const meters = distanceInMeters(location, branchLocation);
+      if (meters === null || meters > radius) throw new Error(`អ្នកស្ថិតនៅក្រៅតំបន់សាខា (${meters ?? "—"}m / ${radius}m)`);
+      location.distanceMeters = meters;
+    }
+    if (settings.requireQr) {
+      if (!qrValue.trim()) throw new Error("សូមស្កេន ឬបញ្ចូល QR code របស់សាខា");
+      const expected = `${branch?.id || ""}:${settings.qrToken || ""}`;
+      if (qrValue.trim() !== expected) throw new Error("QR code មិនត្រឹមត្រូវ ឬមិនមែនរបស់សាខានេះទេ");
+    }
+    return settings;
+  };
+
+  const scanQr = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.BarcodeDetector) {
+      setError("Browser នេះមិនគាំទ្រការស្កេន QR ដោយកាមេរ៉ាទេ។ សូមបញ្ចូល QR code ដោយដៃ");
+      return;
+    }
+    setError(""); setScanning(true);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      const video = document.createElement("video");
+      video.srcObject = stream; await video.play();
+      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      const started = Date.now(); let scanned = false;
+      while (Date.now() - started < 15000) {
+        const codes = await detector.detect(video);
+        if (codes[0]?.rawValue) { setQrValue(codes[0].rawValue); setAttendanceMessage("ស្កេន QR បានជោគជ័យ"); scanned = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!scanned) setError("រកមិនឃើញ QR code ទេ។ សូមសាកម្ដងទៀត");
+    } catch { setError("មិនអាចបើកកាមេរ៉ាបានទេ។ សូមអនុញ្ញាត Camera"); }
+    finally { stream?.getTracks().forEach((track) => track.stop()); setScanning(false); }
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -64,21 +109,41 @@ export default function EmployeePortalPage({ authUser, profile, onLogout }) {
   };
 
   const markAttendance = async (kind) => {
-    setSaving(true); setError("");
+    if ((kind === "in" && attendance?.checkIn && attendance.checkIn !== "—") || (kind === "out" && (!attendance?.checkIn || attendance.checkIn === "—" || (attendance?.checkOut && attendance.checkOut !== "—")))) return;
+    setSaving(true); setError(""); setAttendanceMessage("");
     try {
       const location = await readLocation();
-      const now = timeNow();
+      const settings = await validateAttendanceRequirements(location);
+      const capturedAt = new Date();
+      const now = timeNow(capturedAt);
       const base = {
         id: employeeId, recordId: attendanceId, uid: authUser.uid, dateISO, name: profile.name || authUser.email,
         role: profile.jobRole || "បុគ្គលិក", branch: profile.branch || "", shift: "ព្រឹក",
-        status: "មានវត្តមាន", ...location, updatedAt: serverTimestamp(),
+        status: "មានវត្តមាន", updatedAt: serverTimestamp(),
       };
+      let nextRecord;
       if (kind === "in") {
-        await setDoc(doc(db, "attendanceToday", attendanceId), { ...base, checkIn: now, checkInAt: serverTimestamp(), checkOut: "—", hours: "កំពុងធ្វើការ" }, { merge: true });
+        nextRecord = {
+          ...base, checkIn: now, checkInAt: serverTimestamp(), checkInClientAt: capturedAt.toISOString(),
+          checkInLocation: location, gpsStatus: location.gpsStatus, checkOut: "—", hours: "កំពុងធ្វើការ",
+          qrVerified: Boolean(settings.requireQr), gpsVerified: Boolean(settings.requireGps),
+        };
+        setAttendanceMessage(`Check-in ជោគជ័យ នៅម៉ោង ${now}`);
       } else {
-        await setDoc(doc(db, "attendanceToday", attendanceId), { ...base, checkOut: now, checkOutAt: serverTimestamp(), hours: "បាន Check-out" }, { merge: true });
+        nextRecord = {
+          ...base, checkOut: now, checkOutAt: serverTimestamp(), checkOutClientAt: capturedAt.toISOString(),
+          checkOutLocation: location, gpsStatus: location.gpsStatus,
+          hours: workingDuration(attendance?.checkInClientAt, capturedAt.toISOString()),
+          qrVerified: Boolean(settings.requireQr), gpsVerified: Boolean(settings.requireGps),
+        };
+        setAttendanceMessage(`Check-out ជោគជ័យ នៅម៉ោង ${now}`);
       }
-    } catch { setError("មិនអាចរក្សាទុកវត្តមានបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
+      const mergedRecord = { ...attendance, ...nextRecord };
+      await Promise.all([
+        setDoc(doc(db, "attendanceToday", attendanceId), nextRecord, { merge: true }),
+        setDoc(doc(db, "attendanceHistory", attendanceId), attendanceHistoryRecord(mergedRecord), { merge: true }),
+      ]);
+    } catch (err) { setError(err.message || "មិនអាចរក្សាទុកវត្តមានបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
     finally { setSaving(false); }
   };
 
@@ -90,7 +155,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout }) {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-start justify-between gap-3 mb-6"><div><h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">សួស្តី {profile.name || authUser.email}</h1><p className="text-sm text-[#8A8FA3] mt-1">វត្តមាន និងសំណើច្បាប់របស់អ្នក</p></div><button onClick={onLogout} className="rounded-xl border border-[#EBEDF3] bg-white px-3 py-2 text-sm text-[#5B5F73] flex gap-2 items-center"><LogOut size={16} /> ចាកចេញ</button></div>
 
-        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-5 mb-5"><div className="flex items-center gap-2 font-semibold text-[#1E2333]"><Clock3 size={18} className="text-[#2A3F8F]" /> វត្តមានថ្ងៃនេះ</div><p className="text-xs text-[#8A8FA3] mt-1">{dateISO}{attendance?.gpsStatus === "recorded" ? " · GPS បានកត់ត្រា" : ""}</p><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><button disabled={saving || checkedIn} onClick={() => markAttendance("in")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.primary }}>{checkedIn ? `បាន Check-in ${attendance.checkIn}` : "Check-in"}</button><button disabled={saving || !checkedIn || checkedOut} onClick={() => markAttendance("out")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.green }}>{checkedOut ? `បាន Check-out ${attendance.checkOut}` : "Check-out"}</button></div><p className="text-xs text-[#8A8FA3] mt-3 flex items-center gap-1"><MapPin size={13} /> Browser នឹងស្នើសុំទីតាំង GPS ពេល Check-in/Check-out</p></section>
+        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-5 mb-5"><div className="flex items-center gap-2 font-semibold text-[#1E2333]"><Clock3 size={18} className="text-[#2A3F8F]" /> វត្តមានថ្ងៃនេះ</div><p className="text-xs text-[#8A8FA3] mt-1">{dateISO}{attendance?.gpsStatus === "recorded" ? " · GPS បានកត់ត្រា" : ""}</p><label className="block text-xs text-[#5B5F73] mt-4"><span className="flex items-center gap-1 mb-1.5"><ScanLine size={13} /> QR code សាខា</span><div className="flex gap-2"><input value={qrValue} onChange={(e) => setQrValue(e.target.value)} placeholder="ស្កេន ឬបញ្ចូល QR code" className="flex-1 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /><button type="button" onClick={scanQr} disabled={scanning} className="rounded-xl px-3 text-xs font-medium text-white disabled:opacity-50" style={{ background: COLORS.primary }}>{scanning ? "កំពុងស្កេន" : "ស្កេន"}</button></div></label><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><button disabled={saving || checkedIn} onClick={() => markAttendance("in")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.primary }}>{saving && !checkedIn ? "កំពុងកត់ត្រា..." : checkedIn ? `បាន Check-in ${attendance.checkIn}` : "Check-in"}</button><button disabled={saving || !checkedIn || checkedOut} onClick={() => markAttendance("out")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.green }}>{saving && checkedIn ? "កំពុងកត់ត្រា..." : checkedOut ? `បាន Check-out ${attendance.checkOut}` : "Check-out"}</button></div>{checkedIn && <div className="mt-3 grid grid-cols-2 gap-3 text-xs"><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">ចូល: <span className="font-semibold text-[#1E2333]">{attendance.checkIn}</span></div><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">រយៈពេល: <span className="font-semibold text-[#1E2333]">{attendance.hours || "កំពុងធ្វើការ"}</span></div></div>}{attendanceMessage && <p className="mt-3 text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-3 py-2">{attendanceMessage}</p>}{error && <p className="mt-3 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}<p className="text-xs text-[#8A8FA3] mt-3 flex items-center gap-1"><MapPin size={13} /> Browser នឹងស្នើសុំទីតាំង GPS ពេល Check-in/Check-out</p></section>
 
         <div className="flex items-start justify-between gap-3 mb-4"><div><h2 className="font-bold text-[#1E2333]">សំណើច្បាប់</h2><p className="text-xs text-[#8A8FA3] mt-1">ស្នើ និងតាមដានស្ថានភាពសំណើរបស់អ្នក</p></div><button onClick={() => setShowForm((value) => !value)} className="rounded-xl px-4 py-2.5 text-white text-sm font-semibold flex items-center gap-2" style={{ background: COLORS.primary }}><FileText size={16} /> ស្នើសុំច្បាប់</button></div>
         {showForm && <form onSubmit={submit} className="bg-white rounded-2xl border border-[#EBEDF3] p-5 mb-5 grid grid-cols-1 sm:grid-cols-2 gap-4"><label className="text-sm text-[#5B5F73]">ប្រភេទច្បាប់<select value={form.leaveType} onChange={(e) => setForm({ ...form, leaveType: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none">{leaveTypes.map((type) => <option key={type}>{type}</option>)}</select></label><label className="text-sm text-[#5B5F73]">ថ្ងៃចាប់ផ្ដើម<input required type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label><label className="text-sm text-[#5B5F73]">ថ្ងៃបញ្ចប់<input required type="date" min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label><div className="text-sm text-[#5B5F73]">ចំនួនថ្ងៃ<div className="mt-1.5 rounded-xl bg-[#F5F6FA] px-3 py-2.5 text-[#1E2333]">{leaveDays || "—"} ថ្ងៃ</div></div><label className="text-sm text-[#5B5F73] sm:col-span-2">ហេតុផល<textarea required value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className="mt-1.5 w-full min-h-24 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label>{error && <p className="sm:col-span-2 text-sm text-[#D9614F]">{error}</p>}<div className="sm:col-span-2 flex justify-end gap-2"><button type="button" onClick={() => setShowForm(false)} className="rounded-xl border border-[#EBEDF3] px-4 py-2.5 text-sm">បោះបង់</button><button disabled={saving} className="rounded-xl px-4 py-2.5 text-white text-sm font-semibold disabled:opacity-60" style={{ background: COLORS.primary }}>{saving ? "កំពុងរក្សាទុក..." : "បញ្ជូនសំណើ"}</button></div></form>}

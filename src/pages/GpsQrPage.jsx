@@ -5,6 +5,7 @@ import {
 import { FieldLabel, SelectField } from "../components/shared/FormFields";
 import { ToggleRow, SettingsSaveBar } from "../components/shared/SettingsWidgets";
 import { loadSettingsDoc, saveSettingsDoc } from "../firebase/settingsDoc";
+import { QRCodeSVG } from "qrcode.react";
 
 export default function GpsQrPage({ branches }) {
   const [radii, setRadii] = useState(Object.fromEntries(branches.map((b) => [b.id, "150"])));
@@ -15,6 +16,8 @@ export default function GpsQrPage({ branches }) {
   const [regenerated, setRegenerated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [qrToken, setQrToken] = useState("");
+  const [locations, setLocations] = useState({});
+  const [qrBranchId, setQrBranchId] = useState("");
 
   useEffect(() => {
     const defaults = {
@@ -23,6 +26,7 @@ export default function GpsQrPage({ branches }) {
       requireGps: true,
       qrInterval: "ប្រចាំថ្ងៃ",
       qrToken: crypto.randomUUID(),
+      locations: Object.fromEntries(branches.map((b) => [b.id, { latitude: b.latitude || "", longitude: b.longitude || "" }])),
     };
     loadSettingsDoc("gpsQr", defaults).then((data) => {
       setRadii({ ...defaults.radii, ...(data.radii || {}) });
@@ -30,19 +34,21 @@ export default function GpsQrPage({ branches }) {
       setRequireGps(Boolean(data.requireGps));
       setQrInterval(data.qrInterval || defaults.qrInterval);
       setQrToken(data.qrToken || defaults.qrToken);
+      setLocations({ ...defaults.locations, ...(data.locations || {}) });
+      setQrBranchId(branches[0]?.id || "");
       setLoading(false);
     });
   }, [branches]);
 
   const handleSave = async () => {
-    await saveSettingsDoc("gpsQr", { radii, requireQr, requireGps, qrInterval, qrToken });
+    await saveSettingsDoc("gpsQr", { radii, requireQr, requireGps, qrInterval, qrToken, locations });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
   const handleRegenerate = async () => {
     const nextToken = crypto.randomUUID();
     setQrToken(nextToken);
-    await saveSettingsDoc("gpsQr", { radii, requireQr, requireGps, qrInterval, qrToken: nextToken });
+    await saveSettingsDoc("gpsQr", { radii, requireQr, requireGps, qrInterval, qrToken: nextToken, locations });
     setRegenerated(true);
     setTimeout(() => setRegenerated(false), 2000);
   };
@@ -80,6 +86,10 @@ export default function GpsQrPage({ branches }) {
                   />
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#B4B7C6]">ម.</span>
                 </div>
+                <div className="grid grid-cols-2 gap-2 w-52 shrink-0">
+                  <input type="number" step="any" value={locations[b.id]?.latitude || ""} onChange={(e) => setLocations((value) => ({ ...value, [b.id]: { ...value[b.id], latitude: e.target.value } }))} placeholder="Latitude" className="bg-[#F5F6FA] rounded-xl px-3 py-2 text-xs outline-none" />
+                  <input type="number" step="any" value={locations[b.id]?.longitude || ""} onChange={(e) => setLocations((value) => ({ ...value, [b.id]: { ...value[b.id], longitude: e.target.value } }))} placeholder="Longitude" className="bg-[#F5F6FA] rounded-xl px-3 py-2 text-xs outline-none" />
+                </div>
               </div>
             ))}
           </div>
@@ -92,10 +102,13 @@ export default function GpsQrPage({ branches }) {
           <h3 className="font-semibold text-[#1E2333] text-[15px] mb-4 flex items-center gap-2">
             <ScanLine size={16} className="text-[#E8A33D]" /> កូដ QR
           </h3>
-          <div className="w-full aspect-square max-w-[160px] mx-auto rounded-2xl bg-[#F7F8FB] border border-[#EBEDF3] flex items-center justify-center mb-4">
-            <ScanLine size={56} className="text-[#B4B7C6]" />
+          <select value={qrBranchId} onChange={(e) => setQrBranchId(e.target.value)} className="w-full mb-3 rounded-xl bg-[#F5F6FA] px-3 py-2 text-xs outline-none">
+            {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+          </select>
+          <div className="w-full aspect-square max-w-[160px] mx-auto rounded-2xl bg-white border border-[#EBEDF3] flex items-center justify-center mb-4 p-3">
+            {qrToken && qrBranchId && <QRCodeSVG value={`${qrBranchId}:${qrToken}`} size={136} level="M" includeMargin />}
           </div>
-          <p className="text-[10px] text-center text-[#8A8FA3] break-all mb-3" title={qrToken}>Token: {qrToken.slice(0, 12)}…</p>
+          <p className="text-[10px] text-center text-[#8A8FA3] break-all mb-3">QR សម្រាប់សាខាដែលបានជ្រើស</p>
           <ToggleRow label="តម្រូវឲ្យស្កេន QR" desc="ស្កេនកូដ QR របស់សាខាមុនកត់ត្រាវត្តមាន" checked={requireQr} onChange={setRequireQr} />
           <div className="mt-1 mb-4">
             <FieldLabel>ថេរវេលាបង្កើត QR ថ្មី</FieldLabel>
@@ -108,7 +121,7 @@ export default function GpsQrPage({ branches }) {
             <ScanLine size={15} />
             {regenerated ? "បានបង្កើត QR ថ្មីរួចរាល់!" : "បង្កើត QR ថ្មី"}
           </button>
-          <p className="mt-3 text-[11px] leading-relaxed text-[#8A8FA3]">ការកំណត់នេះត្រូវបានរក្សាទុកពិត។ ការស្កេនកាមេរ៉ា និងការផ្ទៀងផ្ទាត់ GPS នឹងត្រូវភ្ជាប់ជាមួយ kiosk API នៅជំហានបន្ទាប់។</p>
+          <p className="mt-3 text-[11px] leading-relaxed text-[#8A8FA3]">កំណត់ Latitude/Longitude របស់សាខា រួចចុច “រក្សាទុក”។ QR នេះអាចបង្ហាញនៅសាខាសម្រាប់បុគ្គលិកស្កេន។</p>
         </div>
       </div>
     </>

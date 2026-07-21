@@ -38,6 +38,11 @@ batch.set(db.collection("usernames").doc(username), {
   active: true,
   updatedAt: admin.firestore.FieldValue.serverTimestamp(),
 }, { merge: true });
+batch.set(db.collection("passwordResetEmails").doc(email), {
+  email,
+  active: true,
+  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+}, { merge: true });
 batch.set(db.collection("profiles").doc(user.uid), { username, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 batch.set(db.collection("users").doc(user.uid), { username, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 await batch.commit();

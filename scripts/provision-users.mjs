@@ -95,6 +95,11 @@ for (const account of accounts) {
     active: true,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
+  await db.collection("passwordResetEmails").doc(account.email.toLowerCase()).set({
+    email: account.email,
+    active: true,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
 
   if (account.employeeId) {
     await db.collection("employees").doc(account.employeeId).set({

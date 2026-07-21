@@ -41,6 +41,15 @@ service cloud.firestore {
       allow create, update, delete: if administrator();
     }
 
+    // This minimal directory is used only before a password-reset email is
+    // requested. It contains no passwords, profiles, roles, or employee data.
+    // The Admin scripts keep it in sync with Firebase Authentication users.
+    match /passwordResetEmails/{email} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if administrator();
+    }
+
     match /employees/{employeeId} {
       allow get, list: if manager() || kiosk() || (signedIn() && resource.data.uid == request.auth.uid);
       allow create, update, delete: if manager();

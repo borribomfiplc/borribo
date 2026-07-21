@@ -17,6 +17,23 @@ function usernameError(code) {
 }
 
 /**
+ * Firebase deliberately hides whether an email address has an Auth account.
+ * For this HRMS reset flow, the Admin scripts maintain a minimal public
+ * directory of active account emails. It lets the UI stop before asking
+ * Firebase to send a reset email for an address that is not an HRMS account.
+ */
+async function verifyPasswordResetEmail(email) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const emailDoc = await getDoc(doc(db, "passwordResetEmails", normalizedEmail));
+
+  if (!emailDoc.exists() || !emailDoc.data()?.active) {
+    throw usernameError("auth/email-not-found");
+  }
+
+  return emailDoc.data()?.email || normalizedEmail;
+}
+
+/**
  * Firebase Email/Password Auth signs in with an email only. For a username,
  * resolve one exact document in the public `usernames` directory first.
  * The directory contains only a username -> email mapping; passwords and
@@ -56,7 +73,8 @@ export function logout() {
 
 export async function sendPasswordReset(identifier) {
   const email = await resolveLoginEmail(identifier);
-  return sendPasswordResetEmail(auth, email);
+  const verifiedEmail = await verifyPasswordResetEmail(email);
+  return sendPasswordResetEmail(auth, verifiedEmail);
 }
 
 /** Subscribes to auth state; returns an unsubscribe function. */
@@ -73,6 +91,7 @@ export function authErrorMessage(err) {
   if (code === "auth/invalid-email") return "អ៊ីមែលមិនត្រឹមត្រូវ";
   if (code === "auth/invalid-username") return "Username ត្រូវមានអក្សរអង់គ្លេស លេខ ឬ . _ - និងយ៉ាងតិច 2 តួអក្សរ";
   if (code === "auth/username-not-found") return "មិនរកឃើញ Username នេះទេ។ សូមប្រើអ៊ីមែល ឬទាក់ទងផ្នែកព័ត៌មានវិទ្យា";
+  if (code === "auth/email-not-found") return "មិនរកឃើញ Email នេះទេ។ សូមប្រើអ៊ីមែល ឬទាក់ទងផ្នែកព័ត៌មានវិទ្យា";
   if (code === "auth/too-many-requests") return "អ្នកព្យាយាមចូលច្រើនដងពេក សូមព្យាយាមម្ដងទៀតពេលក្រោយ";
   if (code === "auth/network-request-failed") return "មិនអាចភ្ជាប់បណ្ដាញបានទេ សូមពិនិត្យអ៊ីនធឺណិត";
   if (code === "auth/missing-email") return "សូមបញ្ចូលអ៊ីមែលជាមុនសិន";

@@ -84,6 +84,19 @@ npm run set-username
 Then the person can sign in with either `hunrina` or
 `hunrina@borribo.com.kh`, using the same password.
 
+### Password-reset verification
+
+The reset link is sent only after the app finds the email in its Firebase-user
+directory. After updating this version, deploy the rules and run this command
+once to add every existing Firebase Authentication user to that directory:
+
+```powershell
+npm run sync-password-reset-directory
+```
+
+When you run `npm run provision-users` or `npm run set-username` later, the
+matching email is added automatically.
+
 ### 6. Deploy the Firestore security rules
 ```bash
 npx firebase-tools login

@@ -188,7 +188,10 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
               </div>
               <span
                 className="text-[11px] font-medium rounded-full px-2.5 py-1 shrink-0"
-                style={{ background: statusStyle[e.status].bg, color: statusStyle[e.status].fg }}
+                style={{
+  background: statusStyle[e.status]?.bg || "#F1F2F6",
+  color: statusStyle[e.status]?.fg || "#8A8FA3",
+}}
               >
                 {e.status}
               </span>

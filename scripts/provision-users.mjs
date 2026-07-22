@@ -26,7 +26,7 @@ const db = admin.firestore();
 
 const accounts = [
   {
-    email: process.env.ADMIN_EMAIL || "admin@borribo.com",
+    email: process.env.ADMIN_EMAIL || "admin@borribo.com.kh",
     username: process.env.ADMIN_USERNAME || "admin",
     password: required("ADMIN_PASSWORD"),
     name: process.env.ADMIN_NAME || "Borribo Admin",
@@ -34,7 +34,7 @@ const accounts = [
     branch: "ការិយាល័យកណ្តាល",
   },
   {
-    email: process.env.HR_EMAIL || "hr@borribo.com",
+    email: process.env.HR_EMAIL || "hr@borribo.com.kh",
     username: process.env.HR_USERNAME || "hr",
     password: required("HR_PASSWORD"),
     name: process.env.HR_NAME || "Borribo HR",
@@ -42,7 +42,7 @@ const accounts = [
     branch: "ការិយាល័យកណ្តាល",
   },
   {
-    email: process.env.EMPLOYEE_EMAIL || "employee@borribo.com",
+    email: process.env.EMPLOYEE_EMAIL || "employee@borribo.com.kh",
     username: process.env.EMPLOYEE_USERNAME || "employee",
     password: required("EMPLOYEE_PASSWORD"),
     name: process.env.EMPLOYEE_NAME || "Borribo Employee",

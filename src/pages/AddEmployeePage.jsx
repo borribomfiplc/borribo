@@ -188,7 +188,7 @@ export default function AddEmployeePage({ onCancel, onSave, employees, setEmploy
           </div>
           <div>
             <FieldLabel>អ៊ីមែល</FieldLabel>
-            <TextField dir="ltr" icon={Mail} type="email" value={form.email} onChange={update("email")} placeholder="name@mfi.com" />
+            <TextField dir="ltr" icon={Mail} type="email" value={form.email} onChange={update("email")} placeholder="name@borribo.com.kh" />
           </div>
           <div>
             <FieldLabel>អាសយដ្ឋាន</FieldLabel>

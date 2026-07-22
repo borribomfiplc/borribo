@@ -111,7 +111,7 @@ export default function LoginPage() {
                 <input
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="bora.chhun ឬ bora.chhun@mfi.com"
+                  placeholder="Username ឬ Email@borribo.com.kh"
                   autoComplete="username"
                   className="w-full bg-[#F5F6FA] rounded-xl pl-4 pr-10 py-3 text-sm text-[#1E2333] placeholder:text-[#B4B7C6] outline-none focus:ring-2 focus:ring-[#2A3F8F]/25 border border-transparent focus:border-[#2A3F8F]/20"
                 />

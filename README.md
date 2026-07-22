@@ -63,8 +63,8 @@ $env:EMPLOYEE_PASSWORD = "choose-a-strong-employee-password"
 npm run provision-users
 ```
 
-The default email addresses are `admin@borribo.com`, `hr@borribo.com`, and
-`employee@borribo.com`. You can override them with `ADMIN_EMAIL`, `HR_EMAIL`,
+The default email addresses are `admin@borribo.com.kh`, `hr@borribo.com.kh`, and
+`employee@borribo.com.kh`. You can override them with `ADMIN_EMAIL`, `HR_EMAIL`,
 and `EMPLOYEE_EMAIL`. The matching default usernames are `admin`, `hr`, and
 `employee`; override them with `ADMIN_USERNAME`, `HR_USERNAME`, and
 `EMPLOYEE_USERNAME` (2-32 English letters/numbers plus `.`, `_`, or `-`). Do not add any of these passwords or

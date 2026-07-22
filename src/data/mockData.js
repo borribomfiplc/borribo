@@ -342,10 +342,10 @@ export const dayLabelsKh = ["អា", "ច", "អ", "ព", "ព្រ", "សុ"
 export const TODAY_ISO = "2026-07-19";
 
 export const initialUsers = [
-  { id: "USR-001", name: "ចាន់ បូរ៉ា", email: "chan.bora@mfi.com.kh", role: "អ្នកគ្រប់គ្រងប្រព័ន្ធ", branch: "ការិយាល័យកណ្តាល", status: "សកម្ម" },
-  { id: "USR-002", name: "អេក សុគន្ធ", email: "ek.sokun@mfi.com.kh", role: "HR", branch: "ការិយាល័យកណ្តាល", status: "សកម្ម" },
-  { id: "USR-003", name: "ង៉ែត សុភ័ណ្ណា", email: "ngeat.sophanna@mfi.com.kh", role: "គណនេយ្យករ", branch: "សាខាទួលគោក", status: "សកម្ម" },
-  { id: "USR-004", name: "មាន ដាវិត", email: "mean.davit@mfi.com.kh", role: "អ្នកគ្រប់គ្រងសាខា", branch: "សាខាសែនសុខ", status: "អសកម្ម" },
+  { id: "USR-001", name: "ចាន់ បូរ៉ា", email: "chan.bora@borribo.com.kh", role: "អ្នកគ្រប់គ្រងប្រព័ន្ធ", branch: "ការិយាល័យកណ្តាល", status: "សកម្ម" },
+  { id: "USR-002", name: "អេក សុគន្ធ", email: "ek.sokun@borribo.com.kh", role: "HR", branch: "ការិយាល័យកណ្តាល", status: "សកម្ម" },
+  { id: "USR-003", name: "ង៉ែត សុភ័ណ្ណា", email: "ngeat.sophanna@borribo.com.kh", role: "គណនេយ្យករ", branch: "សាខាទួលគោក", status: "សកម្ម" },
+  { id: "USR-004", name: "មាន ដាវិត", email: "mean.davit@borribo.com.kh", role: "អ្នកគ្រប់គ្រងសាខា", branch: "សាខាសែនសុខ", status: "អសកម្ម" },
 ];
 
 export const initialRoles = [

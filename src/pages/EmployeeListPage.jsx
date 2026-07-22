@@ -145,7 +145,10 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
                 <td className="px-3 py-3.5 text-center">
                   <span
                     className="inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2.5 py-1.5 whitespace-nowrap"
-                    style={{ background: statusStyle[e.status].bg, color: statusStyle[e.status].fg }}
+                    style={{
+  background: statusStyle[e.status]?.bg || "#F1F2F6",
+  color: statusStyle[e.status]?.fg || "#8A8FA3",
+}}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80" />
                     {e.status}

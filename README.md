@@ -120,7 +120,8 @@ Sign in with the email/password you created in step 2.
 3. Build settings: **Framework preset: Vite**, build command `npm run build`,
    output directory `dist`.
 4. **Settings → Environment variables** → add all six `VITE_FIREBASE_*`
-   values from your `.env` for both Production and Preview.
+   values from your `.env` for both Production and Preview. After deploying
+   the Telegram Worker, also add `VITE_TELEGRAM_WORKER_URL`.
 5. Save and deploy — every push to your main branch redeploys automatically.
 
 **Option B — CLI**
@@ -213,6 +214,10 @@ when you click into it.
   its expiry. A QR is also tied to one branch and is rejected after expiry.
 - Attendance, leave, and monthly reports support date/month filtering, UTF-8
   CSV export (opens correctly in Excel), and browser Print / Save as PDF.
+- **Real Telegram delivery** is handled by the separate Cloudflare Worker in
+  `telegram-worker/`. Follow `telegram-worker/README.md` once to add the Bot
+  Token and Firebase service-account values as Cloudflare Secrets. Never add
+  these secrets to a frontend `VITE_*` variable.
 
 - **Data model**: `employees`, `leaveRequests`, `attendanceToday`,
   `attendanceHistory`, `corrections`, `branches`, `departments`, `jobRoles`,

@@ -7,6 +7,7 @@ import { correctionStatusStyle, leaveTypeStyle, leaveTypes } from "../data/mockD
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import StatCard from "../components/shared/StatCard";
 import { todayISO } from "../utils/attendance";
+import { notifyTelegram } from "../services/telegram";
 
 export default function LeaveRequestPage({ requests, setRequests, employees }) {
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
@@ -30,8 +31,9 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
     rejected: requests.filter((r) => r.status === "បានបដិសេធ").length,
   };
 
-  const decide = (id, decision) => {
-    setRequests((list) => list.map((r) => (r.id === id ? { ...r, status: decision } : r)));
+  const decide = async (id, decision) => {
+    await setRequests((list) => list.map((r) => (r.id === id ? { ...r, status: decision } : r)));
+    await notifyTelegram("leave_decision", id);
   };
 
   const update = (key) => (e) => setForm((current) => {
@@ -44,7 +46,7 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
     return next;
   });
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.startDate || !form.endDate || !form.reason.trim()) {
       setError("សូមបំពេញកាលបរិច្ឆេទ និងហេតុផលនៃការស្នើសុំច្បាប់");
       return;
@@ -74,7 +76,8 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
       status: "រង់ចាំពិនិត្យ",
     };
     setError("");
-    setRequests((list) => [newRequest, ...list]);
+    await setRequests((list) => [newRequest, ...list]);
+    await notifyTelegram("leave_request", newRequest.id);
     setForm({ empId: employees[0]?.id || "", leaveType: leaveTypes[0], startDate: "", endDate: "", days: "", reason: "" });
     setShowNew(false);
   };

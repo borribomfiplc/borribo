@@ -5,6 +5,7 @@ import {
 import { COLORS } from "../data/theme";
 import { correctionStatusStyle, leaveTypeStyle, leaveTypes } from "../data/mockData";
 import StatCard from "../components/shared/StatCard";
+import { notifyTelegram } from "../services/telegram";
 
 export default function LeaveApprovalPage({ requests, setRequests, employees }) {
   const [branchFilter, setBranchFilter] = useState("គ្រប់សាខា");
@@ -28,8 +29,9 @@ export default function LeaveApprovalPage({ requests, setRequests, employees }) 
     rejected: requests.filter((r) => r.status === "បានបដិសេធ").length,
   };
 
-  const decide = (id, decision) => {
-    setRequests((list) => list.map((r) => (r.id === id ? { ...r, status: decision } : r)));
+  const decide = async (id, decision) => {
+    await setRequests((list) => list.map((r) => (r.id === id ? { ...r, status: decision } : r)));
+    await notifyTelegram("leave_decision", id);
   };
 
   return (

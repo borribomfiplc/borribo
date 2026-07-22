@@ -1,0 +1,16 @@
+name = "borribo-telegram-bot"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "borribo-mfi"
+FIREBASE_WEB_API_KEY = "AIzaSyDWakdOSq-JjEoc-SfoTfu87kL7LjGmio0"
+ALLOWED_ORIGINS = "https://borribo.pages.dev"
+
+[triggers]
+crons = ["*/30 * * * *"]
+
+# Add secrets with these commands from the telegram-worker folder:
+# npx wrangler secret put TELEGRAM_BOT_TOKEN
+# npx wrangler secret put FIREBASE_CLIENT_EMAIL
+# npx wrangler secret put FIREBASE_PRIVATE_KEY

@@ -12,7 +12,8 @@
     "set-username": "node scripts/set-username.mjs",
     "sync-password-reset-directory": "node scripts/sync-password-reset-directory.mjs",
     "migrate-attendance": "node scripts/migrate-attendance.mjs",
-    "deploy": "npm run build && wrangler pages deploy dist"
+    "deploy": "npm run build && wrangler pages deploy dist",
+    "deploy:telegram": "wrangler deploy --config telegram-worker/wrangler.toml"
   },
   "dependencies": {
     "@zxing/browser": "^0.1.5",

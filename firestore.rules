@@ -212,7 +212,19 @@ service cloud.firestore {
     // receive salary, loan, KPI, or asset data.
     match /{collectionName}/{documentId} {
       allow get, list, create, update, delete: if manager()
-        && collectionName in ['kpis', 'assets', 'staffLoans', 'telegramOutbox'];
+        && collectionName in ['kpis', 'assets', 'staffLoans'];
+    }
+
+    // The Cloudflare Telegram Worker writes delivery logs with a Firebase
+    // service account. Browser accounts can inspect logs but cannot forge a
+    // successful delivery or modify the idempotency records.
+    match /telegramOutbox/{messageId} {
+      allow get, list: if manager();
+      allow create, update, delete: if false;
+    }
+
+    match /telegramEvents/{eventId} {
+      allow read, write: if false;
     }
   }
 }

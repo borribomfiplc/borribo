@@ -533,7 +533,7 @@ function App() {
         ) : active === "Fingerprint ម៉ាស៊ីន" ? (
           <FingerprintPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} />
         ) : active === "Telegram Bot" ? (
-          <TelegramBotPage outbox={telegramOutbox} setOutbox={setTelegramOutbox} />
+          <TelegramBotPage outbox={telegramOutbox} />
         ) : (
           <DashboardHomePage employees={scopedEmployees} attendanceToday={scopedAttendanceToday} attendanceHistory={scopedAttendanceHistory} leaveRequests={scopedLeaveRequests} profile={profile} setActive={setActive} setOpenSection={setOpenSection} setEditingEmployee={setEditingEmployee} />
         )}

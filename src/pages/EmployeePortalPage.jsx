@@ -7,6 +7,7 @@ import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HO
 import { parseQrPayload, sha256 } from "../utils/qrSecurity";
 import QrScanner from "../components/QrScanner";
 import { leaveTypes } from "../data/mockData";
+import { notifyTelegram } from "../services/telegram";
 
 const daysBetween = (start, end) => {
   if (!start || !end) return 0;
@@ -90,13 +91,14 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
     }
     setSaving(true); setError("");
     try {
-      await addDoc(collection(db, "leaveRequests"), {
+      const requestRef = await addDoc(collection(db, "leaveRequests"), {
         employeeUid: authUser.uid, employeeId, name: profile.name || authUser.email,
         branch: profile.branch || "", role: profile.role, leaveType: form.leaveType,
         startDate: form.startDate, endDate: form.endDate, days: leaveDays,
         reason: form.reason.trim(), status: "រង់ចាំពិនិត្យ", requestedOn: dateISO,
         requestedAt: serverTimestamp(),
       });
+      await notifyTelegram("leave_request", requestRef.id);
       setForm({ leaveType: leaveTypes[0], startDate: "", endDate: "", reason: "" }); setShowForm(false);
     } catch { setError("មិនអាចរក្សាទុកសំណើបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
     finally { setSaving(false); }
@@ -149,6 +151,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
         setDoc(doc(db, "attendanceToday", attendanceId), nextRecord, { merge: true }),
         setDoc(doc(db, "attendanceHistory", attendanceId), attendanceHistoryRecord(mergedRecord), { merge: true }),
       ]);
+      await notifyTelegram(kind === "in" ? "check_in" : "check_out", attendanceId);
       if (settings.requireQr) setQrValue("");
     } catch (err) { setError(err.message || "មិនអាចរក្សាទុកវត្តមានបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
     finally { setSaving(false); }

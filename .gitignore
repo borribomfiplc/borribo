@@ -3,6 +3,8 @@ dist/
 .env
 .env.local
 serviceAccountKey.json
+.dev.vars
+telegram-worker/.dev.vars
 .wrangler/
 .DS_Store
 *.log

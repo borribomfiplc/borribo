@@ -6,6 +6,7 @@ import { COLORS } from "../data/theme";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
+import { notifyTelegram } from "../services/telegram";
 
 export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, onExit }) {
   const [pin, setPin] = useState("");
@@ -56,7 +57,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
       setError("មិនអាចទាញយកការកំណត់ម៉ោងធ្វើការបានទេ");
       return;
     }
-    setAttendanceToday((list) => {
+    await setAttendanceToday((list) => {
       const existing = list.find((a) => a.id === matchedEmployee.id && a.dateISO === todayISO());
       const dateISO = todayISO();
       const record = {
@@ -83,10 +84,11 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
       branch: matchedEmployee.branch, shift: metrics.shift, checkIn: time, checkInClientAt: capturedAt.toISOString(), checkOut: "—",
       ...metrics, source: "kiosk",
     };
-    setAttendanceHistory((list) => {
+    await setAttendanceHistory((list) => {
       const exists = list.some((item) => item.docId === record.docId);
       return exists ? list.map((item) => item.docId === record.docId ? record : item) : [record, ...list];
     });
+    await notifyTelegram("check_in", record.recordId);
     setMessage({ type: "in", time, note: metrics.isLate ? `មកយឺត ${metrics.lateMinutes} នាទី` : "" });
     setTimeout(reset, 2500);
   };
@@ -107,13 +109,16 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
       setError("មិនអាចទាញយកការកំណត់ម៉ោងធ្វើការបានទេ");
       return;
     }
-    setAttendanceToday((list) =>
-      list.map((a) => (a.id === matchedEmployee.id && a.dateISO === todayISO()
-        ? { ...a, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics } : a))
-    );
-    setAttendanceHistory((list) => list.map((item) => item.docId === `${matchedEmployee.id}_${todayISO()}`
-      ? { ...item, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics }
-      : item));
+    await Promise.all([
+      setAttendanceToday((list) =>
+        list.map((a) => (a.id === matchedEmployee.id && a.dateISO === todayISO()
+          ? { ...a, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics } : a))
+      ),
+      setAttendanceHistory((list) => list.map((item) => item.docId === `${matchedEmployee.id}_${todayISO()}`
+        ? { ...item, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics }
+        : item)),
+    ]);
+    await notifyTelegram("check_out", `${matchedEmployee.id}_${todayISO()}`);
     setMessage({ type: "out", time, note: metrics.isEarlyLeave ? `ចេញមុន ${metrics.earlyLeaveMinutes} នាទី` : "" });
     setTimeout(reset, 2500);
   };

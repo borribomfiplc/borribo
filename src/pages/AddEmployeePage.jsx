@@ -139,13 +139,14 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
         </SectionCard>
 
         <SectionCard title="ព័ត៌មានការងារ" icon={Briefcase}>
-          <div><FieldLabel required>នាយកដ្ឋាន</FieldLabel><SelectField options={departments.map((item) => item.name)} value={form.department} onChange={handleDepartment} /></div>
-          <div><FieldLabel required>តួនាទី</FieldLabel><SelectField options={availableRoles.map((item) => item.name)} value={form.position} onChange={update("position")} /></div>
-          <div><FieldLabel required>សាខា</FieldLabel><SelectField options={branches.map((item) => item.name)} value={form.branch} onChange={update("branch")} /></div>
+          {isEditing && <div className="md:col-span-2 rounded-xl bg-[#EEF1FB] px-4 py-3 text-xs text-[#2A3F8F]">ការប្តូរសាខា នាយកដ្ឋាន តួនាទី ឬស្ថានភាព ត្រូវធ្វើតាមប៊ូតុង <b>ប្រតិបត្តិការបុគ្គលិក</b> ក្នុងទំព័រព័ត៌មានលម្អិត ដើម្បីរក្សាប្រវត្តិ និងលិខិតសម្រេច។</div>}
+          <div><FieldLabel required>នាយកដ្ឋាន</FieldLabel><SelectField options={departments.map((item) => item.name)} value={form.department} onChange={handleDepartment} disabled={isEditing} /></div>
+          <div><FieldLabel required>តួនាទី</FieldLabel><SelectField options={availableRoles.map((item) => item.name)} value={form.position} onChange={update("position")} disabled={isEditing} /></div>
+          <div><FieldLabel required>សាខា</FieldLabel><SelectField options={branches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={isEditing} /></div>
           <div><FieldLabel>ប្រភេទការងារ</FieldLabel><SelectField options={["ពេញម៉ោង", "ក្រៅម៉ោង", "កិច្ចសន្យា"]} value={form.employmentType} onChange={update("employmentType")} /></div>
           <div><FieldLabel>ថ្ងៃចូលបម្រើការងារ</FieldLabel><TextField type="date" value={form.startDate} onChange={update("startDate")} /></div>
           <div><FieldLabel>វេន</FieldLabel><SelectField options={["ព្រឹក", "ល្ងាច", "ប្តូរវេន"]} value={form.shift} onChange={update("shift")} /></div>
-          <div><FieldLabel>ស្ថានភាព</FieldLabel><SelectField options={["សកម្ម", "ឈប់សម្រាក", "អសកម្ម"]} value={form.status} onChange={update("status")} /></div>
+          <div><FieldLabel>ស្ថានភាព</FieldLabel><SelectField options={["សកម្ម", "ឈប់សម្រាក", "អសកម្ម"]} value={form.status} onChange={update("status")} disabled={isEditing} /></div>
         </SectionCard>
 
         {!isEditing && <SectionCard title="គណនី និងសិទ្ធិចូលប្រើ" icon={Shield}>

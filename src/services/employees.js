@@ -45,6 +45,19 @@ export async function updateEmployee(employee) {
   return data;
 }
 
+export async function createEmploymentAction(employee, action) {
+  if (!employee?.id) throw new Error("រកមិនឃើញលេខសម្គាល់បុគ្គលិក");
+  return adminRequest("/api/admin/employment-actions/create", {
+    employeeId: employee.id,
+    action,
+  });
+}
+
+export async function cancelEmploymentAction(actionId) {
+  if (!actionId) throw new Error("រកមិនឃើញលេខសម្គាល់ប្រតិបត្តិការ");
+  return adminRequest("/api/admin/employment-actions/cancel", { actionId });
+}
+
 export async function removeEmployee(employee) {
   if (employee.uid) return adminRequest("/api/admin/employees/deactivate", { employeeId: employee.id, uid: employee.uid });
   await deleteDoc(doc(db, "employees", employee.id));

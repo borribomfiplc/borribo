@@ -309,6 +309,173 @@ async function handleUpdateEmployee(user, env, body) {
   return { ok: true, employee: employeeRecord };
 }
 
+const EMPLOYMENT_ACTION_TYPES = ["transfer", "promotion", "job_change", "transfer_and_job_change", "resignation"];
+
+function validDateISO(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime());
+}
+
+function currentCambodiaDateISO() {
+  const parts = cambodiaParts();
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function actionNewValues(employee, action) {
+  if (action.type === "resignation") {
+    return { status: "អសកម្ម", endDate: action.effectiveDate };
+  }
+  const values = {};
+  if (["transfer", "transfer_and_job_change"].includes(action.type)) values.branch = String(action.branch || "").trim();
+  if (["promotion", "job_change", "transfer_and_job_change"].includes(action.type)) {
+    values.department = String(action.department || "").trim();
+    values.role = String(action.role || "").trim();
+  }
+  return values;
+}
+
+function employmentSnapshot(employee) {
+  return {
+    branch: employee.branch || "",
+    department: employee.dept || "",
+    role: employee.role || "",
+    status: employee.status || "",
+    endDate: employee.endDate || "",
+  };
+}
+
+async function applyEmploymentActionRecord(env, record) {
+  const employee = await getDocument(env, `employees/${record.employeeId}`);
+  if (!employee) throw new Error("Employee record was not found");
+  const oldValues = employmentSnapshot(employee);
+  const patch = record.newValues || {};
+  const now = new Date().toISOString();
+  const updated = {
+    ...employee,
+    ...(patch.branch !== undefined ? { branch: patch.branch } : {}),
+    ...(patch.department !== undefined ? { dept: patch.department } : {}),
+    ...(patch.role !== undefined ? { role: patch.role } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    ...(patch.endDate !== undefined ? { endDate: patch.endDate } : {}),
+    updatedAt: now,
+  };
+
+  if (employee.uid) {
+    const profile = await getDocument(env, `profiles/${employee.uid}`);
+    if (!profile) throw new Error("Linked account profile was not found");
+    const disabled = updated.status === "អសកម្ម";
+    await authAdminRequest(env, "update", {
+      localId: employee.uid,
+      email: updated.email || profile.email,
+      displayName: updated.name,
+      customAttributes: JSON.stringify({ role: profile.role, employeeId: updated.id }),
+      disableUser: disabled,
+    });
+    await Promise.all([
+      putDocument(env, `employees/${updated.id}`, updated),
+      putDocument(env, `profiles/${employee.uid}`, { ...profile, name: updated.name, branch: updated.branch, active: !disabled, status: updated.status, updatedAt: now }),
+      profile.username ? putDocument(env, `usernames/${profile.username}`, { username: profile.username, email: updated.email || profile.email, uid: employee.uid, active: !disabled }) : Promise.resolve(),
+      (updated.email || profile.email) ? putDocument(env, `passwordResetEmails/${updated.email || profile.email}`, { email: updated.email || profile.email, uid: employee.uid, active: !disabled }) : Promise.resolve(),
+      putDocument(env, `users/${employee.uid}`, { id: employee.uid, employeeId: updated.id, name: updated.name, email: updated.email || profile.email, username: profile.username || updated.username || "", role: profile.role, branch: updated.branch, status: updated.status, active: !disabled, updatedAt: now }),
+    ]);
+  } else {
+    await putDocument(env, `employees/${updated.id}`, updated);
+  }
+
+  const applied = { ...record, oldValues, status: "បានអនុវត្ត", appliedAt: now, error: "" };
+  await putDocument(env, `employmentActions/${record.id}`, applied);
+  return { employee: updated, action: applied };
+}
+
+async function handleCreateEmploymentAction(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const employeeId = String(body?.employeeId || "").trim();
+  const action = body?.action || {};
+  const employee = await getDocument(env, `employees/${employeeId}`);
+  if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
+  if (!EMPLOYMENT_ACTION_TYPES.includes(action.type)) throw Object.assign(new Error("Invalid employment action type"), { status: 400 });
+  if (!validDateISO(action.effectiveDate)) throw Object.assign(new Error("Effective date is invalid"), { status: 400 });
+  if (!String(action.reason || "").trim() || !String(action.decisionNo || "").trim()) throw Object.assign(new Error("Reason and decision number are required"), { status: 400 });
+  if (employee.status === "អសកម្ម") throw Object.assign(new Error("បុគ្គលិកនេះអសកម្មរួចហើយ"), { status: 400 });
+  if (action.type === "resignation" && employee.uid === user.uid) throw Object.assign(new Error("អ្នកមិនអាចបិទគណនីដែលកំពុងប្រើរបស់ខ្លួនបានទេ"), { status: 400 });
+
+  const existingActions = await queryDocuments(env, "employmentActions", "employeeId", employeeId);
+  if (existingActions.some((item) => item.status === "បានកំណត់")) {
+    throw Object.assign(new Error("បុគ្គលិកនេះមានប្រតិបត្តិការថ្ងៃអនាគតរួចហើយ។ សូមលុបចោលវាមុន។"), { status: 409 });
+  }
+
+  if (employee.uid) {
+    const profile = await getDocument(env, `profiles/${employee.uid}`);
+    if (!profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
+    if (user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can manage HR or Admin accounts"), { status: 403 });
+  }
+
+  const newValues = actionNewValues(employee, action);
+  if (["transfer", "transfer_and_job_change"].includes(action.type) && !newValues.branch) throw Object.assign(new Error("New branch is required"), { status: 400 });
+  if (["promotion", "job_change", "transfer_and_job_change"].includes(action.type) && (!newValues.department || !newValues.role)) throw Object.assign(new Error("New department and role are required"), { status: 400 });
+  const changed = Object.entries(newValues).some(([key, value]) => employmentSnapshot(employee)[key] !== value);
+  if (!changed) throw Object.assign(new Error("មិនមានព័ត៌មានថ្មីសម្រាប់អនុវត្តទេ"), { status: 400 });
+
+  const now = new Date().toISOString();
+  const scheduled = action.effectiveDate > currentCambodiaDateISO();
+  const id = `EA-${employeeId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const record = {
+    id,
+    employeeId,
+    employeeName: employee.name,
+    type: action.type,
+    effectiveDate: action.effectiveDate,
+    decisionNo: String(action.decisionNo).trim(),
+    reason: String(action.reason).trim(),
+    note: String(action.note || "").trim(),
+    oldValues: employmentSnapshot(employee),
+    newValues,
+    status: scheduled ? "បានកំណត់" : "កំពុងអនុវត្ត",
+    createdAt: now,
+    createdByUid: user.uid,
+    createdByEmail: user.email,
+  };
+  await putDocument(env, `employmentActions/${id}`, record);
+  if (scheduled) return { ok: true, scheduled: true, action: record };
+  try {
+    const result = await applyEmploymentActionRecord(env, record);
+    return { ok: true, scheduled: false, ...result };
+  } catch (error) {
+    await putDocument(env, `employmentActions/${id}`, { ...record, status: "បរាជ័យ", error: error.message, failedAt: new Date().toISOString() }).catch(() => {});
+    throw error;
+  }
+}
+
+async function handleCancelEmploymentAction(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const actionId = String(body?.actionId || "").trim();
+  const record = await getDocument(env, `employmentActions/${actionId}`);
+  if (!record) throw Object.assign(new Error("Employment action was not found"), { status: 404 });
+  if (record.status !== "បានកំណត់") throw Object.assign(new Error("អាចលុបចោលបានតែប្រតិបត្តិការដែលមិនទាន់អនុវត្ត"), { status: 400 });
+  const canceled = { ...record, status: "បានលុបចោល", canceledAt: new Date().toISOString(), canceledByUid: user.uid, canceledByEmail: user.email };
+  await putDocument(env, `employmentActions/${actionId}`, canceled);
+  return { ok: true, action: canceled };
+}
+
+async function processScheduledEmploymentActions(env) {
+  const today = currentCambodiaDateISO();
+  const records = (await listDocuments(env, "employmentActions", 500))
+    .filter((record) => record.status === "បានកំណត់" && record.effectiveDate <= today)
+    .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
+  const results = [];
+  for (const record of records) {
+    const applying = { ...record, status: "កំពុងអនុវត្ត", startedAt: new Date().toISOString() };
+    await putDocument(env, `employmentActions/${record.id}`, applying);
+    try {
+      const result = await applyEmploymentActionRecord(env, applying);
+      results.push({ id: record.id, ok: true, employeeId: result.employee.id });
+    } catch (error) {
+      await putDocument(env, `employmentActions/${record.id}`, { ...applying, status: "បរាជ័យ", error: error.message, failedAt: new Date().toISOString() }).catch(() => {});
+      results.push({ id: record.id, ok: false, error: error.message });
+    }
+  }
+  return { processed: results.length, results };
+}
+
 function escapeHtml(value) {
   return String(value ?? "—").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -449,6 +616,8 @@ async function handleRequest(request, env) {
     else if (url.pathname === "/api/admin/employees/create" && request.method === "POST") result = await handleCreateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/update" && request.method === "POST") result = await handleUpdateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/deactivate" && request.method === "POST") result = await handleDeactivateEmployee(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employment-actions/create" && request.method === "POST") result = await handleCreateEmploymentAction(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employment-actions/cancel" && request.method === "POST") result = await handleCancelEmploymentAction(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {
       if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
       result = await sendDailySummary(env, true);
@@ -463,7 +632,10 @@ async function handleRequest(request, env) {
 export default {
   fetch: handleRequest,
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(sendDailySummary(env).catch((error) => console.error("Daily Telegram summary failed", error.message)));
+    ctx.waitUntil(Promise.all([
+      sendDailySummary(env).catch((error) => console.error("Daily Telegram summary failed", error.message)),
+      processScheduledEmploymentActions(env).catch((error) => console.error("Scheduled employment actions failed", error.message)),
+    ]));
   },
 };
 

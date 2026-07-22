@@ -83,6 +83,14 @@ service cloud.firestore {
       allow create, update, delete: if manager();
     }
 
+    // Immutable HR audit trail for transfers, promotions, job changes and
+    // resignations. The Worker writes these records with a service account;
+    // browser users can inspect them but cannot forge or rewrite history.
+    match /employmentActions/{actionId} {
+      allow get, list: if manager();
+      allow create, update, delete: if false;
+    }
+
     // Transactional counter used to reserve unique employee numbers even
     // when two HR users add staff at the same time.
     match /counters/employees {

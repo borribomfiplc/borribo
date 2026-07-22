@@ -123,6 +123,7 @@ function App() {
   const [assets, setAssets] = useFirestoreCollection("assets", [], "assetId", managerAccess);
   const [staffLoans, setStaffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
   const [telegramOutbox, setTelegramOutbox] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
+  const [employmentActions] = useFirestoreCollection("employmentActions", [], "id", managerAccess);
 
   // Branch is a reporting dimension. The Topbar selection deliberately scopes
   // dashboard and report inputs without mutating records from other branches.
@@ -473,6 +474,10 @@ function App() {
             employee={employees.find((item) => item.id === selectedEmployee?.id) || selectedEmployee}
             onBack={() => { setSelectedEmployee(null); setActive("បញ្ជីបុគ្គលិក"); }}
             onEdit={(employee) => { setEditingEmployee(employee); setActive("បន្ថែមបុគ្គលិក"); }}
+            employmentActions={employmentActions}
+            branches={branches}
+            departments={departments}
+            jobRoles={jobRoles}
           />
         ) : active === "វត្តមានប្រចាំថ្ងៃ" ? (
           <DailyAttendancePage

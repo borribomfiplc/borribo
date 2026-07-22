@@ -1,14 +1,14 @@
 import React, { useState } from "react";
-import {
-  Search, ChevronDown, UserPlus, X, Pencil
-} from "lucide-react";
+import { Search, ChevronDown, UserPlus, X, Pencil, Eye } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { statusStyle } from "../data/mockData";
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 
-export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmployee, employees, query, setQuery }) {
+export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick, onDeleteEmployee, employees, query, setQuery }) {
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
+  const [deleteError, setDeleteError] = useState("");
+  const [deletingId, setDeletingId] = useState("");
 
   const branches = ["ទាំងអស់", ...Array.from(new Set(employees.map((e) => e.branch)))];
 
@@ -21,10 +21,13 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
 
   const { page, setPage, totalPages, totalItems, pageSize, pageItems: paged } = usePagination(filtered);
 
-  const handleDelete = (emp) => {
-    if (window.confirm(`តើអ្នកចង់លុបបុគ្គលិក "${emp.name}" មែនទេ? សកម្មភាពនេះមិនអាចត្រឡប់វិញបានទេ។`)) {
-      onDeleteEmployee(emp.id);
-    }
+  const handleDelete = async (emp) => {
+    const action = emp.uid ? "បិទ Login Account និងដកចេញពីបញ្ជី" : "លុបចេញពីបញ្ជី";
+    if (!window.confirm(`តើអ្នកចង់${action}សម្រាប់ "${emp.name}" មែនទេ?`)) return;
+    setDeletingId(emp.id); setDeleteError("");
+    try { await onDeleteEmployee(emp); }
+    catch (error) { setDeleteError(error?.message || "មិនអាចលុបបុគ្គលិកបានទេ"); }
+    finally { setDeletingId(""); }
   };
 
   return (
@@ -45,6 +48,8 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
           បន្ថែមបុគ្គលិក
         </button>
       </div>
+
+      {deleteError && <div className="text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-4 py-3 mb-5">{deleteError}</div>}
 
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-[#EBEDF3] p-3 sm:p-4 mb-5 flex flex-col sm:flex-row gap-3">
@@ -100,9 +105,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
               <tr key={e.id} className="border-t border-[#EBEDF3] hover:bg-[#F7F8FB]/60">
                 <td className="px-5 py-3.5">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-xs font-bold flex items-center justify-center shrink-0">
-                      {e.name.slice(0, 1)}
-                    </div>
+                    {e.photo ? <img src={e.photo} alt={e.name} className="w-9 h-9 rounded-full object-cover shrink-0" /> : <div className="w-9 h-9 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-xs font-bold flex items-center justify-center shrink-0">{e.name.slice(0, 1)}</div>}
                     <div>
                       <div className="font-medium text-[#1E2333]">{e.name}</div>
                       <div className="text-xs text-[#B4B7C6]">{e.id}</div>
@@ -124,6 +127,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
                 </td>
                 <td className="px-5 py-3.5 text-left">
                   <div className="flex items-center gap-1 justify-end">
+                    <button onClick={() => onViewClick(e)} aria-label={`មើល ${e.name}`} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"><Eye size={15} /></button>
                     <button
                       onClick={() => onEditClick(e)}
                       aria-label={`កែសម្រួល ${e.name}`}
@@ -133,6 +137,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
                     </button>
                     <button
                       onClick={() => handleDelete(e)}
+                      disabled={deletingId === e.id}
                       aria-label={`លុប ${e.name}`}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"
                     >
@@ -159,9 +164,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
         {paged.map((e) => (
           <div key={e.id} className="bg-white rounded-2xl border border-[#EBEDF3] p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-sm font-bold flex items-center justify-center shrink-0">
-                {e.name.slice(0, 1)}
-              </div>
+              {e.photo ? <img src={e.photo} alt={e.name} className="w-10 h-10 rounded-full object-cover shrink-0" /> : <div className="w-10 h-10 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-sm font-bold flex items-center justify-center shrink-0">{e.name.slice(0, 1)}</div>}
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[#1E2333] text-sm truncate">{e.name}</div>
                 <div className="text-xs text-[#8A8FA3] truncate">{e.role}</div>
@@ -178,6 +181,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
               <span dir="ltr">{e.phone}</span>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={() => onViewClick(e)} className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#2A3F8F]"><Eye size={13} /> មើល</button>
               <button
                 onClick={() => onEditClick(e)}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#5B5F73]"
@@ -186,6 +190,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onDeleteEmpl
               </button>
               <button
                 onClick={() => handleDelete(e)}
+                disabled={deletingId === e.id}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#D9614F]"
               >
                 <X size={13} /> លុប

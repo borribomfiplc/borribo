@@ -1,4 +1,4 @@
-const FIRESTORE_SCOPE = "https://www.googleapis.com/auth/datastore";
+const FIRESTORE_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DEFAULT_TELEGRAM_SETTINGS = {
   enabled: false,
@@ -158,6 +158,10 @@ async function putDocument(env, path, data) {
   return firestoreRequest(env, `/${path}`, { method: "PATCH", body: JSON.stringify({ fields: encodeFields(data) }) });
 }
 
+async function deleteDocument(env, path) {
+  return firestoreRequest(env, `/${path}`, { method: "DELETE" });
+}
+
 async function listDocuments(env, collectionId, pageSize = 500) {
   const result = await firestoreRequest(env, `/${collectionId}?pageSize=${pageSize}`);
   return (result?.documents || []).map((doc) => ({ id: doc.name.split("/").pop(), ...decodeFields(doc.fields) }));
@@ -199,6 +203,111 @@ async function verifyFirebaseUser(request, env) {
 }
 
 function manager(user) { return user.role === "admin" || user.role === "hr"; }
+
+async function authAdminRequest(env, action, body) {
+  const token = await getGoogleAccessToken(env);
+  const url = action === "create"
+    ? `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(env.FIREBASE_WEB_API_KEY)}`
+    : `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/accounts:${action}`;
+  const payload = action === "create" ? { ...body, targetProjectId: env.FIREBASE_PROJECT_ID } : body;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result?.error?.message || `Firebase Auth request failed (${response.status})`);
+  return result;
+}
+
+function validUsername(value) { return /^[a-z0-9][a-z0-9._-]{1,31}$/.test(value); }
+
+async function handleCreateEmployee(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const employee = body?.employee || {};
+  const account = body?.account || {};
+  const username = String(account.username || "").trim().toLowerCase();
+  const email = String(account.email || employee.email || "").trim().toLowerCase();
+  const role = String(account.role || "employee");
+  if (!employee.id || !employee.name || !employee.branch || !employee.dept || !employee.role) throw Object.assign(new Error("Employee data is incomplete"), { status: 400 });
+  if (!validUsername(username)) throw Object.assign(new Error("Invalid username"), { status: 400 });
+  if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
+  if (String(account.password || "").length < 8) throw Object.assign(new Error("Temporary password must have at least 8 characters"), { status: 400 });
+  if (!["employee", "hr", "admin"].includes(role)) throw Object.assign(new Error("Invalid role"), { status: 400 });
+  if (user.role !== "admin" && role !== "employee") throw Object.assign(new Error("Only Admin can create HR or Admin accounts"), { status: 403 });
+  if (await getDocument(env, `usernames/${username}`)) throw Object.assign(new Error("USERNAME_EXISTS"), { status: 409 });
+
+  let uid = "";
+  try {
+    const created = await authAdminRequest(env, "create", { email, password: account.password, displayName: employee.name, emailVerified: false, disabled: false });
+    uid = created.localId;
+    await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId: employee.id }), disableUser: false });
+    const now = new Date().toISOString();
+    const employeeRecord = { ...employee, uid, email, username, accountRole: role, status: employee.status || "សកម្ម", updatedAt: now };
+    await Promise.all([
+      putDocument(env, `employees/${employee.id}`, employeeRecord),
+      putDocument(env, `profiles/${uid}`, { uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }),
+      putDocument(env, `usernames/${username}`, { username, email, uid, active: true }),
+      putDocument(env, `passwordResetEmails/${email}`, { email, uid, active: true }),
+      putDocument(env, `users/${uid}`, { id: uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }),
+    ]);
+    return { ok: true, employee: employeeRecord, uid };
+  } catch (error) {
+    if (uid) await authAdminRequest(env, "delete", { localId: uid }).catch(() => {});
+    throw error;
+  }
+}
+
+async function handleDeactivateEmployee(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const uid = String(body?.uid || "");
+  const employeeId = String(body?.employeeId || "");
+  if (!uid || !employeeId) throw Object.assign(new Error("Employee account identifiers are missing"), { status: 400 });
+  const profile = await getDocument(env, `profiles/${uid}`);
+  if (!profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
+  if (user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can deactivate HR or Admin accounts"), { status: 403 });
+  if (uid === user.uid) throw Object.assign(new Error("You cannot deactivate your own account"), { status: 400 });
+  await authAdminRequest(env, "update", { localId: uid, disableUser: true });
+  const now = new Date().toISOString();
+  await Promise.all([
+    putDocument(env, `profiles/${uid}`, { ...profile, active: false, status: "អសកម្ម", updatedAt: now }),
+    profile.username ? putDocument(env, `usernames/${profile.username}`, { username: profile.username, email: profile.email, uid, active: false }) : Promise.resolve(),
+    profile.email ? putDocument(env, `passwordResetEmails/${profile.email}`, { email: profile.email, uid, active: false }) : Promise.resolve(),
+    putDocument(env, `users/${uid}`, { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, status: "អសកម្ម", active: false, updatedAt: now }),
+  ]);
+  await deleteDocument(env, `employees/${employeeId}`);
+  return { ok: true, deactivated: true };
+}
+
+async function handleUpdateEmployee(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const employee = body?.employee || {};
+  if (!employee.id || !employee.uid) throw Object.assign(new Error("Employee account identifiers are missing"), { status: 400 });
+  const profile = await getDocument(env, `profiles/${employee.uid}`);
+  if (!profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
+  if (user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can edit HR or Admin accounts"), { status: 403 });
+  const email = String(employee.email || profile.email || "").trim().toLowerCase();
+  if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
+  const disabled = employee.status === "អសកម្ម";
+  await authAdminRequest(env, "update", {
+    localId: employee.uid,
+    email,
+    displayName: employee.name,
+    customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }),
+    disableUser: disabled,
+  });
+  const now = new Date().toISOString();
+  const employeeRecord = { ...employee, email, username: profile.username || employee.username || "", accountRole: profile.role, updatedAt: now };
+  await Promise.all([
+    putDocument(env, `employees/${employee.id}`, employeeRecord),
+    putDocument(env, `profiles/${employee.uid}`, { ...profile, name: employee.name, email, branch: employee.branch, active: !disabled, status: employee.status, updatedAt: now }),
+    profile.username ? putDocument(env, `usernames/${profile.username}`, { username: profile.username, email, uid: employee.uid, active: !disabled }) : Promise.resolve(),
+    profile.email && profile.email !== email ? putDocument(env, `passwordResetEmails/${profile.email}`, { email: profile.email, uid: employee.uid, active: false }) : Promise.resolve(),
+    putDocument(env, `passwordResetEmails/${email}`, { email, uid: employee.uid, active: !disabled }),
+    putDocument(env, `users/${employee.uid}`, { id: employee.uid, employeeId: employee.id, name: employee.name, email, username: profile.username, role: profile.role, branch: employee.branch, status: employee.status, active: !disabled, updatedAt: now }),
+  ]);
+  return { ok: true, employee: employeeRecord };
+}
 
 function escapeHtml(value) {
   return String(value ?? "—").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -337,13 +446,16 @@ async function handleRequest(request, env) {
     let result;
     if (url.pathname === "/api/telegram/test" && request.method === "POST") result = await handleTest(user, env);
     else if (url.pathname === "/api/telegram/event" && request.method === "POST") result = await handleEvent(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employees/create" && request.method === "POST") result = await handleCreateEmployee(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employees/update" && request.method === "POST") result = await handleUpdateEmployee(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employees/deactivate" && request.method === "POST") result = await handleDeactivateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {
       if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
       result = await sendDailySummary(env, true);
     } else return json({ error: "Not found" }, 404, origin);
     return json(result, 200, origin);
   } catch (error) {
-    console.error("Telegram worker request failed", error.message);
+    console.error("Worker request failed", error.message);
     return json({ ok: false, error: error.message || "Request failed" }, error.status || 500, origin);
   }
 }

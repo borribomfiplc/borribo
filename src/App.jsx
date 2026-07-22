@@ -23,11 +23,13 @@ import { filterNavigation, isManager, ROLE_LABELS, ROLES } from "./auth/permissi
 import AccessDeniedPage from "./pages/AccessDeniedPage";
 import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { useEnglishUi } from "./i18n/useEnglishUi";
+import { removeEmployee } from "./services/employees";
 
 // Every other page is code-split with React.lazy so the initial bundle only
 // pays for the dashboard home screen; each page's JS loads on first visit.
 const EmployeeListPage = lazy(() => import("./pages/EmployeeListPage"));
 const AddEmployeePage = lazy(() => import("./pages/AddEmployeePage"));
+const EmployeeDetailsPage = lazy(() => import("./pages/EmployeeDetailsPage"));
 const DailyAttendancePage = lazy(() => import("./pages/DailyAttendancePage"));
 const AttendanceHistoryPage = lazy(() => import("./pages/AttendanceHistoryPage"));
 const AttendanceCorrectionPage = lazy(() => import("./pages/AttendanceCorrectionPage"));
@@ -132,8 +134,9 @@ function App() {
 
   const [employeeQuery, setEmployeeQuery] = useState(""); // controlled search text for EmployeeListPage
   const [editingEmployee, setEditingEmployee] = useState(null); // employee currently open in AddEmployeePage's edit mode
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
 
-  const deleteEmployee = (id) => setEmployees((list) => list.filter((e) => e.id !== id));
+  const deleteEmployee = (employee) => removeEmployee(employee);
   const [headerQuery, setHeaderQuery] = useState(""); // topbar quick-search text
 
   useEffect(() => {
@@ -448,6 +451,7 @@ function App() {
           <EmployeeListPage
             onAddClick={() => { setEditingEmployee(null); setActive("បន្ថែមបុគ្គលិក"); }}
             onEditClick={(emp) => { setEditingEmployee(emp); setActive("បន្ថែមបុគ្គលិក"); }}
+            onViewClick={(emp) => { setSelectedEmployee(emp); setActive("ព័ត៌មានបុគ្គលិក"); }}
             onDeleteEmployee={deleteEmployee}
             employees={employees}
             query={employeeQuery}
@@ -458,8 +462,17 @@ function App() {
             onCancel={() => { setEditingEmployee(null); setActive("បញ្ជីបុគ្គលិក"); }}
             onSave={() => { setEditingEmployee(null); setEmployeeQuery(""); setActive("បញ្ជីបុគ្គលិក"); }}
             employees={employees}
-            setEmployees={setEmployees}
             editingEmployee={editingEmployee}
+            branches={branches}
+            departments={departments}
+            jobRoles={jobRoles}
+            actorRole={profile.role}
+          />
+        ) : active === "ព័ត៌មានបុគ្គលិក" ? (
+          <EmployeeDetailsPage
+            employee={employees.find((item) => item.id === selectedEmployee?.id) || selectedEmployee}
+            onBack={() => { setSelectedEmployee(null); setActive("បញ្ជីបុគ្គលិក"); }}
+            onEdit={(employee) => { setEditingEmployee(employee); setActive("បន្ថែមបុគ្គលិក"); }}
           />
         ) : active === "វត្តមានប្រចាំថ្ងៃ" ? (
           <DailyAttendancePage

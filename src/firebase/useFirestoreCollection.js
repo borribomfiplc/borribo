@@ -75,8 +75,16 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
       const nextIds = new Set(next.map((item) => String(item[idField])));
 
       const batch = writeBatch(db);
+      // Only write records that were added or actually changed. The previous
+      // implementation re-wrote the entire collection for every small edit,
+      // which was slow and could hit Firestore's 500-write batch limit.
+      const previousById = new Map(prev.map((item) => [String(item[idField]), item]));
       next.forEach((item) => {
-        batch.set(doc(db, collectionName, String(item[idField])), item);
+        const id = String(item[idField]);
+        const previous = previousById.get(id);
+        if (!previous || JSON.stringify(previous) !== JSON.stringify(item)) {
+          batch.set(doc(db, collectionName, id), item);
+        }
       });
       prevIds.forEach((id) => {
         if (!nextIds.has(id)) batch.delete(doc(db, collectionName, id));

@@ -83,6 +83,13 @@ service cloud.firestore {
       allow create, update, delete: if manager();
     }
 
+    // Transactional counter used to reserve unique employee numbers even
+    // when two HR users add staff at the same time.
+    match /counters/employees {
+      allow get, create, update: if manager();
+      allow list, delete: if false;
+    }
+
     match /leaveRequests/{requestId} {
       allow get, list: if manager() || (signedIn() && resource.data.employeeUid == request.auth.uid);
       allow create: if hasRole('employee')

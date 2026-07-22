@@ -203,6 +203,16 @@ when you click into it.
   previously showed every source file as changed.
 - Never include `.git`, `node_modules`, `dist`, `.env`, or
   `serviceAccountKey.json` when sharing a ZIP of this project.
+- After deploying this version's Firestore rules, sign in as Admin/HR, open
+  **GPS និង QR**, verify each branch latitude/longitude/radius, and press
+  **រក្សាទុក** once. This creates `settings/gpsQrPublic` and the hashed,
+  expiring `qrTokens/{branchId}` documents. Employee attendance deliberately
+  fails closed until this migration is complete.
+- The plaintext QR credentials stay in manager-only `settings/gpsQr`.
+  Employees can read only the GPS requirements and a SHA-256 token hash with
+  its expiry. A QR is also tied to one branch and is rejected after expiry.
+- Attendance, leave, and monthly reports support date/month filtering, UTF-8
+  CSV export (opens correctly in Excel), and browser Print / Save as PDF.
 
 - **Data model**: `employees`, `leaveRequests`, `attendanceToday`,
   `attendanceHistory`, `corrections`, `branches`, `departments`, `jobRoles`,

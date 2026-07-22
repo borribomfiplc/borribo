@@ -26,6 +26,34 @@ service cloud.firestore {
       return hasRole('kiosk');
     }
 
+    function ownEmployeeId() {
+      return request.auth.token.get(
+        'employeeId',
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('employeeId', request.auth.uid)
+      );
+    }
+
+    function validAttendanceStatus(value) {
+      return value in ['មានវត្តមាន', 'យឺត'];
+    }
+
+    function validSelfAttendance(data, recordId) {
+      return data.uid == request.auth.uid
+        && data.id == ownEmployeeId()
+        && data.recordId == recordId
+        && recordId == data.id + '_' + data.dateISO
+        && validAttendanceStatus(data.status)
+        && data.keys().hasAll(['id', 'recordId', 'uid', 'dateISO', 'name', 'branch', 'checkIn', 'checkInClientAt', 'status']);
+    }
+
+    function validSelfHistory(data, recordId) {
+      return data.uid == request.auth.uid
+        && data.id == ownEmployeeId()
+        && data.docId == recordId
+        && recordId == data.id + '_' + data.dateISO
+        && validAttendanceStatus(data.status);
+    }
+
     match /profiles/{userId} {
       allow get: if signedIn() && request.auth.uid == userId;
       allow list: if administrator();
@@ -59,7 +87,11 @@ service cloud.firestore {
       allow get, list: if manager() || (signedIn() && resource.data.employeeUid == request.auth.uid);
       allow create: if hasRole('employee')
         && request.resource.data.employeeUid == request.auth.uid
-        && request.resource.data.status == 'រង់ចាំពិនិត្យ';
+        && request.resource.data.status == 'រង់ចាំពិនិត្យ'
+        && request.resource.data.days is number
+        && request.resource.data.days >= 1
+        && request.resource.data.days <= 365
+        && request.resource.data.keys().hasAll(['employeeUid', 'employeeId', 'name', 'branch', 'leaveType', 'startDate', 'endDate', 'days', 'reason', 'status']);
       allow update: if manager() || (
         hasRole('employee')
         && resource.data.employeeUid == request.auth.uid
@@ -84,16 +116,19 @@ service cloud.firestore {
       allow list: if manager() || kiosk();
       allow create: if manager() || kiosk() || (
         hasRole('employee')
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.id == request.auth.token.employeeId
-        && request.resource.data.status in ['មានវត្តមាន', 'យឺត']
+        && validSelfAttendance(request.resource.data, recordId)
       );
       allow update: if manager() || kiosk() || (
         hasRole('employee')
+        && validSelfAttendance(request.resource.data, recordId)
         && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid
         && request.resource.data.id == resource.data.id
-        && request.resource.data.status in ['មានវត្តមាន', 'យឺត']
+        && request.resource.data.recordId == resource.data.recordId
+        && request.resource.data.dateISO == resource.data.dateISO
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.branch == resource.data.branch
+        && request.resource.data.checkIn == resource.data.checkIn
+        && request.resource.data.checkInClientAt == resource.data.checkInClientAt
       );
       allow delete: if manager();
     }
@@ -102,14 +137,17 @@ service cloud.firestore {
       allow get, list, create, update, delete: if manager() || kiosk();
       allow get: if signedIn() && resource.data.uid == request.auth.uid;
       allow create: if hasRole('employee')
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.id == request.auth.token.employeeId
-        && request.resource.data.docId == recordId;
+        && validSelfHistory(request.resource.data, recordId);
       allow update: if hasRole('employee')
         && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid
+        && validSelfHistory(request.resource.data, recordId)
         && request.resource.data.id == resource.data.id
-        && request.resource.data.docId == recordId;
+        && request.resource.data.docId == resource.data.docId
+        && request.resource.data.dateISO == resource.data.dateISO
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.branch == resource.data.branch
+        && request.resource.data.checkIn == resource.data.checkIn
+        && request.resource.data.checkInClientAt == resource.data.checkInClientAt;
     }
 
     match /corrections/{recordId} {
@@ -126,12 +164,30 @@ service cloud.firestore {
         && collectionName in ['departments', 'jobRoles', 'holidays'];
     }
 
-    // Employees may read the attendance requirements only. The QR value is
-    // displayed publicly at each branch, while all other system settings stay
-    // restricted to managers.
+    // The private document contains plaintext QR credentials and is never
+    // exposed to employee accounts. Employees read only geofence requirements
+    // and per-branch hashes/expiry values.
     match /settings/gpsQr {
-      allow get: if signedIn();
+      allow get: if manager();
       allow create, update: if manager();
+      allow delete: if administrator();
+    }
+
+    match /settings/gpsQrPublic {
+      allow get: if signedIn() || kiosk();
+      allow list: if false;
+      allow create, update: if manager();
+      allow delete: if administrator();
+    }
+
+    match /qrTokens/{branchId} {
+      allow get: if signedIn() || kiosk();
+      allow list: if manager();
+      allow create, update: if manager()
+        && request.resource.data.branchId == branchId
+        && request.resource.data.tokenHash is string
+        && request.resource.data.tokenHash.size() == 64
+        && request.resource.data.expiresAt is string;
       allow delete: if administrator();
     }
 

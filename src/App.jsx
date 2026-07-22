@@ -21,7 +21,6 @@ import { watchAuthState, logout as firebaseLogout } from "./firebase/auth";
 import { useUserProfile } from "./firebase/useUserProfile";
 import { filterNavigation, isManager, ROLE_LABELS, ROLES } from "./auth/permissions";
 import AccessDeniedPage from "./pages/AccessDeniedPage";
-import EmployeePortalPage from "./pages/EmployeePortalPage";
 import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { useEnglishUi } from "./i18n/useEnglishUi";
 
@@ -53,6 +52,7 @@ const AssetManagementPage = lazy(() => import("./pages/AssetManagementPage"));
 const StaffLoanPage = lazy(() => import("./pages/StaffLoanPage"));
 const FingerprintPage = lazy(() => import("./pages/FingerprintPage"));
 const TelegramBotPage = lazy(() => import("./pages/TelegramBotPage"));
+const EmployeePortalPage = lazy(() => import("./pages/EmployeePortalPage"));
 
 function PageLoading() {
   return (
@@ -159,11 +159,11 @@ function App() {
     ? employees
         .filter(
           (e) =>
-            e.name.includes(headerQuery.trim()) ||
-            e.role.includes(headerQuery.trim()) ||
-            e.branch.includes(headerQuery.trim()) ||
-            e.id.toLowerCase().includes(headerQuery.trim().toLowerCase()) ||
-            e.phone.includes(headerQuery.trim())
+            String(e.name || "").includes(headerQuery.trim()) ||
+            String(e.role || "").includes(headerQuery.trim()) ||
+            String(e.branch || "").includes(headerQuery.trim()) ||
+            String(e.id || "").toLowerCase().includes(headerQuery.trim().toLowerCase()) ||
+            String(e.phone || "").includes(headerQuery.trim())
         )
         .slice(0, 6)
     : [];
@@ -255,7 +255,7 @@ function App() {
   }
 
   if (profile.role === ROLES.EMPLOYEE) {
-    return <EmployeePortalPage authUser={authUser} profile={profile} branches={branches} onLogout={handleLogout} />;
+    return <Suspense fallback={<PageLoading />}><EmployeePortalPage authUser={authUser} profile={profile} branches={branches} onLogout={handleLogout} /></Suspense>;
   }
 
   const visibleNavSections = filterNavigation(navSections, profile.role);

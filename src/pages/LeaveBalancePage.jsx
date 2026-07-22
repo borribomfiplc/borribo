@@ -24,12 +24,12 @@ export default function LeaveBalancePage({ requests, employees }) {
     (e) =>
       (branchFilter === "គ្រប់សាខា" || e.branch === branchFilter) &&
       (search.trim() === "" ||
-        e.name.includes(search.trim()) ||
-        e.id.toLowerCase().includes(search.trim().toLowerCase()))
+        String(e.name || "").includes(search.trim()) ||
+        String(e.id || "").toLowerCase().includes(search.trim().toLowerCase()))
   );
 
   const totalUsedByType = (type) =>
-    requests.filter((r) => r.leaveType === type && r.status === "បានអនុម័ត").reduce((sum, r) => sum + r.days, 0);
+    requests.filter((r) => r.leaveType === type && r.status === "បានអនុម័ត").reduce((sum, r) => sum + (Number(r.days) || 0), 0);
 
   const lowBalanceCount = employees.filter((e) => {
     const remaining = leaveTypes.reduce((sum, t) => sum + Math.max(0, leaveQuotas[t] - usedDays(e.id, t)), 0);

@@ -15,7 +15,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
-    empId: employees[0].id,
+    empId: employees[0]?.id || "",
     date: "",
     checkIn: "",
     checkOut: "",
@@ -82,6 +82,10 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
       return;
     }
     const emp = employees.find((e) => e.id === form.empId);
+    if (!emp) {
+      setError("មិនមានបុគ្គលិកសម្រាប់បង្កើតសំណើកែតម្រូវទេ");
+      return;
+    }
     const existing = attendanceHistory.find((item) => item.id === form.empId && item.dateISO === form.date)
       || (form.date === new Date().toISOString().slice(0, 10) ? attendanceToday.find((item) => item.id === form.empId) : null);
     const newCorrection = {
@@ -104,7 +108,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
     };
     setError("");
     setCorrections((list) => [newCorrection, ...list]);
-    setForm({ empId: employees[0].id, date: new Date().toISOString().slice(0, 10), checkIn: "", checkOut: "", status: "មានវត្តមាន", reason: "" });
+    setForm({ empId: employees[0]?.id || "", date: new Date().toISOString().slice(0, 10), checkIn: "", checkOut: "", status: "មានវត្តមាន", reason: "" });
     setShowNew(false);
   };
 

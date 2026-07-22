@@ -6,12 +6,13 @@ import { COLORS } from "../data/theme";
 import { correctionStatusStyle, leaveTypeStyle, leaveTypes } from "../data/mockData";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import StatCard from "../components/shared/StatCard";
+import { todayISO } from "../utils/attendance";
 
 export default function LeaveRequestPage({ requests, setRequests, employees }) {
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
-    empId: employees[0].id,
+    empId: employees[0]?.id || "",
     leaveType: leaveTypes[0],
     startDate: "",
     endDate: "",
@@ -53,6 +54,10 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
       return;
     }
     const emp = employees.find((e) => e.id === form.empId);
+    if (!emp) {
+      setError("មិនមានបុគ្គលិកសម្រាប់បង្កើតសំណើទេ");
+      return;
+    }
     const newRequest = {
       id: `LV-${String(requests.length + 1).padStart(3, "0")}`,
       empId: emp.id,
@@ -65,12 +70,12 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
       days: form.days ? Number(form.days) : 1,
       reason: form.reason,
       requestedBy: emp.name,
-      requestedOn: new Intl.DateTimeFormat("km-KH", { year: "numeric", month: "long", day: "numeric" }).format(new Date()),
+      requestedOn: todayISO(),
       status: "រង់ចាំពិនិត្យ",
     };
     setError("");
     setRequests((list) => [newRequest, ...list]);
-    setForm({ empId: employees[0].id, leaveType: leaveTypes[0], startDate: "", endDate: "", days: "", reason: "" });
+    setForm({ empId: employees[0]?.id || "", leaveType: leaveTypes[0], startDate: "", endDate: "", days: "", reason: "" });
     setShowNew(false);
   };
 
@@ -160,7 +165,7 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
           <tbody>
             {filtered.map((r) => {
               const st = correctionStatusStyle[r.status];
-              const lt = leaveTypeStyle[r.leaveType];
+              const lt = leaveTypeStyle[r.leaveType] || { bg: COLORS.purpleLight, fg: COLORS.purple };
               return (
                 <tr key={r.id} className="border-t border-[#EBEDF3] hover:bg-[#F7F8FB]/60 align-top">
                   <td className="px-5 py-3.5">
@@ -239,7 +244,7 @@ export default function LeaveRequestPage({ requests, setRequests, employees }) {
       <div className="md:hidden flex flex-col gap-3">
         {filtered.map((r) => {
           const st = correctionStatusStyle[r.status];
-          const lt = leaveTypeStyle[r.leaveType];
+          const lt = leaveTypeStyle[r.leaveType] || { bg: COLORS.purpleLight, fg: COLORS.purple };
           return (
             <div key={r.id} className="bg-white rounded-2xl border border-[#EBEDF3] p-4">
               <div className="flex items-center gap-3 mb-3">

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { CalendarDays, CheckCircle2, XCircle, AlertCircle, Trophy } from "lucide-react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell
@@ -7,21 +7,31 @@ import { COLORS } from "../data/theme";
 import { leaveTypeStyle, leaveTypes } from "../data/mockData";
 import ReportHeader from "../components/shared/ReportHeader";
 import StatCard from "../components/shared/StatCard";
+import { exportCsv, printReport } from "../utils/reportExport";
+import { todayISO } from "../utils/attendance";
 
-export default function LeaveReportPage({ leaveRequests }) {
+const startOfYear = () => `${todayISO().slice(0, 4)}-01-01`;
+
+export default function LeaveReportPage({ leaveRequests = [] }) {
+  const [fromDate, setFromDate] = useState(startOfYear);
+  const [toDate, setToDate] = useState(() => todayISO());
+  const filteredRequests = useMemo(() => leaveRequests.filter((request) => {
+    const date = request.requestedOn || request.startDate || "";
+    return (!fromDate || date >= fromDate) && (!toDate || date <= toDate);
+  }), [fromDate, leaveRequests, toDate]);
   const leaveData = leaveTypes.map((name, index) => ({
     name,
-    value: leaveRequests.filter((request) => request.leaveType === name).length,
+    value: filteredRequests.filter((request) => request.leaveType === name).length,
     color: [COLORS.primary, COLORS.green, COLORS.accent, COLORS.purple][index],
   })).filter((item) => item.value > 0);
   const total = leaveData.reduce((a, b) => a + b.value, 0);
   const counts = {
-    approved: leaveRequests.filter((r) => r.status === "បានអនុម័ត").length,
-    pending: leaveRequests.filter((r) => r.status === "រង់ចាំពិនិត្យ").length,
-    rejected: leaveRequests.filter((r) => r.status === "បានបដិសេធ").length,
+    approved: filteredRequests.filter((r) => r.status === "បានអនុម័ត").length,
+    pending: filteredRequests.filter((r) => r.status === "រង់ចាំពិនិត្យ").length,
+    rejected: filteredRequests.filter((r) => r.status === "បានបដិសេធ").length,
   };
-  const totalDays = leaveRequests.reduce((a, r) => a + (r.days || 0), 0);
-  const employeesWithMostCases = Object.values(leaveRequests.reduce((acc, request) => {
+  const totalDays = filteredRequests.reduce((a, r) => a + (Number(r.days) || 0), 0);
+  const employeesWithMostCases = Object.values(filteredRequests.reduce((acc, request) => {
     const key = request.empId || request.name;
     if (!acc[key]) acc[key] = { id: key, name: request.name, role: request.role, branch: request.branch, cases: 0, days: 0, pending: 0 };
     acc[key].cases += 1;
@@ -29,10 +39,24 @@ export default function LeaveReportPage({ leaveRequests }) {
     if (request.status === "រង់ចាំពិនិត្យ") acc[key].pending += 1;
     return acc;
   }, {})).sort((a, b) => b.cases - a.cases || b.days - a.days).slice(0, 5);
+  const downloadCsv = () => exportCsv({
+    filename: `leave-report-${fromDate || "all"}-${toDate || "all"}`,
+    columns: [
+      { label: "ថ្ងៃស្នើ", value: (row) => row.requestedOn || "" }, { label: "លេខបុគ្គលិក", value: (row) => row.employeeId || row.empId || "" },
+      { label: "ឈ្មោះ", value: "name" }, { label: "តួនាទី", value: "role" }, { label: "សាខា", value: "branch" },
+      { label: "ប្រភេទច្បាប់", value: "leaveType" }, { label: "ថ្ងៃចាប់ផ្ដើម", value: "startDate" }, { label: "ថ្ងៃបញ្ចប់", value: "endDate" },
+      { label: "ចំនួនថ្ងៃ", value: "days" }, { label: "ស្ថានភាព", value: "status" }, { label: "ហេតុផល", value: "reason" },
+    ], rows: filteredRequests,
+  });
 
   return (
     <>
-      <ReportHeader title="របាយការណ៍ច្បាប់" sub="សង្ខេបសំណើច្បាប់ឈប់សម្រាក តាមប្រភេទ និងស្ថានភាព" />
+      <ReportHeader title="របាយការណ៍ច្បាប់" sub={`${fromDate || "ដំបូង"} ដល់ ${toDate || "បច្ចុប្បន្ន"} · ${filteredRequests.length} សំណើ`} onExportCsv={downloadCsv} onPrint={printReport} />
+
+      <div className="report-filters mb-5 grid grid-cols-1 gap-3 rounded-2xl border border-[#EBEDF3] bg-white p-4 min-[420px]:grid-cols-2 sm:max-w-xl">
+        <label className="text-xs text-[#5B5F73]">ពីថ្ងៃ<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 text-sm outline-none" /></label>
+        <label className="text-xs text-[#5B5F73]">ដល់ថ្ងៃ<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 text-sm outline-none" /></label>
+      </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-5">
         <StatCard icon={CheckCircle2} label="បានអនុម័ត" value={counts.approved} sub="សំណើសរុប" iconBg={COLORS.greenLight} iconColor={COLORS.green} chartColor={COLORS.green} />
@@ -89,7 +113,7 @@ export default function LeaveReportPage({ leaveRequests }) {
               </tr>
             </thead>
             <tbody>
-              {leaveRequests.map((r) => (
+              {filteredRequests.map((r) => (
                 <tr key={r.id} className="border-t border-[#EBEDF3]">
                   <td className="px-5 py-3.5">
                     <div className="font-medium text-[#1E2333]">{r.name}</div>
@@ -114,6 +138,7 @@ export default function LeaveReportPage({ leaveRequests }) {
                   </td>
                 </tr>
               ))}
+              {!filteredRequests.length && <tr><td colSpan={4} className="py-10 text-center text-sm text-[#8A8FA3]">មិនមានសំណើក្នុងរយៈពេលនេះទេ</td></tr>}
             </tbody>
           </table>
         </div>

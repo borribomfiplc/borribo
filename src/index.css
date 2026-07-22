@@ -98,6 +98,42 @@ main .overflow-x-auto {
   }
 }
 
+@media print {
+  html,
+  body,
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  aside,
+  header,
+  nav,
+  .report-actions,
+  .report-filters {
+    display: none !important;
+  }
+
+  main {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  main > div,
+  main .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  main table {
+    min-width: 100% !important;
+  }
+
+  .recharts-responsive-container {
+    break-inside: avoid;
+  }
+}
+
 /*
  * Keep every desktop data table consistent.  Most pages previously aligned
  * their headings to the right while their cell values started on the left,

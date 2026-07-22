@@ -119,7 +119,7 @@ export default function LeaveApprovalPage({ requests, setRequests, employees }) 
       ) : (
         <div className="flex flex-col gap-3 mb-6">
           {pending.map((r) => {
-            const lt = leaveTypeStyle[r.leaveType];
+            const lt = leaveTypeStyle[r.leaveType] || { bg: COLORS.purpleLight, fg: COLORS.purple };
             return (
               <div key={r.id} className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -203,7 +203,7 @@ export default function LeaveApprovalPage({ requests, setRequests, employees }) 
             )}
             {decidedRecent.map((r) => {
               const st = correctionStatusStyle[r.status];
-              const lt = leaveTypeStyle[r.leaveType];
+              const lt = leaveTypeStyle[r.leaveType] || { bg: COLORS.purpleLight, fg: COLORS.purple };
               return (
                 <div key={r.id} className="flex items-center gap-3 border-b border-[#EBEDF3] last:border-0 pb-2.5 last:pb-0">
                   <div className="w-8 h-8 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-xs font-bold flex items-center justify-center shrink-0">

@@ -48,7 +48,10 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
     const unsubscribe = onSnapshot(
       colRef,
       async (snapshot) => {
-        setDataState(snapshot.docs.map((d) => d.data()));
+        setDataState(snapshot.docs.map((d) => {
+          const value = d.data();
+          return value[idField] == null ? { ...value, [idField]: d.id } : value;
+        }));
         setLoading(false);
       },
       (err) => {
@@ -60,8 +63,7 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
     );
 
     return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectionName, enabled]);
+  }, [collectionName, enabled, idField]);
 
   const setData = useCallback(
     async (updater) => {

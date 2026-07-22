@@ -114,15 +114,23 @@ service cloud.firestore {
         && request.resource.data.employeeUid == request.auth.uid
         && request.resource.data.status == 'រង់ចាំពិនិត្យ'
         && request.resource.data.days is number
-        && request.resource.data.days >= 1
+        && request.resource.data.days >= 0.5
         && request.resource.data.days <= 365
         && request.resource.data.keys().hasAll(['employeeUid', 'employeeId', 'name', 'branch', 'leaveType', 'startDate', 'endDate', 'days', 'reason', 'status']);
       allow update: if manager() || (
         hasRole('employee')
         && resource.data.employeeUid == request.auth.uid
         && request.resource.data.employeeUid == request.auth.uid
-        && request.resource.data.status == 'រង់ចាំពិនិត្យ'
-        && request.resource.data.status == resource.data.status
+        && resource.data.status == 'រង់ចាំពិនិត្យ'
+        && request.resource.data.status in ['រង់ចាំពិនិត្យ', 'បានលុបចោល']
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.startDate == resource.data.startDate
+        && request.resource.data.endDate == resource.data.endDate
+        && request.resource.data.days == resource.data.days
+        && request.resource.data.leaveType == resource.data.leaveType
+        && request.resource.data.reason == resource.data.reason
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.branch == resource.data.branch
       );
       allow delete: if manager() || (
         hasRole('employee')
@@ -186,7 +194,14 @@ service cloud.firestore {
 
     match /{collectionName}/{documentId} {
       allow get, list, create, update, delete: if manager()
-        && collectionName in ['departments', 'jobRoles', 'holidays'];
+        && collectionName in ['departments', 'jobRoles', 'holidays', 'calendarEvents'];
+    }
+
+    // HR/Admin can append and inspect organization-transfer history, but
+    // existing audit records cannot be rewritten or deleted from the browser.
+    match /organizationChanges/{changeId} {
+      allow get, list, create: if manager();
+      allow update, delete: if false;
     }
 
     // The private document contains plaintext QR credentials and is never

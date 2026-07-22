@@ -31,7 +31,7 @@ export default function DashboardHomePage({ employees = [], attendanceToday = []
       const leave = leaveRequests.filter((row) => row.status === "បានអនុម័ត" && row.startDate <= dateISO && row.endDate >= dateISO).length;
       return { day: new Intl.DateTimeFormat("km-KH", { weekday: "short" }).format(new Date(`${dateISO}T12:00:00`)), present: unique.filter((row) => row.status === "មានវត្តមាន").length, late: unique.filter((row) => row.status === "យឺត").length, absent: unique.filter((row) => row.status === "អវត្តមាន").length, leave };
     });
-    const types = [["ច្បាប់ប្រចាំឆ្នាំ", COLORS.primary], ["ច្បាប់ឈឺ", COLORS.green], ["ច្បាប់ផ្ទាល់ខ្លួន", COLORS.accent], ["ច្បាប់ផ្សេងៗ", COLORS.purple]];
+    const types = [["ច្បាប់ប្រចាំឆ្នាំ", COLORS.primary], ["ច្បាប់ឈឺ", COLORS.green], ["ច្បាប់ផ្ទាល់ខ្លួន", COLORS.accent], ["ច្បាប់សម្រាលកូន", COLORS.purple], ["ច្បាប់គ្មានប្រាក់ខែ", COLORS.red]];
     const leaves = types.map(([name, color]) => ({ name, color, value: leaveRequests.filter((row) => row.status === "បានអនុម័ត" && row.leaveType === name).reduce((sum, row) => sum + Number(row.days || 0), 0) })).filter((row) => row.value > 0);
     const birthday = new Date().toISOString().slice(5);
     return { stats: { present, late, absent, onLeave }, weekData: trend, leaveData: leaves, checkins: todayRows.filter((row) => row.checkIn && row.checkIn !== "—").sort((a, b) => String(b.checkInClientAt || "").localeCompare(String(a.checkInClientAt || ""))).slice(0, 5).map((row) => ({ name: row.name, role: row.role, time: row.checkIn })), birthdays: employees.filter((row) => row.birthDate?.slice(5) === birthday).slice(0, 4), total: leaves.reduce((sum, row) => sum + row.value, 0) };

@@ -58,6 +58,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
       docId,
       correctedAt: new Date().toISOString(),
       correctionId: correction.id,
+      source: "correction",
     };
     await setAttendanceHistory((list) => {
       const exists = list.some((record) => record.docId === docId);

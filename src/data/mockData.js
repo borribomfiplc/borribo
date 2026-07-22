@@ -20,7 +20,7 @@ export const leaveData = [
   { name: "ច្បាប់ប្រចាំឆ្នាំ", value: 12, color: COLORS.primary },
   { name: "ច្បាប់ឈឺ", value: 6, color: COLORS.green },
   { name: "ច្បាប់ផ្ទាល់ខ្លួន", value: 5, color: COLORS.accent },
-  { name: "ច្បាប់ផ្សេងៗ", value: 5, color: COLORS.purple },
+  { name: "ច្បាប់សម្រាលកូន", value: 5, color: COLORS.purple },
 ];
 
 export const checkins = [
@@ -121,6 +121,7 @@ export const correctionStatusStyle = {
   "រង់ចាំពិនិត្យ": { bg: "#FDF3E3", fg: "#E8A33D" },
   "បានអនុម័ត": { bg: "#E9F7EF", fg: "#3FA66B" },
   "បានបដិសេធ": { bg: "#FBEBE8", fg: "#D9614F" },
+  "បានលុបចោល": { bg: "#F1F2F6", fg: "#6B7085" },
 };
 
 export const initialCorrections = [
@@ -198,10 +199,11 @@ export const leaveTypeStyle = {
   "ច្បាប់ប្រចាំឆ្នាំ": { bg: COLORS.primaryLight, fg: COLORS.primary },
   "ច្បាប់ឈឺ": { bg: COLORS.greenLight, fg: COLORS.green },
   "ច្បាប់ផ្ទាល់ខ្លួន": { bg: COLORS.amberLight, fg: COLORS.accent },
-  "ច្បាប់ផ្សេងៗ": { bg: COLORS.purpleLight, fg: COLORS.purple },
+  "ច្បាប់សម្រាលកូន": { bg: COLORS.purpleLight, fg: COLORS.purple },
+  "ច្បាប់គ្មានប្រាក់ខែ": { bg: COLORS.redLight, fg: COLORS.red },
 };
 
-export const leaveTypes = ["ច្បាប់ប្រចាំឆ្នាំ", "ច្បាប់ឈឺ", "ច្បាប់ផ្ទាល់ខ្លួន", "ច្បាប់ផ្សេងៗ"];
+export const leaveTypes = ["ច្បាប់ប្រចាំឆ្នាំ", "ច្បាប់ឈឺ", "ច្បាប់ផ្ទាល់ខ្លួន", "ច្បាប់សម្រាលកូន", "ច្បាប់គ្មានប្រាក់ខែ"];
 
 // Annual leave entitlement (days/year) per leave type, per employee
 
@@ -209,7 +211,8 @@ export const leaveQuotas = {
   "ច្បាប់ប្រចាំឆ្នាំ": 18,
   "ច្បាប់ឈឺ": 7,
   "ច្បាប់ផ្ទាល់ខ្លួន": 3,
-  "ច្បាប់ផ្សេងៗ": 5,
+  "ច្បាប់សម្រាលកូន": 90,
+  "ច្បាប់គ្មានប្រាក់ខែ": 0,
 };
 
 export const initialLeaveRequests = [
@@ -220,12 +223,12 @@ export const initialLeaveRequests = [
     role: "មន្ត្រីឥណទាន",
     branch: "សាខាសែនសុខ",
     leaveType: "ច្បាប់ឈឺ",
-    startDate: "១៩ កក្កដា ២០២៦",
-    endDate: "២០ កក្កដា ២០២៦",
+    startDate: "2026-07-19",
+    endDate: "2026-07-20",
     days: 2,
     reason: "ឈឺក្តៅ ត្រូវសម្រាកតាមការណែនាំរបស់វេជ្ជបណ្ឌិត",
     requestedBy: "មាន ដាវិត",
-    requestedOn: "១៨ កក្កដា ២០២៦",
+    requestedOn: "2026-07-18",
     status: "រង់ចាំពិនិត្យ",
   },
   {
@@ -235,12 +238,12 @@ export const initialLeaveRequests = [
     role: "អ្នកសវនកម្មផ្ទៃក្នុង",
     branch: "ការិយាល័យកណ្តាល",
     leaveType: "ច្បាប់ប្រចាំឆ្នាំ",
-    startDate: "១៨ កក្កដា ២០២៦",
-    endDate: "១៨ កក្កដា ២០២៦",
+    startDate: "2026-07-18",
+    endDate: "2026-07-18",
     days: 1,
     reason: "កិច្ចការគ្រួសារបន្ទាន់",
     requestedBy: "ហេង ចាន់ថា",
-    requestedOn: "១៤ កក្កដា ២០២៦",
+    requestedOn: "2026-07-14",
     status: "បានអនុម័ត",
   },
   {
@@ -250,12 +253,12 @@ export const initialLeaveRequests = [
     role: "មន្ត្រីឥណទាន",
     branch: "សាខាព្រែកលៀប",
     leaveType: "ច្បាប់ផ្ទាល់ខ្លួន",
-    startDate: "២២ កក្កដា ២០២៦",
-    endDate: "២២ កក្កដា ២០២៦",
+    startDate: "2026-07-22",
+    endDate: "2026-07-22",
     days: 1,
     reason: "រៀបចំកិច្ចការគ្រួសារបន្ទាន់",
     requestedBy: "ជា សុវណ្ណារ៉ា",
-    requestedOn: "១៧ កក្កដា ២០២៦",
+    requestedOn: "2026-07-17",
     status: "រង់ចាំពិនិត្យ",
   },
   {
@@ -265,12 +268,12 @@ export const initialLeaveRequests = [
     role: "គិតលុយ",
     branch: "សាខាទួលគោក",
     leaveType: "ច្បាប់ឈឺ",
-    startDate: "១៦ កក្កដា ២០២៦",
-    endDate: "១៦ កក្កដា ២០២៦",
+    startDate: "2026-07-16",
+    endDate: "2026-07-16",
     days: 1,
     reason: "ឈឺក្បាល និងគ្រុនក្តៅ",
     requestedBy: "លី សុជាតា",
-    requestedOn: "១៥ កក្កដា ២០២៦",
+    requestedOn: "2026-07-15",
     status: "បានបដិសេធ",
   },
   {
@@ -280,12 +283,12 @@ export const initialLeaveRequests = [
     role: "មន្ត្រីទីផ្សារ",
     branch: "ការិយាល័យកណ្តាល",
     leaveType: "ច្បាប់ប្រចាំឆ្នាំ",
-    startDate: "២៥ កក្កដា ២០២៦",
-    endDate: "២៨ កក្កដា ២០២៦",
+    startDate: "2026-07-25",
+    endDate: "2026-07-28",
     days: 4,
     reason: "ធ្វើដំណើរកម្សាន្តជាមួយគ្រួសារ",
     requestedBy: "សុខ ស្រីលក្ខណ៍",
-    requestedOn: "១២ កក្កដា ២០២៦",
+    requestedOn: "2026-07-12",
     status: "បានអនុម័ត",
   },
 ];

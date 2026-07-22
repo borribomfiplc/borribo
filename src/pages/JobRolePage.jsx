@@ -1,14 +1,12 @@
 import React, { useState } from "react";
-import {
-  User, X
-} from "lucide-react";
+import { User, Power } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
 
 export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: setRoles, departments }) {
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក" });
+  const [form, setForm] = useState({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" });
   const [error, setError] = useState("");
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -23,11 +21,11 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
       ...list,
     ]);
     setError("");
-    setForm({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក" });
+    setForm({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" });
     setShowNew(false);
   };
 
-  const remove = (id) => setRoles((list) => list.filter((r) => r.id !== id));
+  const toggleStatus = (id) => setRoles((list) => list.map((role) => role.id === id ? { ...role, status: role.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : role));
 
   return (
     <>
@@ -53,7 +51,7 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
             {roles.map((r) => {
               const count = employees.filter((e) => e.role === r.name).length;
               return (
-                <tr key={r.id} className="border-t border-[#EBEDF3] hover:bg-[#F7F8FB]/60">
+                <tr key={r.id} className={`border-t border-[#EBEDF3] hover:bg-[#F7F8FB]/60 ${r.status === "អសកម្ម" ? "opacity-60" : ""}`}>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-[#EEF1FB] text-[#2A3F8F] flex items-center justify-center shrink-0">
@@ -76,8 +74,8 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
                   </td>
                   <td className="px-5 py-3.5 text-[#5B5F73]">{count}</td>
                   <td className="px-5 py-3.5 text-left">
-                    <button onClick={() => remove(r.id)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] ml-auto">
-                      <X size={15} />
+                    <button onClick={() => toggleStatus(r.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ml-auto ${r.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}>
+                      <Power size={15} />
                     </button>
                   </td>
                 </tr>
@@ -93,7 +91,7 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
         {roles.map((r) => {
           const count = employees.filter((e) => e.role === r.name).length;
           return (
-            <div key={r.id} className="bg-white rounded-2xl border border-[#EBEDF3] p-4">
+            <div key={r.id} className={`bg-white rounded-2xl border border-[#EBEDF3] p-4 ${r.status === "អសកម្ម" ? "opacity-60" : ""}`}>
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-[#EEF1FB] text-[#2A3F8F] flex items-center justify-center shrink-0">
@@ -101,8 +99,8 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
                   </div>
                   <div className="font-medium text-[#1E2333] text-sm">{r.name}</div>
                 </div>
-                <button onClick={() => remove(r.id)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]">
-                  <X size={15} />
+                <button onClick={() => toggleStatus(r.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${r.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}>
+                  <Power size={15} />
                 </button>
               </div>
               <div className="flex items-center justify-between text-xs text-[#8A8FA3] border-t border-[#EBEDF3] pt-2.5">

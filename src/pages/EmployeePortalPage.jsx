@@ -1,19 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { addDoc, collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, query, where } from "firebase/firestore";
-import { CalendarDays, FileText, LogOut, MapPin, Clock3, ScanLine } from "lucide-react";
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc, query, where } from "firebase/firestore";
+import { CalendarDays, FileText, LogOut, MapPin, Clock3, ScanLine, Info, Download, XCircle } from "lucide-react";
 import { db } from "../firebase/config";
 import { COLORS } from "../data/theme";
 import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, distanceInMeters, timeNow, todayISO } from "../utils/attendance";
 import { parseQrPayload, sha256 } from "../utils/qrSecurity";
 import QrScanner from "../components/QrScanner";
-import { leaveTypes } from "../data/mockData";
+import { correctionStatusStyle, leaveQuotas, leaveTypes } from "../data/mockData";
 import { notifyTelegram } from "../services/telegram";
-
-const daysBetween = (start, end) => {
-  if (!start || !end) return 0;
-  const total = Math.round((new Date(`${end}T00:00:00`) - new Date(`${start}T00:00:00`)) / 86400000) + 1;
-  return Math.max(0, total);
-};
+import { calculateLeaveDays, LEAVE_PORTIONS, rangesOverlap, remainingLeaveDays } from "../utils/leave";
+import { downloadLeaveAttachment } from "../services/leaveAttachments";
 function readLocation() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({ gpsStatus: "not-supported" });
@@ -28,7 +24,7 @@ function readLocation() {
 export default function EmployeePortalPage({ authUser, profile, onLogout, branches = [] }) {
   const [requests, setRequests] = useState([]);
   const [attendance, setAttendance] = useState(null);
-  const [form, setForm] = useState({ leaveType: leaveTypes[0], startDate: "", endDate: "", reason: "" });
+  const [form, setForm] = useState({ leaveType: leaveTypes[0], startDate: "", endDate: "", portion: LEAVE_PORTIONS[0], reason: "" });
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -38,7 +34,8 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
   const employeeId = profile.employeeId || authUser.uid;
   const dateISO = todayISO();
   const attendanceId = `${employeeId}_${dateISO}`;
-  const leaveDays = useMemo(() => daysBetween(form.startDate, form.endDate), [form.startDate, form.endDate]);
+  const leaveDays = useMemo(() => calculateLeaveDays(form.startDate, form.endDate, form.portion), [form.startDate, form.endDate, form.portion]);
+  const remainingForType = remainingLeaveDays(requests, employeeId, form.leaveType);
 
   useEffect(() => {
     const q = query(collection(db, "leaveRequests"), where("employeeUid", "==", authUser.uid));
@@ -85,23 +82,57 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!form.startDate || !form.endDate || !form.reason.trim() || leaveDays < 1) {
+    if (!form.startDate || !form.endDate || !form.reason.trim() || leaveDays < 0.5) {
       setError("សូមបំពេញកាលបរិច្ឆេទ និងហេតុផលឱ្យត្រឹមត្រូវ");
+      return;
+    }
+    if (form.portion !== "ពេញថ្ងៃ" && form.startDate !== form.endDate) {
+      setError("ច្បាប់កន្លះថ្ងៃអាចជ្រើសបានតែមួយថ្ងៃប៉ុណ្ណោះ");
+      return;
+    }
+    const duplicate = requests.some((request) =>
+      ["រង់ចាំពិនិត្យ", "បានអនុម័ត"].includes(request.status) &&
+      rangesOverlap(form.startDate, form.endDate, request.startDate, request.endDate));
+    if (duplicate) {
+      setError("មានសំណើរង់ចាំ ឬបានអនុម័តជាន់គ្នាជាមួយកាលបរិច្ឆេទនេះរួចហើយ");
+      return;
+    }
+    if (leaveQuotas[form.leaveType] > 0 && remainingForType != null && leaveDays > remainingForType) {
+      setError(`សមតុល្យ ${form.leaveType} នៅសល់តែ ${remainingForType} ថ្ងៃ`);
       return;
     }
     setSaving(true); setError("");
     try {
-      const requestRef = await addDoc(collection(db, "leaveRequests"), {
+      const requestRef = doc(collection(db, "leaveRequests"));
+      const documentRequired = form.leaveType === "ច្បាប់ឈឺ" && leaveDays > 1;
+      await setDoc(requestRef, {
         employeeUid: authUser.uid, employeeId, name: profile.name || authUser.email,
-        branch: profile.branch || "", role: profile.role, leaveType: form.leaveType,
+        branch: profile.branch || "", role: profile.jobRole || "បុគ្គលិក", leaveType: form.leaveType,
         startDate: form.startDate, endDate: form.endDate, days: leaveDays,
-        reason: form.reason.trim(), status: "រង់ចាំពិនិត្យ", requestedOn: dateISO,
+        portion: form.portion, reason: form.reason.trim(), status: "រង់ចាំពិនិត្យ", requestedOn: dateISO,
         requestedAt: serverTimestamp(),
+        documentRequired,
+        documentReceiptStatus: documentRequired ? "មិនទាន់ទទួល" : "មិនត្រូវការ",
       });
       await notifyTelegram("leave_request", requestRef.id);
-      setForm({ leaveType: leaveTypes[0], startDate: "", endDate: "", reason: "" }); setShowForm(false);
-    } catch { setError("មិនអាចរក្សាទុកសំណើបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
+      setForm({ leaveType: leaveTypes[0], startDate: "", endDate: "", portion: LEAVE_PORTIONS[0], reason: "" });
+      setShowForm(false);
+    } catch (submitError) { setError(submitError.message || "មិនអាចរក្សាទុកសំណើបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
     finally { setSaving(false); }
+  };
+
+  const cancelRequest = async (request) => {
+    if (request.status !== "រង់ចាំពិនិត្យ" || !window.confirm("តើអ្នកចង់លុបចោលសំណើនេះមែនទេ?")) return;
+    setSaving(true); setError("");
+    try {
+      await updateDoc(doc(db, "leaveRequests", request.id), { status: "បានលុបចោល", cancelledOn: dateISO, cancelledAt: serverTimestamp() });
+    } catch { setError("មិនអាចលុបចោលសំណើបានទេ"); }
+    finally { setSaving(false); }
+  };
+
+  const downloadAttachment = async (file) => {
+    try { await downloadLeaveAttachment(file); }
+    catch { setError("មិនអាចទាញយកឯកសារភ្ជាប់បានទេ"); }
   };
 
   const markAttendance = async (kind) => {
@@ -133,7 +164,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
         nextRecord = {
           ...base, checkIn: now, checkInAt: serverTimestamp(), checkInClientAt: capturedAt.toISOString(),
           checkInLocation: location, gpsStatus: location.gpsStatus, checkOut: "—", ...metrics,
-          qrVerified: Boolean(settings.requireQr), qrBranchId: settings.verifiedQr?.branchId || "", qrExpiresAt: settings.verifiedQr?.expiresAt || "", gpsVerified: Boolean(settings.requireGps),
+          qrVerified: Boolean(settings.requireQr), qrBranchId: settings.verifiedQr?.branchId || "", qrExpiresAt: settings.verifiedQr?.expiresAt || "", gpsVerified: Boolean(settings.requireGps), source: "mobile",
         };
         setAttendanceMessage(`Check-in ជោគជ័យ នៅម៉ោង ${now}${metrics.isLate ? ` · មកយឺត ${metrics.lateMinutes} នាទី` : ""}`);
       } else {
@@ -142,7 +173,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
           ...base, checkOut: now, checkOutAt: serverTimestamp(), checkOutClientAt: capturedAt.toISOString(),
           checkOutLocation: location, gpsStatus: location.gpsStatus,
           ...metrics,
-          qrVerified: Boolean(settings.requireQr), qrBranchId: settings.verifiedQr?.branchId || "", qrExpiresAt: settings.verifiedQr?.expiresAt || "", gpsVerified: Boolean(settings.requireGps),
+          qrVerified: Boolean(settings.requireQr), qrBranchId: settings.verifiedQr?.branchId || "", qrExpiresAt: settings.verifiedQr?.expiresAt || "", gpsVerified: Boolean(settings.requireGps), source: "mobile",
         };
         setAttendanceMessage(`Check-out ជោគជ័យ នៅម៉ោង ${now}${metrics.isEarlyLeave ? ` · ចេញមុន ${metrics.earlyLeaveMinutes} នាទី` : ""}`);
       }
@@ -167,10 +198,37 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
 
         <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5 mb-5"><div className="flex items-center gap-2 font-semibold text-[#1E2333]"><Clock3 size={18} className="text-[#2A3F8F]" /> វត្តមានថ្ងៃនេះ</div><p className="text-xs text-[#8A8FA3] mt-1">{dateISO}{attendance?.gpsStatus === "recorded" ? ` · GPS ${attendance.checkInLocation?.distanceMeters ?? "—"}m ពីសាខា` : ""}</p><label className="block text-xs text-[#5B5F73] mt-4"><span className="flex items-center gap-1 mb-1.5"><ScanLine size={13} /> QR code សាខា</span><div className="flex flex-col gap-2 min-[380px]:flex-row"><input value={qrValue} onChange={(e) => setQrValue(e.target.value)} placeholder={qrValue ? "បានស្កេន QR" : "ស្កេន QR មុន Check-in/out"} className="min-w-0 flex-1 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /><button type="button" onClick={() => { setError(""); setScanning(true); }} className="shrink-0 rounded-xl px-3 py-2.5 text-xs font-medium text-white" style={{ background: COLORS.primary }}>ស្កេន QR</button></div></label><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><button disabled={saving || checkedIn} onClick={() => markAttendance("in")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.primary }}>{saving && !checkedIn ? "កំពុងកត់ត្រា..." : checkedIn ? `បាន Check-in ${attendance.checkIn}` : "Check-in"}</button><button disabled={saving || !checkedIn || checkedOut} onClick={() => markAttendance("out")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.green }}>{saving && checkedIn ? "កំពុងកត់ត្រា..." : checkedOut ? `បាន Check-out ${attendance.checkOut}` : "Check-out"}</button></div>{checkedIn && <div className="mt-3 grid grid-cols-1 min-[380px]:grid-cols-2 gap-3 text-xs"><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">ចូល: <span className="font-semibold text-[#1E2333]">{attendance.checkIn}</span></div><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">រយៈពេល: <span className="font-semibold text-[#1E2333]">{attendance.hours || "កំពុងធ្វើការ"}</span></div></div>}{attendance && (attendance.isLate || attendance.isEarlyLeave) && <p className="mt-3 text-xs text-[#B97913]">{attendance.isLate ? `មកយឺត ${attendance.lateMinutes} នាទី` : ""}{attendance.isLate && attendance.isEarlyLeave ? " · " : ""}{attendance.isEarlyLeave ? `ចេញមុន ${attendance.earlyLeaveMinutes} នាទី` : ""}</p>}{attendanceMessage && <p className="mt-3 text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-3 py-2">{attendanceMessage}</p>}{error && <p className="mt-3 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}<p className="text-xs text-[#8A8FA3] mt-3 flex items-center gap-1"><MapPin size={13} /> Browser នឹងស្នើសុំ GPS នៅពេល Check-in និង Check-out</p></section>
 
-        <div className="flex items-start justify-between gap-3 mb-4"><div><h2 className="font-bold text-[#1E2333]">សំណើច្បាប់</h2><p className="text-xs text-[#8A8FA3] mt-1">ស្នើ និងតាមដានស្ថានភាពសំណើរបស់អ្នក</p></div><button onClick={() => setShowForm((value) => !value)} className="rounded-xl px-4 py-2.5 text-white text-sm font-semibold flex items-center gap-2" style={{ background: COLORS.primary }}><FileText size={16} /> ស្នើសុំច្បាប់</button></div>
-        {showForm && <form onSubmit={submit} className="bg-white rounded-2xl border border-[#EBEDF3] p-5 mb-5 grid grid-cols-1 sm:grid-cols-2 gap-4"><label className="text-sm text-[#5B5F73]">ប្រភេទច្បាប់<select value={form.leaveType} onChange={(e) => setForm({ ...form, leaveType: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none">{leaveTypes.map((type) => <option key={type}>{type}</option>)}</select></label><label className="text-sm text-[#5B5F73]">ថ្ងៃចាប់ផ្ដើម<input required type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label><label className="text-sm text-[#5B5F73]">ថ្ងៃបញ្ចប់<input required type="date" min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label><div className="text-sm text-[#5B5F73]">ចំនួនថ្ងៃ<div className="mt-1.5 rounded-xl bg-[#F5F6FA] px-3 py-2.5 text-[#1E2333]">{leaveDays || "—"} ថ្ងៃ</div></div><label className="text-sm text-[#5B5F73] sm:col-span-2">ហេតុផល<textarea required value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className="mt-1.5 w-full min-h-24 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label>{error && <p className="sm:col-span-2 text-sm text-[#D9614F]">{error}</p>}<div className="sm:col-span-2 flex justify-end gap-2"><button type="button" onClick={() => setShowForm(false)} className="rounded-xl border border-[#EBEDF3] px-4 py-2.5 text-sm">បោះបង់</button><button disabled={saving} className="rounded-xl px-4 py-2.5 text-white text-sm font-semibold disabled:opacity-60" style={{ background: COLORS.primary }}>{saving ? "កំពុងរក្សាទុក..." : "បញ្ជូនសំណើ"}</button></div></form>}
-        {error && !showForm && <p className="mb-4 text-sm text-[#D9614F]">{error}</p>}
-        <div className="bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden"><div className="p-5 flex items-center gap-2 font-semibold text-[#1E2333]"><CalendarDays size={18} className="text-[#2A3F8F]" /> សំណើច្បាប់របស់ខ្ញុំ</div><div className="divide-y divide-[#EBEDF3]">{requests.length === 0 ? <p className="p-6 text-sm text-[#8A8FA3] text-center">មិនទាន់មានសំណើច្បាប់ទេ</p> : requests.map((request) => <div key={request.id} className="p-4 sm:px-5 flex justify-between gap-4"><div><p className="font-medium text-[#1E2333]">{request.leaveType}</p><p className="text-xs text-[#8A8FA3] mt-1">{request.startDate} — {request.endDate} · {request.days || 1} ថ្ងៃ</p></div><span className="h-fit rounded-full bg-[#FDF3E3] text-[#B97913] px-2.5 py-1 text-xs font-medium">{request.status}</span></div>)}</div></div>
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div><h2 className="font-bold text-[#1E2333]">សំណើច្បាប់</h2><p className="text-xs text-[#8A8FA3] mt-1">បុគ្គលិក → HR/Admin</p></div>
+          <button onClick={() => { setError(""); setShowForm((value) => !value); }} className="rounded-xl px-4 py-2.5 text-white text-sm font-semibold flex items-center gap-2" style={{ background: COLORS.primary }}><FileText size={16} /> ស្នើសុំច្បាប់</button>
+        </div>
+
+        {showForm && (
+          <form onSubmit={submit} className="bg-white rounded-2xl border border-[#EBEDF3] p-5 mb-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="text-sm text-[#5B5F73]">ប្រភេទច្បាប់
+              <select value={form.leaveType} onChange={(e) => setForm({ ...form, leaveType: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none">{leaveTypes.map((type) => <option key={type}>{type}</option>)}</select>
+              <span className="block text-[11px] text-[#8A8FA3] mt-1">សមតុល្យនៅសល់៖ {leaveQuotas[form.leaveType] === 0 ? "មិនកំណត់" : `${remainingForType} ថ្ងៃ`}</span>
+            </label>
+            <label className="text-sm text-[#5B5F73]">រយៈពេល
+              <select value={form.portion} onChange={(e) => { const portion = e.target.value; setForm({ ...form, portion, endDate: portion === "ពេញថ្ងៃ" ? form.endDate : form.startDate }); }} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none">{LEAVE_PORTIONS.map((portion) => <option key={portion}>{portion}</option>)}</select>
+            </label>
+            <label className="text-sm text-[#5B5F73]">ថ្ងៃចាប់ផ្ដើម<input required type="date" value={form.startDate} onChange={(e) => { const startDate = e.target.value; setForm({ ...form, startDate, endDate: form.portion === "ពេញថ្ងៃ" && form.endDate >= startDate ? form.endDate : startDate }); }} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label>
+            <label className="text-sm text-[#5B5F73]">ថ្ងៃបញ្ចប់<input required disabled={form.portion !== "ពេញថ្ងៃ"} type="date" min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none disabled:opacity-60" /></label>
+            <div className="sm:col-span-2 rounded-xl border border-[#C9D3F2] bg-[#EEF1FB] px-4 py-3 flex items-center justify-between gap-3"><div><div className="text-xs text-[#5B5F73]">ចំនួនថ្ងៃឈប់សម្រាកសរុប</div><div className="mt-0.5 text-xl font-bold text-[#2A3F8F]">{leaveDays || "—"} ថ្ងៃ</div></div><CalendarDays size={24} className="text-[#2A3F8F] shrink-0" /></div>
+            <div className="sm:col-span-2 rounded-xl bg-[#FDF3E3] px-4 py-3 text-xs text-[#8A6518] flex items-start gap-2"><Info size={16} className="mt-0.5 shrink-0" /><span>Upload ឯកសារត្រូវបានផ្អាកជាបណ្ដោះអាសន្ន។ បើជាច្បាប់ឈឺលើស ១ ថ្ងៃ សូមប្រគល់លិខិតពេទ្យជូន HR ដោយផ្ទាល់។ HR នឹងសម្គាល់ថាបានទទួលក្នុងប្រព័ន្ធ។</span></div>
+            <label className="text-sm text-[#5B5F73] sm:col-span-2">ហេតុផល<textarea required value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className="mt-1.5 w-full min-h-24 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label>
+            {error && <p className="sm:col-span-2 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}
+            <div className="sm:col-span-2 flex justify-end gap-2"><button type="button" onClick={() => setShowForm(false)} className="rounded-xl border border-[#EBEDF3] px-4 py-2.5 text-sm">បោះបង់</button><button disabled={saving} className="rounded-xl px-4 py-2.5 text-white text-sm font-semibold disabled:opacity-60" style={{ background: COLORS.primary }}>{saving ? "កំពុងរក្សាទុក..." : "បញ្ជូនសំណើ"}</button></div>
+          </form>
+        )}
+        {error && !showForm && <p className="mb-4 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}
+        <div className="bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
+          <div className="p-5 flex items-center gap-2 font-semibold text-[#1E2333]"><CalendarDays size={18} className="text-[#2A3F8F]" /> សំណើច្បាប់របស់ខ្ញុំ</div>
+          <div className="divide-y divide-[#EBEDF3]">{requests.length === 0 ? <p className="p-6 text-sm text-[#8A8FA3] text-center">មិនទាន់មានសំណើច្បាប់ទេ</p> : requests.map((request) => {
+            const style = correctionStatusStyle[request.status] || correctionStatusStyle["រង់ចាំពិនិត្យ"];
+            return <div key={request.id} className="p-4 sm:px-5 flex flex-col sm:flex-row sm:items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium text-[#1E2333]">{request.leaveType}</p><p className="text-xs text-[#8A8FA3] mt-1">{request.startDate} — {request.endDate} · {request.days || 1} ថ្ងៃ{request.portion && request.portion !== "ពេញថ្ងៃ" ? ` · ${request.portion}` : ""}</p>{request.decisionReason && <p className="text-xs text-[#5B5F73] mt-2">មតិ HR/Admin៖ {request.decisionReason}</p>}<div className="flex gap-2 mt-2">{request.attachment && <button type="button" onClick={() => downloadAttachment(request.attachment)} className="text-xs text-[#2A3F8F] flex items-center gap-1"><Download size={13} /> {request.attachment.name}</button>}{request.status === "រង់ចាំពិនិត្យ" && <button disabled={saving} type="button" onClick={() => cancelRequest(request)} className="text-xs text-[#D9614F] flex items-center gap-1"><XCircle size={13} /> លុបចោល</button>}</div></div><span className="h-fit rounded-full px-2.5 py-1 text-xs font-medium shrink-0" style={{ background: style.bg, color: style.fg }}>{request.status}</span></div>;
+          })}</div>
+        </div>
       </div>
       {scanning && <QrScanner onResult={handleQrResult} onClose={() => setScanning(false)} />}
     </div>

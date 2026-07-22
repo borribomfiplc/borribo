@@ -1,5 +1,7 @@
 # MFI វត្តមានបុគ្គលិក — Attendance Dashboard
 
+> v46 adds employee leave requests, HR/Admin approval, leave-to-attendance sync, and protected leave-document uploads. After upgrading, deploy both Firestore and Storage rules: `npx firebase-tools deploy --only firestore:rules,firestore:indexes,storage`.
+
 React + Vite + Tailwind CSS project for the MFI staff attendance dashboard,
 backed by **Firebase** (Firestore + Auth) and deployed on **Cloudflare
 Pages**.

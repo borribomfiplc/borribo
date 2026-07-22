@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function manager() {
+      return signedIn() && request.auth.token.role in ['admin', 'hr'];
+    }
+
+    match /leaveAttachments/{employeeUid}/{requestId}/{fileName} {
+      allow read: if manager() || (signedIn() && request.auth.uid == employeeUid);
+      allow create: if signedIn()
+        && request.auth.uid == employeeUid
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('(application/pdf|image/jpeg|image/png|image/webp)');
+      allow update: if false;
+      allow delete: if manager() || (signedIn() && request.auth.uid == employeeUid);
+    }
+  }
+}

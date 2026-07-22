@@ -1,14 +1,12 @@
 import React, { useState } from "react";
-import {
-  X, Briefcase
-} from "lucide-react";
+import { Power, Briefcase } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
 
 export default function DepartmentPage({ employees, departments, setDepartments }) {
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", head: "", description: "" });
+  const [form, setForm] = useState({ name: "", head: "", description: "", status: "សកម្ម" });
   const [error, setError] = useState("");
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -23,11 +21,11 @@ export default function DepartmentPage({ employees, departments, setDepartments 
       ...list,
     ]);
     setError("");
-    setForm({ name: "", head: "", description: "" });
+    setForm({ name: "", head: "", description: "", status: "សកម្ម" });
     setShowNew(false);
   };
 
-  const remove = (id) => setDepartments((list) => list.filter((d) => d.id !== id));
+  const toggleStatus = (id) => setDepartments((list) => list.map((department) => department.id === id ? { ...department, status: department.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : department));
 
   return (
     <>
@@ -41,16 +39,16 @@ export default function DepartmentPage({ employees, departments, setDepartments 
         {departments.map((d) => {
           const count = employees.filter((e) => e.dept === d.name).length;
           return (
-            <div key={d.id} className="bg-white rounded-2xl border border-[#EBEDF3] p-5 flex flex-col gap-3">
+            <div key={d.id} className={`bg-white rounded-2xl border border-[#EBEDF3] p-5 flex flex-col gap-3 ${d.status === "អសកម្ម" ? "opacity-65" : ""}`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: COLORS.purpleLight }}>
                     <Briefcase size={20} color={COLORS.purple} />
                   </div>
-                  <div className="font-semibold text-[#1E2333] text-sm">{d.name}</div>
+                  <div><div className="font-semibold text-[#1E2333] text-sm">{d.name}</div><div className="text-[11px] text-[#8A8FA3] mt-0.5">{d.status || "សកម្ម"}</div></div>
                 </div>
-                <button onClick={() => remove(d.id)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]">
-                  <X size={15} />
+                <button onClick={() => toggleStatus(d.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${d.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}>
+                  <Power size={15} />
                 </button>
               </div>
               {d.description && <p className="text-xs text-[#5B5F73] leading-relaxed">{d.description}</p>}

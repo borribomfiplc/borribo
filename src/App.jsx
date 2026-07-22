@@ -37,6 +37,7 @@ const AttendanceCorrectionPage = lazy(() => import("./pages/AttendanceCorrection
 const LeaveRequestPage = lazy(() => import("./pages/LeaveRequestPage"));
 const LeaveApprovalPage = lazy(() => import("./pages/LeaveApprovalPage"));
 const LeaveBalancePage = lazy(() => import("./pages/LeaveBalancePage"));
+const OrganizationStructurePage = lazy(() => import("./pages/OrganizationStructurePage"));
 const BranchPage = lazy(() => import("./pages/BranchPage"));
 const DepartmentPage = lazy(() => import("./pages/DepartmentPage"));
 const JobRolePage = lazy(() => import("./pages/JobRolePage"));
@@ -117,7 +118,9 @@ function App() {
   const [branches, setBranches] = useFirestoreCollection("branches", initialBranches, "id", loggedIn);
   const [departments, setDepartments] = useFirestoreCollection("departments", initialDepartments, "id", managerAccess);
   const [jobRoles, setJobRoles] = useFirestoreCollection("jobRoles", initialJobRoles, "id", managerAccess);
+  const [organizationChanges] = useFirestoreCollection("organizationChanges", [], "id", managerAccess);
   const [holidays, setHolidays] = useFirestoreCollection("holidays", initialHolidays, "id", managerAccess);
+  const [calendarEvents, setCalendarEvents] = useFirestoreCollection("calendarEvents", [], "id", managerAccess);
   const [users, setUsers] = useFirestoreCollection("users", initialUsers, "id", adminAccess);
   const [roles, setRoles] = useFirestoreCollection("roles", initialRoles, "id", adminAccess);
   const [kpis, setKpis] = useFirestoreCollection("kpis", [], "kpiId", managerAccess);
@@ -487,6 +490,9 @@ function App() {
             employees={employees}
             attendanceToday={todaysAttendance}
             setAttendanceToday={setTodaysAttendance}
+            attendanceHistory={attendanceHistory}
+            setAttendanceHistory={setAttendanceHistory}
+            leaveRequests={leaveRequests}
           />
         ) : active === "ប្រវត្តិវត្តមាន" ? (
           <AttendanceHistoryPage historyData={attendanceHistory} />
@@ -501,11 +507,20 @@ function App() {
             setCorrections={setCorrections}
           />
         ) : active === "សំណើសុំច្បាប់" ? (
-          <LeaveRequestPage requests={leaveRequests} setRequests={setLeaveRequests} employees={employees} />
+          <LeaveRequestPage requests={leaveRequests} />
         ) : active === "អនុម័តច្បាប់" ? (
-          <LeaveApprovalPage requests={leaveRequests} setRequests={setLeaveRequests} employees={employees} />
+          <LeaveApprovalPage requests={leaveRequests} employees={employees} profile={profile} />
         ) : active === "សមតុល្យច្បាប់" ? (
           <LeaveBalancePage requests={leaveRequests} employees={employees} />
+        ) : active === "រចនាសម្ព័ន្ធអង្គភាព" ? (
+          <OrganizationStructurePage
+            employees={employees}
+            branches={branches}
+            departments={departments}
+            jobRoles={jobRoles}
+            changes={organizationChanges}
+            profile={profile}
+          />
         ) : active === "សាខា" ? (
           <BranchPage
             employees={employees}
@@ -523,7 +538,18 @@ function App() {
             departments={departments}
           />
         ) : active === "calendar" ? (
-          <CalendarPage leaveRequests={leaveRequests} holidays={holidays} />
+          <CalendarPage
+            leaveRequests={leaveRequests}
+            holidays={holidays}
+            calendarEvents={calendarEvents}
+            setCalendarEvents={setCalendarEvents}
+            attendanceToday={todaysAttendance}
+            attendanceHistory={attendanceHistory}
+            employees={employees}
+            branches={branches}
+            departments={departments}
+            profile={profile}
+          />
         ) : active === "KPI Dashboard" ? (
           <KpiDashboardPage employees={employees} kpis={kpis} setKpis={setKpis} />
         ) : active === "គ្រប់គ្រងទ្រព្យសម្បត្តិ" ? (

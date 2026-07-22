@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Building2, X, MapPin, Phone, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
+import { Building2, Power, MapPin, Phone, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
@@ -13,7 +13,7 @@ const statusConfig = {
 
 export default function BranchPage({ employees, branches, setBranches, attendanceHistory }) {
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", type: "សាខា", address: "", manager: "", phone: "" });
+  const [form, setForm] = useState({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" });
   const [error, setError] = useState("");
 
   const latestDates = useMemo(() => [...new Set(attendanceHistory.map((item) => item.dateISO).filter(Boolean))]
@@ -41,11 +41,11 @@ export default function BranchPage({ employees, branches, setBranches, attendanc
     }
     setBranches((list) => [{ id: `BR-${String(list.length + 1).padStart(3, "0")}`, ...form }, ...list]);
     setError("");
-    setForm({ name: "", type: "សាខា", address: "", manager: "", phone: "" });
+    setForm({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" });
     setShowNew(false);
   };
 
-  const remove = (id) => setBranches((list) => list.filter((branch) => branch.id !== id));
+  const toggleStatus = (id) => setBranches((list) => list.map((branch) => branch.id === id ? { ...branch, status: branch.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : branch));
 
   return (
     <>
@@ -80,8 +80,8 @@ export default function BranchPage({ employees, branches, setBranches, attendanc
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {branchSummaries.map(({ branch, staff, rate }) => (
-          <div key={branch.id} className="bg-white rounded-2xl border border-[#EBEDF3] p-5 flex flex-col gap-3">
-            <div className="flex items-start justify-between"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: COLORS.primaryLight }}><Building2 size={20} color={COLORS.primary} /></div><div><div className="font-semibold text-[#1E2333] text-sm">{branch.name}</div><div className="text-xs text-[#8A8FA3]">{branch.type}</div></div></div><button onClick={() => remove(branch.id)} aria-label={`លុប ${branch.name}`} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"><X size={15} /></button></div>
+          <div key={branch.id} className={`bg-white rounded-2xl border border-[#EBEDF3] p-5 flex flex-col gap-3 ${branch.status === "អសកម្ម" ? "opacity-65" : ""}`}>
+            <div className="flex items-start justify-between"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: COLORS.primaryLight }}><Building2 size={20} color={COLORS.primary} /></div><div><div className="font-semibold text-[#1E2333] text-sm">{branch.name}</div><div className="text-xs text-[#8A8FA3]">{branch.type} · {branch.status || "សកម្ម"}</div></div></div><button onClick={() => toggleStatus(branch.id)} aria-label={`${branch.status === "អសកម្ម" ? "បើក" : "បិទ"} ${branch.name}`} className={`w-8 h-8 rounded-lg flex items-center justify-center ${branch.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div>
             {branch.address && <div className="flex items-start gap-2 text-xs text-[#5B5F73]"><MapPin size={13} className="text-[#B4B7C6] mt-0.5 shrink-0" /><span>{branch.address}</span></div>}
             <div className="flex items-center justify-between border-t border-[#EBEDF3] pt-3 mt-1"><div className="text-xs text-[#8A8FA3]">អ្នកគ្រប់គ្រង៖ <span className="text-[#1E2333] font-medium">{branch.manager}</span></div><span className="text-[11px] font-medium rounded-full px-2.5 py-1" style={{ background: COLORS.primaryLight, color: COLORS.primary }}>{staff} បុគ្គលិក</span></div>
             <div className="flex justify-between text-xs"><span className="text-[#8A8FA3]">អត្រាវត្តមាន ៥ថ្ងៃ</span><span className="font-semibold" style={{ color: rate >= 90 ? COLORS.green : COLORS.accent }}>{rate}%</span></div>

@@ -33,7 +33,7 @@ export const navSections = [
     label: "អង្គភាព",
     icon: Building2,
     key: "org",
-    items: ["សាខា", "នាយកដ្ឋាន", "តួនាទីការងារ"],
+    items: ["រចនាសម្ព័ន្ធអង្គភាព", "សាខា", "នាយកដ្ឋាន", "តួនាទីការងារ"],
   },
   { label: "ប្រតិទិន", icon: Calendar, single: true, key: "calendar" },
   {

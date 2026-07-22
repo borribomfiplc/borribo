@@ -1,38 +1,49 @@
 import React, { useState } from "react";
-import { User, Power } from "lucide-react";
+import { User, Power, Pencil } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
 
-export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: setRoles, departments }) {
+export default function JobRolePage({ employees, setEmployees, jobRoles: roles, setJobRoles: setRoles, departments }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" });
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState(null);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.name.trim()) {
       setError("សូមបំពេញឈ្មោះតួនាទីការងារ");
       return;
     }
-    setRoles((list) => [
-      { id: `ROLE-${String(list.length + 1).padStart(3, "0")}`, ...form },
-      ...list,
-    ]);
+    if (roles.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase())) { setError("ឈ្មោះតួនាទីនេះមានរួចហើយ"); return; }
+    const existing = roles.find((item) => item.id === editingId);
+    const departmentId = departments.find((item) => item.name === form.dept)?.id || existing?.departmentId || "";
+    await setRoles((list) => editingId
+      ? list.map((item) => item.id === editingId ? { ...item, ...form, name: form.name.trim(), departmentId } : item)
+      : [{ id: `ROLE-${String(list.length + 1).padStart(3, "0")}`, ...form, name: form.name.trim(), departmentId }, ...list]);
+    if (existing && existing.name !== form.name.trim()) {
+      await setEmployees((list) => list.map((employee) => (employee.roleId === existing.id || employee.role === existing.name)
+        ? { ...employee, roleId: existing.id, role: form.name.trim(), departmentId, dept: form.dept } : employee));
+    }
     setError("");
     setForm({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" });
+    setEditingId(null);
     setShowNew(false);
   };
 
   const toggleStatus = (id) => setRoles((list) => list.map((role) => role.id === id ? { ...role, status: role.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : role));
+  const activeDepartments = departments.filter((item) => item.status !== "អសកម្ម");
+  const openAdd = () => { setEditingId(null); setForm({ name: "", dept: activeDepartments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" }); setError(""); setShowNew(true); };
+  const editRole = (role) => { setEditingId(role.id); setForm({ name: role.name || "", dept: role.dept || activeDepartments[0]?.name || "", level: role.level || "បុគ្គលិក", status: role.status || "សកម្ម" }); setError(""); setShowNew(true); };
 
   return (
     <>
       <OrgHeader
         title="តួនាទីការងារ"
         sub={`សរុប ${roles.length} តួនាទី`}
-        onAdd={() => setShowNew(true)}
+        onAdd={openAdd}
         addLabel="បន្ថែមតួនាទី"
       />
       <div className="hidden md:block bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
@@ -74,9 +85,7 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
                   </td>
                   <td className="px-5 py-3.5 text-[#5B5F73]">{count}</td>
                   <td className="px-5 py-3.5 text-left">
-                    <button onClick={() => toggleStatus(r.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ml-auto ${r.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}>
-                      <Power size={15} />
-                    </button>
+                    <div className="flex justify-end gap-1"><button onClick={() => editRole(r)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#2A3F8F] hover:bg-[#EEF1FB]" aria-label={`កែ ${r.name}`}><Pencil size={14} /></button><button onClick={() => toggleStatus(r.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${r.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div>
                   </td>
                 </tr>
               );
@@ -99,9 +108,7 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
                   </div>
                   <div className="font-medium text-[#1E2333] text-sm">{r.name}</div>
                 </div>
-                <button onClick={() => toggleStatus(r.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${r.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}>
-                  <Power size={15} />
-                </button>
+                <div className="flex gap-1"><button onClick={() => editRole(r)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#2A3F8F] bg-[#EEF1FB]" aria-label={`កែ ${r.name}`}><Pencil size={14} /></button><button onClick={() => toggleStatus(r.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${r.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div>
               </div>
               <div className="flex items-center justify-between text-xs text-[#8A8FA3] border-t border-[#EBEDF3] pt-2.5">
                 <span>{r.dept} · {r.level}</span>
@@ -113,14 +120,14 @@ export default function JobRolePage({ employees, jobRoles: roles, setJobRoles: s
       </div>
 
       {showNew && (
-        <OrgModal title="បន្ថែមតួនាទីថ្មី" onClose={() => setShowNew(false)} onSubmit={handleSubmit} submitLabel="រក្សាទុកតួនាទី" error={error}>
+        <OrgModal title={editingId ? "កែតួនាទីការងារ" : "បន្ថែមតួនាទីថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកតួនាទី" error={error}>
           <div>
             <FieldLabel required>ឈ្មោះតួនាទី</FieldLabel>
             <TextField value={form.name} onChange={update("name")} placeholder="ឧ. មន្ត្រីសវនកម្ម" />
           </div>
           <div>
             <FieldLabel>នាយកដ្ឋាន</FieldLabel>
-            <SelectField options={departments.map((d) => d.name)} value={form.dept} onChange={update("dept")} />
+            <SelectField options={activeDepartments.map((d) => d.name)} value={form.dept} onChange={update("dept")} />
           </div>
           <div>
             <FieldLabel>កម្រិត</FieldLabel>

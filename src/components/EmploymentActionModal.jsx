@@ -34,15 +34,18 @@ export default function EmploymentActionModal({ employee, branches = [], departm
   const isResignation = form.type === "resignation";
   const includesTransfer = form.type === "transfer" || form.type === "transfer_and_job_change";
   const includesJob = form.type === "promotion" || form.type === "job_change" || form.type === "transfer_and_job_change";
+  const activeBranches = useMemo(() => branches.filter((item) => item.status !== "អសកម្ម"), [branches]);
+  const activeDepartments = useMemo(() => departments.filter((item) => item.status !== "អសកម្ម"), [departments]);
+  const activeJobRoles = useMemo(() => jobRoles.filter((item) => item.status !== "អសកម្ម"), [jobRoles]);
   const availableRoles = useMemo(() => {
-    const matching = jobRoles.filter((item) => !form.department || item.dept === form.department);
-    return matching.length ? matching : jobRoles;
-  }, [form.department, jobRoles]);
+    const matching = activeJobRoles.filter((item) => !form.department || item.dept === form.department);
+    return matching.length ? matching : activeJobRoles;
+  }, [activeJobRoles, form.department]);
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
   const updateDepartment = (event) => {
     const department = event.target.value;
-    const roles = jobRoles.filter((item) => item.dept === department);
+    const roles = activeJobRoles.filter((item) => item.dept === department);
     setForm((current) => ({
       ...current,
       department,
@@ -74,8 +77,11 @@ export default function EmploymentActionModal({ employee, branches = [], departm
         type: form.type,
         effectiveDate: form.effectiveDate,
         branch: includesTransfer ? form.branch : employee.branch,
+        branchId: includesTransfer ? (branches.find((item) => item.name === form.branch)?.id || "") : (employee.branchId || ""),
         department: includesJob ? form.department : employee.dept,
+        departmentId: includesJob ? (departments.find((item) => item.name === form.department)?.id || "") : (employee.departmentId || ""),
         role: includesJob ? form.role : employee.role,
+        roleId: includesJob ? (jobRoles.find((item) => item.name === form.role)?.id || "") : (employee.roleId || ""),
         decisionNo: form.decisionNo.trim(),
         reason: form.reason.trim(),
         note: form.note.trim(),
@@ -102,9 +108,9 @@ export default function EmploymentActionModal({ employee, branches = [], departm
 
         {!isResignation && <>
           <div><FieldLabel>សាខាបច្ចុប្បន្ន</FieldLabel><TextField value={employee.branch || "—"} disabled /></div>
-          <div><FieldLabel required={includesTransfer}>សាខាថ្មី</FieldLabel><SelectField options={branches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={!includesTransfer} /></div>
+          <div><FieldLabel required={includesTransfer}>សាខាថ្មី</FieldLabel><SelectField options={activeBranches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={!includesTransfer} /></div>
           <div><FieldLabel>នាយកដ្ឋានបច្ចុប្បន្ន</FieldLabel><TextField value={employee.dept || "—"} disabled /></div>
-          <div><FieldLabel required={includesJob}>នាយកដ្ឋានថ្មី</FieldLabel><SelectField options={departments.map((item) => item.name)} value={form.department} onChange={updateDepartment} disabled={!includesJob} /></div>
+          <div><FieldLabel required={includesJob}>នាយកដ្ឋានថ្មី</FieldLabel><SelectField options={activeDepartments.map((item) => item.name)} value={form.department} onChange={updateDepartment} disabled={!includesJob} /></div>
           <div><FieldLabel>តួនាទីបច្ចុប្បន្ន</FieldLabel><TextField value={employee.role || "—"} disabled /></div>
           <div><FieldLabel required={includesJob}>តួនាទីថ្មី</FieldLabel><SelectField options={availableRoles.map((item) => item.name)} value={form.role} onChange={update("role")} disabled={!includesJob} /></div>
         </>}

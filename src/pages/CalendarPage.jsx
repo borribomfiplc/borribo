@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { dayLabelsKh, monthNamesKh } from "../data/mockData";
 import { todayISO } from "../utils/attendance";
+import { approvedLeaveOnDate, workingLeaveDates } from "../utils/leave";
 
 const ITEM_STYLE = {
   holiday: { label: "ថ្ងៃឈប់សម្រាក", color: "#E8A33D", bg: "#FDF3E3" },
@@ -154,8 +155,20 @@ export default function CalendarPage({
     const byKey = new Map();
     attendanceHistory.forEach((row) => byKey.set(`${row.id}_${row.dateISO}`, row));
     attendanceToday.forEach((row) => byKey.set(`${row.id}_${row.dateISO}`, row));
+    const currentDate = todayISO();
+    employees.filter((employee) => employee.status !== "អសកម្ម").forEach((employee) => {
+      const key = `${employee.id}_${currentDate}`;
+      if (byKey.has(key)) return;
+      const approvedLeave = approvedLeaveOnDate(leaveRequests, employee.id, currentDate, holidays);
+      const halfDay = approvedLeave?.portion && approvedLeave.portion !== "ពេញថ្ងៃ";
+      byKey.set(key, {
+        id: employee.id, name: employee.name, branch: employee.branch, dept: employee.dept,
+        dateISO: currentDate, status: approvedLeave ? (halfDay ? "ច្បាប់កន្លះថ្ងៃ" : "ច្បាប់") : "អវត្តមាន",
+        source: approvedLeave ? "leave" : "calendar-roster", leavePortion: approvedLeave?.portion || "",
+      });
+    });
     return [...byKey.values()];
-  }, [attendanceHistory, attendanceToday]);
+  }, [attendanceHistory, attendanceToday, employees, holidays, leaveRequests]);
 
   const itemsByDate = useMemo(() => {
     const result = {};
@@ -171,7 +184,7 @@ export default function CalendarPage({
     });
 
     leaveRequests.filter((request) => request.status === "បានអនុម័ត" && matchesScope(request, branch, department, employees)).forEach((request) => {
-      eachDate(request.startDate, request.endDate, (date) => add(date, {
+      workingLeaveDates(request.startDate, request.endDate, holidays).forEach((date) => add(date, {
         ...request, itemType: "leave", title: `${request.name} · ${request.leaveType}`,
       }));
     });
@@ -197,7 +210,7 @@ export default function CalendarPage({
       const present = rows.filter((row) => row.status === "មានវត្តមាន" || row.status === "យឺត").length;
       const late = rows.filter((row) => row.status === "យឺត").length;
       const absent = rows.filter((row) => row.status === "អវត្តមាន").length;
-      const leave = rows.filter((row) => row.status === "ច្បាប់").length;
+      const leave = rows.filter((row) => row.status === "ច្បាប់" || row.status === "ច្បាប់កន្លះថ្ងៃ").length;
       add(date, { id: `attendance-${date}`, itemType: "attendance", title: `វត្តមាន ${present} · យឺត ${late} · អវត្តមាន ${absent}`, present, late, absent, leave, rows });
     });
     return result;
@@ -319,7 +332,7 @@ export default function CalendarPage({
                 <div className="flex items-start gap-3"><div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ color: style.color, background: style.bg }}><Icon size={17} /></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-[#1E2333] leading-snug">{item.title}</div><div className="text-[11px] mt-1" style={{ color: style.color }}>{item.itemType === "event" ? item.eventType : style.label}</div></div>{item.itemType === "event" && <div className="flex shrink-0"><button onClick={() => { setEditingEvent(item); setShowEventModal(true); }} className="w-8 h-8 rounded-lg text-[#8A8FA3] hover:bg-[#EEF1FB] hover:text-[#2A3F8F] flex items-center justify-center"><Pencil size={14} /></button><button onClick={() => deleteEvent(item)} className="w-8 h-8 rounded-lg text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F] flex items-center justify-center"><Trash2 size={14} /></button></div>}</div>
                 {item.itemType === "attendance" && <div className="grid grid-cols-4 gap-1.5 mt-3 text-center"><div className="rounded-lg bg-[#E9F7EF] px-1 py-2"><b className="block text-sm text-[#3FA66B]">{item.present}</b><span className="text-[9px] text-[#6B7085]">មានវត្តមាន</span></div><div className="rounded-lg bg-[#FDF3E3] px-1 py-2"><b className="block text-sm text-[#E8A33D]">{item.late}</b><span className="text-[9px] text-[#6B7085]">យឺត</span></div><div className="rounded-lg bg-[#FBEBE8] px-1 py-2"><b className="block text-sm text-[#D9614F]">{item.absent}</b><span className="text-[9px] text-[#6B7085]">អវត្តមាន</span></div><div className="rounded-lg bg-[#F1EBFE] px-1 py-2"><b className="block text-sm text-[#8B5CF6]">{item.leave}</b><span className="text-[9px] text-[#6B7085]">ច្បាប់</span></div></div>}
                 {item.itemType === "event" && <div className="mt-2 text-xs text-[#6B7085] space-y-1">{(item.startDate !== item.endDate) && <div>{khmerDate(item.startDate)} – {khmerDate(item.endDate)}</div>}{item.branch && <div>សាខា៖ {item.branch}</div>}{item.department && <div>នាយកដ្ឋាន៖ {item.department}</div>}{item.notes && <p className="pt-1 leading-relaxed">{item.notes}</p>}</div>}
-                {item.itemType === "leave" && <div className="mt-2 text-xs text-[#6B7085]">{item.startDate} – {item.endDate} · {item.days} ថ្ងៃ{item.branch ? ` · ${item.branch}` : ""}</div>}
+                {item.itemType === "leave" && <div className="mt-2 text-xs text-[#6B7085]">{item.startDate} – {item.endDate} · {item.days} ថ្ងៃ · {item.portion || "ពេញថ្ងៃ"}{item.branch ? ` · ${item.branch}` : ""}<div className="mt-1 text-[11px] text-[#8B5CF6]">លេខសំណើ៖ {item.id}</div></div>}
                 {item.itemType === "birthday" && <div className="mt-2 text-xs text-[#6B7085]">{item.role || "បុគ្គលិក"}{item.branch ? ` · ${item.branch}` : ""}</div>}
               </div>;
             })}

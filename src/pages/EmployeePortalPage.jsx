@@ -8,7 +8,7 @@ import { parseQrPayload, sha256 } from "../utils/qrSecurity";
 import QrScanner from "../components/QrScanner";
 import { correctionStatusStyle, leaveQuotas, leaveTypes } from "../data/mockData";
 import { notifyTelegram } from "../services/telegram";
-import { calculateLeaveDays, LEAVE_PORTIONS, rangesOverlap, remainingLeaveDays } from "../utils/leave";
+import { calculateLeaveDays, LEAVE_PORTIONS, leaveRequestsConflict, remainingLeaveDays } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
 function readLocation() {
   return new Promise((resolve) => {
@@ -21,7 +21,7 @@ function readLocation() {
   });
 }
 
-export default function EmployeePortalPage({ authUser, profile, onLogout, branches = [] }) {
+export default function EmployeePortalPage({ authUser, profile, onLogout, branches = [], holidays = [] }) {
   const [requests, setRequests] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [form, setForm] = useState({ leaveType: leaveTypes[0], startDate: "", endDate: "", portion: LEAVE_PORTIONS[0], reason: "" });
@@ -34,8 +34,9 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
   const employeeId = profile.employeeId || authUser.uid;
   const dateISO = todayISO();
   const attendanceId = `${employeeId}_${dateISO}`;
-  const leaveDays = useMemo(() => calculateLeaveDays(form.startDate, form.endDate, form.portion), [form.startDate, form.endDate, form.portion]);
-  const remainingForType = remainingLeaveDays(requests, employeeId, form.leaveType);
+  const leaveYear = (form.startDate || dateISO).slice(0, 4);
+  const leaveDays = useMemo(() => calculateLeaveDays(form.startDate, form.endDate, form.portion, holidays), [form.startDate, form.endDate, form.portion, holidays]);
+  const remainingForType = remainingLeaveDays(requests, employeeId, form.leaveType, { year: leaveYear, holidays });
 
   useEffect(() => {
     const q = query(collection(db, "leaveRequests"), where("employeeUid", "==", authUser.uid));
@@ -92,7 +93,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
     }
     const duplicate = requests.some((request) =>
       ["រង់ចាំពិនិត្យ", "បានអនុម័ត"].includes(request.status) &&
-      rangesOverlap(form.startDate, form.endDate, request.startDate, request.endDate));
+      leaveRequestsConflict(form, request));
     if (duplicate) {
       setError("មានសំណើរង់ចាំ ឬបានអនុម័តជាន់គ្នាជាមួយកាលបរិច្ឆេទនេះរួចហើយ");
       return;
@@ -108,7 +109,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
       await setDoc(requestRef, {
         employeeUid: authUser.uid, employeeId, name: profile.name || authUser.email,
         branch: profile.branch || "", role: profile.jobRole || "បុគ្គលិក", leaveType: form.leaveType,
-        startDate: form.startDate, endDate: form.endDate, days: leaveDays,
+        startDate: form.startDate, endDate: form.endDate, days: leaveDays, leaveYear,
         portion: form.portion, reason: form.reason.trim(), status: "រង់ចាំពិនិត្យ", requestedOn: dateISO,
         requestedAt: serverTimestamp(),
         documentRequired,
@@ -207,14 +208,14 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
           <form onSubmit={submit} className="bg-white rounded-2xl border border-[#EBEDF3] p-5 mb-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="text-sm text-[#5B5F73]">ប្រភេទច្បាប់
               <select value={form.leaveType} onChange={(e) => setForm({ ...form, leaveType: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none">{leaveTypes.map((type) => <option key={type}>{type}</option>)}</select>
-              <span className="block text-[11px] text-[#8A8FA3] mt-1">សមតុល្យនៅសល់៖ {leaveQuotas[form.leaveType] === 0 ? "មិនកំណត់" : `${remainingForType} ថ្ងៃ`}</span>
+              <span className="block text-[11px] text-[#8A8FA3] mt-1">សមតុល្យឆ្នាំ {leaveYear} នៅសល់៖ {leaveQuotas[form.leaveType] === 0 ? "មិនកំណត់" : `${remainingForType} ថ្ងៃ`}</span>
             </label>
             <label className="text-sm text-[#5B5F73]">រយៈពេល
               <select value={form.portion} onChange={(e) => { const portion = e.target.value; setForm({ ...form, portion, endDate: portion === "ពេញថ្ងៃ" ? form.endDate : form.startDate }); }} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none">{LEAVE_PORTIONS.map((portion) => <option key={portion}>{portion}</option>)}</select>
             </label>
             <label className="text-sm text-[#5B5F73]">ថ្ងៃចាប់ផ្ដើម<input required type="date" value={form.startDate} onChange={(e) => { const startDate = e.target.value; setForm({ ...form, startDate, endDate: form.portion === "ពេញថ្ងៃ" && form.endDate >= startDate ? form.endDate : startDate }); }} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label>
             <label className="text-sm text-[#5B5F73]">ថ្ងៃបញ្ចប់<input required disabled={form.portion !== "ពេញថ្ងៃ"} type="date" min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none disabled:opacity-60" /></label>
-            <div className="sm:col-span-2 rounded-xl border border-[#C9D3F2] bg-[#EEF1FB] px-4 py-3 flex items-center justify-between gap-3"><div><div className="text-xs text-[#5B5F73]">ចំនួនថ្ងៃឈប់សម្រាកសរុប</div><div className="mt-0.5 text-xl font-bold text-[#2A3F8F]">{leaveDays || "—"} ថ្ងៃ</div></div><CalendarDays size={24} className="text-[#2A3F8F] shrink-0" /></div>
+            <div className="sm:col-span-2 rounded-xl border border-[#C9D3F2] bg-[#EEF1FB] px-4 py-3 flex items-center justify-between gap-3"><div><div className="text-xs text-[#5B5F73]">ចំនួនថ្ងៃធ្វើការសរុប (មិនរាប់ថ្ងៃអាទិត្យ និងថ្ងៃឈប់សាធារណៈ)</div><div className="mt-0.5 text-xl font-bold text-[#2A3F8F]">{leaveDays || "—"} ថ្ងៃ</div></div><CalendarDays size={24} className="text-[#2A3F8F] shrink-0" /></div>
             <div className="sm:col-span-2 rounded-xl bg-[#FDF3E3] px-4 py-3 text-xs text-[#8A6518] flex items-start gap-2"><Info size={16} className="mt-0.5 shrink-0" /><span>Upload ឯកសារត្រូវបានផ្អាកជាបណ្ដោះអាសន្ន។ បើជាច្បាប់ឈឺលើស ១ ថ្ងៃ សូមប្រគល់លិខិតពេទ្យជូន HR ដោយផ្ទាល់។ HR នឹងសម្គាល់ថាបានទទួលក្នុងប្រព័ន្ធ។</span></div>
             <label className="text-sm text-[#5B5F73] sm:col-span-2">ហេតុផល<textarea required value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className="mt-1.5 w-full min-h-24 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /></label>
             {error && <p className="sm:col-span-2 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}

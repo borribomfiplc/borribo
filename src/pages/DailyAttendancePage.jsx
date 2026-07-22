@@ -21,6 +21,7 @@ const sourceMeta = {
   manual: { label: "ដោយដៃ", icon: UserRoundCheck, color: "#B97913", bg: "#FFF5E5" },
   correction: { label: "កែតម្រូវ", icon: Pencil, color: "#B97913", bg: "#FFF5E5" },
   leave: { label: "ច្បាប់អនុម័ត", icon: LogOut, color: "#8B5CF6", bg: "#F1EBFE" },
+  "daily-close": { label: "បិទបញ្ជីប្រចាំថ្ងៃ", icon: CheckCircle2, color: "#6B7085", bg: "#F1F2F6" },
   unknown: { label: "មិនបានកំណត់", icon: Clock, color: "#6B7085", bg: "#F1F2F6" },
 };
 
@@ -28,7 +29,7 @@ const sourceFor = (record) => sourceMeta[record.source] || sourceMeta.unknown;
 
 export default function DailyAttendancePage({
   employees, attendanceToday, setAttendanceToday, attendanceHistory = [], setAttendanceHistory,
-  leaveRequests = [],
+  leaveRequests = [], holidays = [],
 }) {
   const [query, setQuery] = useState("");
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
@@ -37,6 +38,8 @@ export default function DailyAttendancePage({
   const [showManual, setShowManual] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [manualForm, setManualForm] = useState({ employeeId: "", checkIn: "08:00", checkOut: "17:00", status: "មានវត្តមាន" });
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeMessage, setFinalizeMessage] = useState("");
 
   const dailyRows = useMemo(() => {
     const activeEmployees = employees.filter((employee) => employee.status !== "អសកម្ម");
@@ -44,7 +47,8 @@ export default function DailyAttendancePage({
     const roster = activeEmployees.map((employee) => {
       const existing = recordsByEmployee.get(employee.id);
       if (existing) return existing;
-      const approvedLeave = approvedLeaveOnDate(leaveRequests, employee.id, todayISO());
+      const approvedLeave = approvedLeaveOnDate(leaveRequests, employee.id, todayISO(), holidays);
+      const isHalfDayLeave = approvedLeave?.portion && approvedLeave.portion !== "ពេញថ្ងៃ";
       return {
       id: employee.id,
       name: employee.name,
@@ -54,7 +58,7 @@ export default function DailyAttendancePage({
       checkIn: "—",
       checkOut: "—",
       hours: "—",
-      status: approvedLeave ? "ច្បាប់" : "អវត្តមាន",
+      status: approvedLeave ? (isHalfDayLeave ? "ច្បាប់កន្លះថ្ងៃ" : "ច្បាប់") : "អវត្តមាន",
       source: approvedLeave ? "leave" : "unknown",
       leaveRequestId: approvedLeave?.id || "",
       leaveType: approvedLeave?.leaveType || "",
@@ -65,10 +69,10 @@ export default function DailyAttendancePage({
     });
     const employeeIds = new Set(activeEmployees.map((employee) => employee.id));
     return [...roster, ...attendanceToday.filter((record) => !employeeIds.has(record.id))];
-  }, [attendanceToday, employees, leaveRequests]);
+  }, [attendanceToday, employees, holidays, leaveRequests]);
 
   const branches = ["ទាំងអស់", ...Array.from(new Set(dailyRows.map((a) => a.branch).filter(Boolean)))];
-  const statuses = ["ទាំងអស់", "មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"];
+  const statuses = ["ទាំងអស់", "មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"];
   const sources = [
     { value: "ទាំងអស់", label: "ប្រភពទាំងអស់" },
     ...Object.entries(sourceMeta).map(([value, meta]) => ({ value, label: meta.label })),
@@ -89,7 +93,7 @@ export default function DailyAttendancePage({
     late: dailyRows.filter((a) => a.status === "យឺត").length,
     earlyLeave: dailyRows.filter((a) => a.isEarlyLeave).length,
     absent: dailyRows.filter((a) => a.status === "អវត្តមាន").length,
-    leave: dailyRows.filter((a) => a.status === "ច្បាប់").length,
+    leave: dailyRows.filter((a) => a.status === "ច្បាប់" || a.status === "ច្បាប់កន្លះថ្ងៃ").length,
   };
   const total = dailyRows.length || 1;
   const todayLabel = new Intl.DateTimeFormat("km-KH", {
@@ -185,6 +189,32 @@ export default function DailyAttendancePage({
     setShowManual(false);
   };
 
+  const finalizeToday = async () => {
+    const placeholders = dailyRows.filter((record) => record.isPlaceholder);
+    if (!placeholders.length) { setFinalizeMessage("វត្តមានថ្ងៃនេះត្រូវបានរក្សាទុកគ្រប់រួចហើយ"); return; }
+    setFinalizing(true); setFinalizeMessage("");
+    try {
+      const finalized = placeholders.map(({ isPlaceholder, ...record }) => ({
+        ...record,
+        recordId: `${record.id}_${record.dateISO}`,
+        docId: `${record.id}_${record.dateISO}`,
+        finalizedAt: new Date().toISOString(),
+        source: record.source === "unknown" ? "daily-close" : record.source,
+      }));
+      await setAttendanceToday((records) => {
+        const existing = new Set(records.map((record) => record.id));
+        return [...records, ...finalized.filter((record) => !existing.has(record.id))];
+      });
+      await setAttendanceHistory((records) => {
+        const existing = new Set(records.map((record) => record.docId));
+        return [...finalized.filter((record) => !existing.has(record.docId)), ...records];
+      });
+      setFinalizeMessage(`បានរក្សាទុកអវត្តមាន/ច្បាប់ ${finalized.length} នាក់សម្រាប់ថ្ងៃនេះ`);
+    } catch (finalizeError) {
+      setFinalizeMessage(finalizeError.message || "មិនអាចបិទបញ្ជីវត្តមានថ្ងៃនេះបានទេ");
+    } finally { setFinalizing(false); }
+  };
+
   return (
     <>
       <div className="flex items-start justify-between mb-5 sm:mb-6 flex-wrap gap-3">
@@ -196,6 +226,9 @@ export default function DailyAttendancePage({
           <button onClick={exportToday} className="flex items-center gap-2 rounded-xl border border-[#EBEDF3] bg-white px-3.5 py-2 text-xs font-medium text-[#5B5F73] sm:px-4 sm:py-2.5 sm:text-sm">
             <Download size={16} /> នាំចេញ
           </button>
+          <button disabled={finalizing} onClick={finalizeToday} className="flex items-center gap-2 rounded-xl border border-[#C9D3F2] bg-[#EEF1FB] px-3.5 py-2 text-xs font-semibold text-[#2A3F8F] sm:px-4 sm:py-2.5 sm:text-sm disabled:opacity-60">
+            <CheckCircle2 size={16} /> {finalizing ? "កំពុងរក្សាទុក..." : "បិទបញ្ជីថ្ងៃនេះ"}
+          </button>
           <button
             onClick={openManualEntry}
             className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap"
@@ -206,6 +239,7 @@ export default function DailyAttendancePage({
           </button>
         </div>
       </div>
+      {finalizeMessage && <div className="mb-4 rounded-xl bg-[#EEF1FB] px-4 py-3 text-sm text-[#2A3F8F]">{finalizeMessage}</div>}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-5">

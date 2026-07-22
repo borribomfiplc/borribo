@@ -192,9 +192,14 @@ service cloud.firestore {
       allow create, update, delete: if manager();
     }
 
+    match /holidays/{holidayId} {
+      allow get, list: if signedIn();
+      allow create, update, delete: if manager();
+    }
+
     match /{collectionName}/{documentId} {
       allow get, list, create, update, delete: if manager()
-        && collectionName in ['departments', 'jobRoles', 'holidays', 'calendarEvents'];
+        && collectionName in ['departments', 'jobRoles', 'calendarEvents'];
     }
 
     // HR/Admin can append and inspect organization-transfer history, but

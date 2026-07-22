@@ -115,6 +115,7 @@ export const attendanceStatusStyle = {
   "យឺត": { bg: "#FDF3E3", fg: "#E8A33D", icon: AlertCircle },
   "អវត្តមាន": { bg: "#FBEBE8", fg: "#D9614F", icon: XCircle },
   "ច្បាប់": { bg: "#F1EBFE", fg: "#8B5CF6", icon: Clock },
+  "ច្បាប់កន្លះថ្ងៃ": { bg: "#EEF1FB", fg: "#5B4BB7", icon: Clock },
 };
 
 export const correctionStatusStyle = {

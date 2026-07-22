@@ -12,6 +12,7 @@
     "set-username": "node scripts/set-username.mjs",
     "sync-password-reset-directory": "node scripts/sync-password-reset-directory.mjs",
     "migrate-attendance": "node scripts/migrate-attendance.mjs",
+    "migrate-organization-ids": "node scripts/migrate-organization-ids.mjs",
     "deploy": "npm run build && wrangler pages deploy dist",
     "deploy:telegram": "wrangler deploy --config telegram-worker/wrangler.toml"
   },

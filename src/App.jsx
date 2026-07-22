@@ -118,8 +118,7 @@ function App() {
   const [branches, setBranches] = useFirestoreCollection("branches", initialBranches, "id", loggedIn);
   const [departments, setDepartments] = useFirestoreCollection("departments", initialDepartments, "id", managerAccess);
   const [jobRoles, setJobRoles] = useFirestoreCollection("jobRoles", initialJobRoles, "id", managerAccess);
-  const [organizationChanges] = useFirestoreCollection("organizationChanges", [], "id", managerAccess);
-  const [holidays, setHolidays] = useFirestoreCollection("holidays", initialHolidays, "id", managerAccess);
+  const [holidays, setHolidays] = useFirestoreCollection("holidays", initialHolidays, "id", loggedIn);
   const [calendarEvents, setCalendarEvents] = useFirestoreCollection("calendarEvents", [], "id", managerAccess);
   const [users, setUsers] = useFirestoreCollection("users", initialUsers, "id", adminAccess);
   const [roles, setRoles] = useFirestoreCollection("roles", initialRoles, "id", adminAccess);
@@ -264,7 +263,7 @@ function App() {
   }
 
   if (profile.role === ROLES.EMPLOYEE) {
-    return <Suspense fallback={<PageLoading />}><EmployeePortalPage authUser={authUser} profile={profile} branches={branches} onLogout={handleLogout} /></Suspense>;
+    return <Suspense fallback={<PageLoading />}><EmployeePortalPage authUser={authUser} profile={profile} branches={branches} holidays={holidays} onLogout={handleLogout} /></Suspense>;
   }
 
   const visibleNavSections = filterNavigation(navSections, profile.role);
@@ -477,6 +476,7 @@ function App() {
         ) : active === "ព័ត៌មានបុគ្គលិក" ? (
           <EmployeeDetailsPage
             employee={employees.find((item) => item.id === selectedEmployee?.id) || selectedEmployee}
+            employees={employees}
             onBack={() => { setSelectedEmployee(null); setActive("បញ្ជីបុគ្គលិក"); }}
             onEdit={(employee) => { setEditingEmployee(employee); setActive("បន្ថែមបុគ្គលិក"); }}
             employmentActions={employmentActions}
@@ -493,6 +493,7 @@ function App() {
             attendanceHistory={attendanceHistory}
             setAttendanceHistory={setAttendanceHistory}
             leaveRequests={leaveRequests}
+            holidays={holidays}
           />
         ) : active === "ប្រវត្តិវត្តមាន" ? (
           <AttendanceHistoryPage historyData={attendanceHistory} />
@@ -505,34 +506,37 @@ function App() {
             setAttendanceHistory={setAttendanceHistory}
             corrections={corrections}
             setCorrections={setCorrections}
+            profile={profile}
           />
         ) : active === "សំណើសុំច្បាប់" ? (
           <LeaveRequestPage requests={leaveRequests} />
         ) : active === "អនុម័តច្បាប់" ? (
-          <LeaveApprovalPage requests={leaveRequests} employees={employees} profile={profile} />
+          <LeaveApprovalPage requests={leaveRequests} employees={employees} profile={profile} holidays={holidays} />
         ) : active === "សមតុល្យច្បាប់" ? (
-          <LeaveBalancePage requests={leaveRequests} employees={employees} />
+          <LeaveBalancePage requests={leaveRequests} employees={employees} holidays={holidays} />
         ) : active === "រចនាសម្ព័ន្ធអង្គភាព" ? (
           <OrganizationStructurePage
             employees={employees}
             branches={branches}
             departments={departments}
             jobRoles={jobRoles}
-            changes={organizationChanges}
+            changes={employmentActions}
             profile={profile}
           />
         ) : active === "សាខា" ? (
           <BranchPage
             employees={employees}
+            setEmployees={setEmployees}
             branches={branches}
             setBranches={setBranches}
             attendanceHistory={attendanceHistory}
           />
         ) : active === "នាយកដ្ឋាន" ? (
-          <DepartmentPage employees={employees} departments={departments} setDepartments={setDepartments} />
+          <DepartmentPage employees={employees} setEmployees={setEmployees} departments={departments} setDepartments={setDepartments} jobRoles={jobRoles} setJobRoles={setJobRoles} />
         ) : active === "តួនាទីការងារ" ? (
           <JobRolePage
             employees={employees}
+            setEmployees={setEmployees}
             jobRoles={jobRoles}
             setJobRoles={setJobRoles}
             departments={departments}

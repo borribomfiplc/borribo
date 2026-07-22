@@ -477,10 +477,15 @@ function actionNewValues(employee, action) {
     return { status: "អសកម្ម", endDate: action.effectiveDate };
   }
   const values = {};
-  if (["transfer", "transfer_and_job_change"].includes(action.type)) values.branch = String(action.branch || "").trim();
+  if (["transfer", "transfer_and_job_change"].includes(action.type)) {
+    values.branch = String(action.branch || "").trim();
+    values.branchId = String(action.branchId || "").trim();
+  }
   if (["promotion", "job_change", "transfer_and_job_change"].includes(action.type)) {
     values.department = String(action.department || "").trim();
     values.role = String(action.role || "").trim();
+    values.departmentId = String(action.departmentId || "").trim();
+    values.roleId = String(action.roleId || "").trim();
   }
   return values;
 }
@@ -488,8 +493,11 @@ function actionNewValues(employee, action) {
 function employmentSnapshot(employee) {
   return {
     branch: employee.branch || "",
+    branchId: employee.branchId || "",
     department: employee.dept || "",
+    departmentId: employee.departmentId || "",
     role: employee.role || "",
+    roleId: employee.roleId || "",
     status: employee.status || "",
     endDate: employee.endDate || "",
   };
@@ -504,8 +512,11 @@ async function applyEmploymentActionRecord(env, record) {
   const updated = {
     ...employee,
     ...(patch.branch !== undefined ? { branch: patch.branch } : {}),
+    ...(patch.branchId !== undefined ? { branchId: patch.branchId } : {}),
     ...(patch.department !== undefined ? { dept: patch.department } : {}),
+    ...(patch.departmentId !== undefined ? { departmentId: patch.departmentId } : {}),
     ...(patch.role !== undefined ? { role: patch.role } : {}),
+    ...(patch.roleId !== undefined ? { roleId: patch.roleId } : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
     ...(patch.endDate !== undefined ? { endDate: patch.endDate } : {}),
     updatedAt: now,

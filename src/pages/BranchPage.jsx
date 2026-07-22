@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Building2, Power, MapPin, Phone, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
+import { Building2, Power, MapPin, Phone, CheckCircle2, AlertCircle, XCircle, Pencil } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
@@ -11,17 +11,18 @@ const statusConfig = {
   "ច្បាប់": { label: "ច្បាប់", color: COLORS.purple, icon: AlertCircle },
 };
 
-export default function BranchPage({ employees, branches, setBranches, attendanceHistory }) {
+export default function BranchPage({ employees, setEmployees, branches, setBranches, attendanceHistory }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" });
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState(null);
 
   const latestDates = useMemo(() => [...new Set(attendanceHistory.map((item) => item.dateISO).filter(Boolean))]
     .sort((a, b) => b.localeCompare(a)).slice(0, 5), [attendanceHistory]);
 
   const branchSummaries = useMemo(() => branches.map((branch) => {
     const records = attendanceHistory.filter((record) => record.branch === branch.name && latestDates.includes(record.dateISO));
-    const counts = Object.fromEntries(Object.keys(statusConfig).map((status) => [status, records.filter((record) => record.status === status).length]));
+    const counts = Object.fromEntries(Object.keys(statusConfig).map((status) => [status, records.filter((record) => status === "ច្បាប់" ? ["ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"].includes(record.status) : record.status === status).length]));
     const attended = counts["មានវត្តមាន"] + counts["យឺត"];
     return {
       branch,
@@ -34,22 +35,35 @@ export default function BranchPage({ employees, branches, setBranches, attendanc
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.name.trim() || !form.manager.trim()) {
       setError("សូមបំពេញឈ្មោះសាខា និងអ្នកគ្រប់គ្រង");
       return;
     }
-    setBranches((list) => [{ id: `BR-${String(list.length + 1).padStart(3, "0")}`, ...form }, ...list]);
+    const duplicate = branches.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase());
+    if (duplicate) { setError("ឈ្មោះសាខានេះមានរួចហើយ"); return; }
+    const existing = branches.find((item) => item.id === editingId);
+    await setBranches((list) => editingId
+      ? list.map((item) => item.id === editingId ? { ...item, ...form, name: form.name.trim() } : item)
+      : [{ id: `BR-${String(list.length + 1).padStart(3, "0")}`, ...form, name: form.name.trim() }, ...list]);
+    if (existing && existing.name !== form.name.trim()) {
+      await setEmployees((list) => list.map((employee) => (employee.branchId === existing.id || employee.branch === existing.name)
+        ? { ...employee, branchId: existing.id, branch: form.name.trim() } : employee));
+    }
     setError("");
     setForm({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" });
+    setEditingId(null);
     setShowNew(false);
   };
+
+  const openAdd = () => { setEditingId(null); setForm({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" }); setError(""); setShowNew(true); };
+  const editBranch = (branch) => { setEditingId(branch.id); setForm({ name: branch.name || "", type: branch.type || "សាខា", address: branch.address || "", manager: branch.manager || "", phone: branch.phone || "", status: branch.status || "សកម្ម" }); setError(""); setShowNew(true); };
 
   const toggleStatus = (id) => setBranches((list) => list.map((branch) => branch.id === id ? { ...branch, status: branch.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : branch));
 
   return (
     <>
-      <OrgHeader title="សាខា" sub={`សង្ខេបវត្តមានតាមសាខា ${latestDates.length || 0} ថ្ងៃចុងក្រោយ`} onAdd={() => setShowNew(true)} addLabel="បន្ថែមសាខា" />
+      <OrgHeader title="សាខា" sub={`សង្ខេបវត្តមានតាមសាខា ${latestDates.length || 0} ថ្ងៃចុងក្រោយ`} onAdd={openAdd} addLabel="បន្ថែមសាខា" />
 
       <div className="mb-5 rounded-2xl border border-[#EBEDF3] bg-white overflow-hidden">
         <div className="px-5 py-4 border-b border-[#EBEDF3] flex flex-wrap gap-2 items-center justify-between">
@@ -81,7 +95,7 @@ export default function BranchPage({ employees, branches, setBranches, attendanc
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {branchSummaries.map(({ branch, staff, rate }) => (
           <div key={branch.id} className={`bg-white rounded-2xl border border-[#EBEDF3] p-5 flex flex-col gap-3 ${branch.status === "អសកម្ម" ? "opacity-65" : ""}`}>
-            <div className="flex items-start justify-between"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: COLORS.primaryLight }}><Building2 size={20} color={COLORS.primary} /></div><div><div className="font-semibold text-[#1E2333] text-sm">{branch.name}</div><div className="text-xs text-[#8A8FA3]">{branch.type} · {branch.status || "សកម្ម"}</div></div></div><button onClick={() => toggleStatus(branch.id)} aria-label={`${branch.status === "អសកម្ម" ? "បើក" : "បិទ"} ${branch.name}`} className={`w-8 h-8 rounded-lg flex items-center justify-center ${branch.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div>
+            <div className="flex items-start justify-between"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: COLORS.primaryLight }}><Building2 size={20} color={COLORS.primary} /></div><div><div className="font-semibold text-[#1E2333] text-sm">{branch.name}</div><div className="text-xs text-[#8A8FA3]">{branch.type} · {branch.status || "សកម្ម"}</div></div></div><div className="flex gap-1"><button onClick={() => editBranch(branch)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#2A3F8F] hover:bg-[#EEF1FB]" aria-label={`កែ ${branch.name}`}><Pencil size={14} /></button><button onClick={() => toggleStatus(branch.id)} aria-label={`${branch.status === "អសកម្ម" ? "បើក" : "បិទ"} ${branch.name}`} className={`w-8 h-8 rounded-lg flex items-center justify-center ${branch.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div></div>
             {branch.address && <div className="flex items-start gap-2 text-xs text-[#5B5F73]"><MapPin size={13} className="text-[#B4B7C6] mt-0.5 shrink-0" /><span>{branch.address}</span></div>}
             <div className="flex items-center justify-between border-t border-[#EBEDF3] pt-3 mt-1"><div className="text-xs text-[#8A8FA3]">អ្នកគ្រប់គ្រង៖ <span className="text-[#1E2333] font-medium">{branch.manager}</span></div><span className="text-[11px] font-medium rounded-full px-2.5 py-1" style={{ background: COLORS.primaryLight, color: COLORS.primary }}>{staff} បុគ្គលិក</span></div>
             <div className="flex justify-between text-xs"><span className="text-[#8A8FA3]">អត្រាវត្តមាន ៥ថ្ងៃ</span><span className="font-semibold" style={{ color: rate >= 90 ? COLORS.green : COLORS.accent }}>{rate}%</span></div>
@@ -89,7 +103,7 @@ export default function BranchPage({ employees, branches, setBranches, attendanc
         ))}
       </div>
 
-      {showNew && <OrgModal title="បន្ថែមសាខាថ្មី" onClose={() => setShowNew(false)} onSubmit={handleSubmit} submitLabel="រក្សាទុកសាខា" error={error}>
+      {showNew && <OrgModal title={editingId ? "កែព័ត៌មានសាខា" : "បន្ថែមសាខាថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកសាខា" error={error}>
         <div><FieldLabel required>ឈ្មោះសាខា</FieldLabel><TextField value={form.name} onChange={update("name")} placeholder="ឧ. សាខាចំការមន" /></div>
         <div><FieldLabel>ប្រភេទ</FieldLabel><SelectField options={["ការិយាល័យកណ្តាល", "សាខា"]} value={form.type} onChange={update("type")} /></div>
         <div><FieldLabel>អាសយដ្ឋាន</FieldLabel><TextField icon={MapPin} value={form.address} onChange={update("address")} placeholder="ផ្លូវ, សង្កាត់, ខណ្ឌ, ក្រុង" /></div>

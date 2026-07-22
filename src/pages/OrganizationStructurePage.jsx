@@ -1,18 +1,18 @@
 import React, { useMemo, useState } from "react";
 import { ArrowRightLeft, Building2, Briefcase, History, Network, Users } from "lucide-react";
-import { doc, serverTimestamp, writeBatch } from "firebase/firestore";
-import { db } from "../firebase/config";
 import { COLORS } from "../data/theme";
 import { FieldLabel, SelectField, TextField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
+import { createEmploymentAction } from "../services/employees";
+import { todayISO } from "../utils/attendance";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayISO();
 
 export default function OrganizationStructurePage({ employees = [], branches = [], departments = [], jobRoles = [], changes = [], profile }) {
   const [showTransfer, setShowTransfer] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ employeeId: employees[0]?.id || "", branch: "", dept: "", role: "", effectiveDate: today(), reason: "" });
+  const [form, setForm] = useState({ employeeId: employees[0]?.id || "", branch: "", dept: "", role: "", effectiveDate: today(), decisionNo: "", reason: "" });
 
   const activeEmployees = useMemo(() => employees.filter((employee) => employee.status !== "អសកម្ម"), [employees]);
   const activeBranches = branches.filter((item) => item.status !== "អសកម្ម");
@@ -23,7 +23,7 @@ export default function OrganizationStructurePage({ employees = [], branches = [
 
   const openTransfer = () => {
     const employee = employees[0];
-    setForm({ employeeId: employee?.id || "", branch: employee?.branch || activeBranches[0]?.name || "", dept: employee?.dept || activeDepartments[0]?.name || "", role: employee?.role || activeRoles[0]?.name || "", effectiveDate: today(), reason: "" });
+    setForm({ employeeId: employee?.id || "", branch: employee?.branch || activeBranches[0]?.name || "", dept: employee?.dept || activeDepartments[0]?.name || "", role: employee?.role || activeRoles[0]?.name || "", effectiveDate: today(), decisionNo: "", reason: "" });
     setError(""); setShowTransfer(true);
   };
 
@@ -35,27 +35,29 @@ export default function OrganizationStructurePage({ employees = [], branches = [
   const saveTransfer = async () => {
     if (saving) return;
     const employee = employees.find((item) => item.id === form.employeeId);
-    if (!employee || !form.branch || !form.dept || !form.role || !form.effectiveDate || !form.reason.trim()) {
-      setError("សូមបំពេញបុគ្គលិក សាខា នាយកដ្ឋាន តួនាទី ថ្ងៃមានប្រសិទ្ធភាព និងមូលហេតុ"); return;
+    if (!employee || !form.branch || !form.dept || !form.role || !form.effectiveDate || !form.decisionNo.trim() || !form.reason.trim()) {
+      setError("សូមបំពេញបុគ្គលិក សាខា នាយកដ្ឋាន តួនាទី ថ្ងៃមានប្រសិទ្ធភាព លេខលិខិត និងមូលហេតុ"); return;
     }
     if (employee.branch === form.branch && employee.dept === form.dept && employee.role === form.role) {
       setError("សូមជ្រើសសាខា នាយកដ្ឋាន ឬតួនាទីថ្មីយ៉ាងតិចមួយ"); return;
     }
     setSaving(true); setError("");
     try {
-      const actionId = `ORG-${Date.now()}`;
-      const batch = writeBatch(db);
-      batch.update(doc(db, "employees", employee.id), { branch: form.branch, dept: form.dept, role: form.role, updatedAt: serverTimestamp() });
-      batch.set(doc(db, "organizationChanges", actionId), {
-        id: actionId, employeeId: employee.id, employeeName: employee.name,
-        fromBranch: employee.branch || "", toBranch: form.branch,
-        fromDept: employee.dept || "", toDept: form.dept,
-        fromRole: employee.role || "", toRole: form.role,
-        effectiveDate: form.effectiveDate, reason: form.reason.trim(),
-        changedBy: profile?.uid || "", changedByName: profile?.name || "HR/Admin",
-        createdAt: serverTimestamp(), createdOn: today(),
+      const branchChanged = employee.branch !== form.branch;
+      const jobChanged = employee.dept !== form.dept || employee.role !== form.role;
+      await createEmploymentAction(employee, {
+        type: branchChanged && jobChanged ? "transfer_and_job_change" : branchChanged ? "transfer" : "job_change",
+        effectiveDate: form.effectiveDate,
+        branch: form.branch,
+        branchId: branches.find((item) => item.name === form.branch)?.id || "",
+        department: form.dept,
+        departmentId: departments.find((item) => item.name === form.dept)?.id || "",
+        role: form.role,
+        roleId: jobRoles.find((item) => item.name === form.role)?.id || "",
+        decisionNo: form.decisionNo.trim(),
+        reason: form.reason.trim(),
+        note: "បង្កើតពី Menu រចនាសម្ព័ន្ធអង្គភាព",
       });
-      await batch.commit();
       setShowTransfer(false);
     } catch (saveError) {
       setError(saveError.message || "មិនអាចរក្សាទុកការផ្ទេរបុគ្គលិកបានទេ");
@@ -87,7 +89,7 @@ export default function OrganizationStructurePage({ employees = [], branches = [
 
     <section className="rounded-2xl border border-[#EBEDF3] bg-white overflow-hidden">
       <div className="border-b border-[#EBEDF3] px-4 sm:px-5 py-4 flex items-center gap-2"><History size={17} className="text-[#2A3F8F]" /><div><h2 className="font-semibold text-[#1E2333]">ប្រវត្តិផ្លាស់ប្ដូរអង្គភាព</h2><p className="text-xs text-[#8A8FA3] mt-1">Audit trail របស់ការផ្ទេរសាខា នាយកដ្ឋាន និងតួនាទី</p></div></div>
-      <div className="divide-y divide-[#EBEDF3]">{changes.slice().sort((a, b) => String(b.createdOn || b.effectiveDate).localeCompare(String(a.createdOn || a.effectiveDate))).slice(0, 20).map((item) => <div key={item.id} className="p-4 sm:px-5"><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="font-medium text-sm text-[#1E2333]">{item.employeeName} <span className="font-normal text-[#8A8FA3]">({item.employeeId})</span></div><div className="text-xs text-[#5B5F73] mt-1">{item.fromBranch} / {item.fromDept} / {item.fromRole} <ArrowRightLeft size={12} className="inline mx-1" /> {item.toBranch} / {item.toDept} / {item.toRole}</div><div className="text-xs text-[#8A8FA3] mt-1">មូលហេតុ៖ {item.reason}</div></div><div className="text-right text-xs text-[#8A8FA3]"><div>មានប្រសិទ្ធភាព៖ {item.effectiveDate}</div><div className="mt-1">ដោយ៖ {item.changedByName || "HR/Admin"}</div></div></div></div>)}{!changes.length && <div className="py-10 text-center text-sm text-[#8A8FA3]">មិនទាន់មានប្រវត្តិផ្ទេរបុគ្គលិកទេ</div>}</div>
+      <div className="divide-y divide-[#EBEDF3]">{changes.slice().sort((a, b) => String(b.createdAt || b.effectiveDate).localeCompare(String(a.createdAt || a.effectiveDate))).slice(0, 20).map((item) => <div key={item.id} className="p-4 sm:px-5"><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="font-medium text-sm text-[#1E2333]">{item.employeeName} <span className="font-normal text-[#8A8FA3]">({item.employeeId})</span></div><div className="text-xs text-[#5B5F73] mt-1">{item.oldValues?.branch || "—"} / {item.oldValues?.department || "—"} / {item.oldValues?.role || "—"} <ArrowRightLeft size={12} className="inline mx-1" /> {item.newValues?.branch || item.oldValues?.branch || "—"} / {item.newValues?.department || item.oldValues?.department || "—"} / {item.newValues?.role || item.oldValues?.role || "—"}</div><div className="text-xs text-[#8A8FA3] mt-1">មូលហេតុ៖ {item.reason} · លិខិត៖ {item.decisionNo || "—"}</div></div><div className="text-right text-xs text-[#8A8FA3]"><div>មានប្រសិទ្ធភាព៖ {item.effectiveDate}</div><div className="mt-1 font-medium text-[#2A3F8F]">{item.status || "បានអនុវត្ត"}</div></div></div></div>)}{!changes.length && <div className="py-10 text-center text-sm text-[#8A8FA3]">មិនទាន់មានប្រវត្តិផ្ទេរបុគ្គលិកទេ</div>}</div>
     </section>
 
     {showTransfer && <OrgModal title="ផ្ទេរបុគ្គលិក" onClose={() => setShowTransfer(false)} onSubmit={saveTransfer} submitLabel={saving ? "កំពុងរក្សាទុក..." : "រក្សាទុកការផ្ទេរ"} error={error}>
@@ -97,6 +99,7 @@ export default function OrganizationStructurePage({ employees = [], branches = [
       <div><FieldLabel required>នាយកដ្ឋានថ្មី</FieldLabel><SelectField options={activeDepartments.map((item) => item.name)} value={form.dept} onChange={(event) => { const dept = event.target.value; const firstRole = activeRoles.find((role) => role.dept === dept)?.name || ""; setForm({ ...form, dept, role: firstRole }); }} /></div>
       <div><FieldLabel required>តួនាទីថ្មី</FieldLabel><SelectField options={roleOptions.map((item) => item.name)} value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} /></div>
       <div><FieldLabel required>ថ្ងៃមានប្រសិទ្ធភាព</FieldLabel><TextField type="date" value={form.effectiveDate} onChange={(event) => setForm({ ...form, effectiveDate: event.target.value })} /></div>
+      <div><FieldLabel required>លេខលិខិតសម្រេច</FieldLabel><TextField value={form.decisionNo} onChange={(event) => setForm({ ...form, decisionNo: event.target.value })} placeholder="ឧ. HR-2026-001" /></div>
       <div><FieldLabel required>មូលហេតុ</FieldLabel><textarea rows={3} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} className="w-full resize-none rounded-xl bg-[#F5F6FA] px-4 py-2.5 text-sm outline-none" placeholder="ឧ. ផ្ទេរទៅបំពេញតម្រូវការបុគ្គលិកនៅសាខាថ្មី" /></div>
     </OrgModal>}
   </>;

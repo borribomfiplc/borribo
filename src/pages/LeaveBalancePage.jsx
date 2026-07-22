@@ -6,17 +6,18 @@ import { COLORS } from "../data/theme";
 import { leaveTypeStyle, leaveTypes, leaveQuotas } from "../data/mockData";
 import LeaveBalanceBar from "../components/shared/LeaveBalanceBar";
 import StatCard from "../components/shared/StatCard";
+import { todayISO } from "../utils/attendance";
+import { usedLeaveDays } from "../utils/leave";
 
-export default function LeaveBalancePage({ requests, employees }) {
+export default function LeaveBalancePage({ requests, employees, holidays = [] }) {
   const [branchFilter, setBranchFilter] = useState("គ្រប់សាខា");
   const [search, setSearch] = useState("");
+  const availableYears = [...new Set([todayISO().slice(0, 4), ...requests.map((request) => request.startDate?.slice(0, 4)).filter(Boolean)])].sort((a, b) => b.localeCompare(a));
+  const [year, setYear] = useState(availableYears[0]);
 
   const branches = ["គ្រប់សាខា", ...Array.from(new Set(employees.map((e) => e.branch)))];
 
-  const usedDays = (empId, type) =>
-    requests
-      .filter((r) => (r.employeeId === empId || r.empId === empId) && r.leaveType === type && r.status === "បានអនុម័ត")
-      .reduce((sum, r) => sum + Number(r.days || 0), 0);
+  const usedDays = (empId, type) => usedLeaveDays(requests, empId, type, { year, holidays });
 
   const totalQuota = leaveTypes.reduce((sum, t) => sum + leaveQuotas[t], 0);
 
@@ -28,8 +29,7 @@ export default function LeaveBalancePage({ requests, employees }) {
         String(e.id || "").toLowerCase().includes(search.trim().toLowerCase()))
   );
 
-  const totalUsedByType = (type) =>
-    requests.filter((r) => r.leaveType === type && r.status === "បានអនុម័ត").reduce((sum, r) => sum + (Number(r.days) || 0), 0);
+  const totalUsedByType = (type) => employees.reduce((sum, employee) => sum + usedDays(employee.id, type), 0);
 
   const lowBalanceCount = employees.filter((e) => {
     const remaining = leaveTypes.reduce((sum, t) => sum + Math.max(0, leaveQuotas[t] - usedDays(e.id, t)), 0);
@@ -51,7 +51,7 @@ export default function LeaveBalancePage({ requests, employees }) {
           icon={CalendarDays}
           label="ច្បាប់ប្រចាំឆ្នាំបានប្រើ"
           value={`${totalUsedByType("ច្បាប់ប្រចាំឆ្នាំ")} ថ្ងៃ`}
-          sub="ក្នុងចំណោមបុគ្គលិកទាំងអស់"
+          sub={`ក្នុងឆ្នាំ ${year}`}
           iconBg={COLORS.primaryLight}
           iconColor={COLORS.primary}
           chartColor={COLORS.primary}
@@ -60,7 +60,7 @@ export default function LeaveBalancePage({ requests, employees }) {
           icon={CalendarDays}
           label="ច្បាប់ឈឺបានប្រើ"
           value={`${totalUsedByType("ច្បាប់ឈឺ")} ថ្ងៃ`}
-          sub="ក្នុងចំណោមបុគ្គលិកទាំងអស់"
+          sub={`ក្នុងឆ្នាំ ${year}`}
           iconBg={COLORS.greenLight}
           iconColor={COLORS.green}
           chartColor={COLORS.green}
@@ -78,6 +78,12 @@ export default function LeaveBalancePage({ requests, employees }) {
 
       {/* Filter */}
       <div className="bg-white rounded-2xl border border-[#EBEDF3] p-3 sm:p-4 mb-5 flex flex-wrap items-center gap-3">
+        <div className="relative">
+          <select value={year} onChange={(e) => setYear(e.target.value)} className="appearance-none bg-[#EEF1FB] rounded-xl pl-4 pr-9 py-2.5 text-sm font-medium text-[#2A3F8F] outline-none">
+            {availableYears.map((item) => <option key={item} value={item}>ឆ្នាំ {item}</option>)}
+          </select>
+          <ChevronDown size={14} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#2A3F8F] pointer-events-none" />
+        </div>
         <div className="relative">
           <select
             value={branchFilter}

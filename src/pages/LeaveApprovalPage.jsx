@@ -8,11 +8,11 @@ import { correctionStatusStyle, leaveQuotas, leaveTypeStyle, leaveTypes } from "
 import StatCard from "../components/shared/StatCard";
 import { notifyTelegram } from "../services/telegram";
 import { db } from "../firebase/config";
-import { enumerateLeaveDates, leaveAttendanceRecord, remainingLeaveDays } from "../utils/leave";
+import { leaveAttendanceRecord, remainingLeaveDays, requestLeaveDaysForYear, workingLeaveDates } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
 import { todayISO } from "../utils/attendance";
 
-export default function LeaveApprovalPage({ requests, employees, profile }) {
+export default function LeaveApprovalPage({ requests, employees, profile, holidays = [] }) {
   const [branchFilter, setBranchFilter] = useState("គ្រប់សាខា");
   const [typeFilter, setTypeFilter] = useState("គ្រប់ប្រភេទ");
   const [showHistory, setShowHistory] = useState(false);
@@ -64,9 +64,20 @@ export default function LeaveApprovalPage({ requests, employees, profile }) {
       setError("សូមបញ្ចូលមូលហេតុបដិសេធ"); return;
     }
     const employeeId = request.employeeId || request.empId;
-    const remaining = remainingLeaveDays(requests, employeeId, request.leaveType, request.id);
-    if (status === "បានអនុម័ត" && leaveQuotas[request.leaveType] > 0 && remaining != null && Number(request.days) > remaining) {
-      setError(`សមតុល្យ ${request.leaveType} នៅសល់តែ ${remaining} ថ្ងៃ`); return;
+    const leaveDates = workingLeaveDates(request.startDate, request.endDate, holidays);
+    const authoritativeDays = requestLeaveDaysForYear(request, "", holidays);
+    if (status === "បានអនុម័ត" && !leaveDates.length) {
+      setError("ចន្លោះថ្ងៃនេះមិនមានថ្ងៃធ្វើការទេ"); return;
+    }
+    if (status === "បានអនុម័ត" && leaveQuotas[request.leaveType] > 0) {
+      const years = [...new Set(leaveDates.map((dateISO) => dateISO.slice(0, 4)))];
+      for (const year of years) {
+        const requested = requestLeaveDaysForYear(request, year, holidays);
+        const remaining = remainingLeaveDays(requests, employeeId, request.leaveType, { year, holidays, excludedId: request.id });
+        if (remaining != null && requested > remaining) {
+          setError(`សមតុល្យ ${request.leaveType} ឆ្នាំ ${year} នៅសល់តែ ${remaining} ថ្ងៃ`); return;
+        }
+      }
     }
     setSaving(true); setError("");
     try {
@@ -75,10 +86,12 @@ export default function LeaveApprovalPage({ requests, employees, profile }) {
       batch.update(doc(db, "leaveRequests", request.id), {
         status, decisionReason: decisionReason.trim(), decidedOn: todayISO(),
         decidedAt: serverTimestamp(), decidedBy: actor.uid, decidedByName: actor.name,
+        ...(status === "បានអនុម័ត" ? { days: authoritativeDays, workingDates: leaveDates, leaveYear: request.startDate.slice(0, 4) } : {}),
       });
       if (status === "បានអនុម័ត") {
         const employee = employees.find((item) => item.id === employeeId);
-        enumerateLeaveDates(request.startDate, request.endDate).forEach((dateISO) => {
+        leaveDates.forEach((dateISO) => {
+          if (request.portion && request.portion !== "ពេញថ្ងៃ") return;
           const record = { ...leaveAttendanceRecord(request, employee, dateISO, actor), updatedAt: serverTimestamp() };
           batch.set(doc(db, "attendanceHistory", record.docId), record, { merge: true });
           if (dateISO === todayISO()) batch.set(doc(db, "attendanceToday", record.recordId), record, { merge: true });

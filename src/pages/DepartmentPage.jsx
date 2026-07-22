@@ -1,38 +1,49 @@
 import React, { useState } from "react";
-import { Power, Briefcase } from "lucide-react";
+import { Power, Briefcase, Pencil } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
 
-export default function DepartmentPage({ employees, departments, setDepartments }) {
+export default function DepartmentPage({ employees, setEmployees, departments, setDepartments, jobRoles = [], setJobRoles }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", head: "", description: "", status: "សកម្ម" });
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState(null);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.name.trim() || !form.head.trim()) {
       setError("សូមបំពេញឈ្មោះនាយកដ្ឋាន និងប្រធាននាយកដ្ឋាន");
       return;
     }
-    setDepartments((list) => [
-      { id: `DEPT-${String(list.length + 1).padStart(3, "0")}`, ...form },
-      ...list,
-    ]);
+    if (departments.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase())) { setError("ឈ្មោះនាយកដ្ឋាននេះមានរួចហើយ"); return; }
+    const existing = departments.find((item) => item.id === editingId);
+    await setDepartments((list) => editingId
+      ? list.map((item) => item.id === editingId ? { ...item, ...form, name: form.name.trim() } : item)
+      : [{ id: `DEPT-${String(list.length + 1).padStart(3, "0")}`, ...form, name: form.name.trim() }, ...list]);
+    if (existing && existing.name !== form.name.trim()) {
+      await setEmployees((list) => list.map((employee) => (employee.departmentId === existing.id || employee.dept === existing.name)
+        ? { ...employee, departmentId: existing.id, dept: form.name.trim() } : employee));
+      if (setJobRoles) await setJobRoles((list) => list.map((role) => (role.departmentId === existing.id || role.dept === existing.name)
+        ? { ...role, departmentId: existing.id, dept: form.name.trim() } : role));
+    }
     setError("");
     setForm({ name: "", head: "", description: "", status: "សកម្ម" });
+    setEditingId(null);
     setShowNew(false);
   };
 
   const toggleStatus = (id) => setDepartments((list) => list.map((department) => department.id === id ? { ...department, status: department.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : department));
+  const openAdd = () => { setEditingId(null); setForm({ name: "", head: "", description: "", status: "សកម្ម" }); setError(""); setShowNew(true); };
+  const editDepartment = (department) => { setEditingId(department.id); setForm({ name: department.name || "", head: department.head || "", description: department.description || "", status: department.status || "សកម្ម" }); setError(""); setShowNew(true); };
 
   return (
     <>
       <OrgHeader
         title="នាយកដ្ឋាន"
         sub={`សរុប ${departments.length} នាយកដ្ឋាន`}
-        onAdd={() => setShowNew(true)}
+        onAdd={openAdd}
         addLabel="បន្ថែមនាយកដ្ឋាន"
       />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -47,9 +58,7 @@ export default function DepartmentPage({ employees, departments, setDepartments 
                   </div>
                   <div><div className="font-semibold text-[#1E2333] text-sm">{d.name}</div><div className="text-[11px] text-[#8A8FA3] mt-0.5">{d.status || "សកម្ម"}</div></div>
                 </div>
-                <button onClick={() => toggleStatus(d.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${d.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}>
-                  <Power size={15} />
-                </button>
+                <div className="flex gap-1"><button onClick={() => editDepartment(d)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#2A3F8F] hover:bg-[#EEF1FB]" aria-label={`កែ ${d.name}`}><Pencil size={14} /></button><button onClick={() => toggleStatus(d.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center ${d.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div>
               </div>
               {d.description && <p className="text-xs text-[#5B5F73] leading-relaxed">{d.description}</p>}
               <div className="flex items-center justify-between border-t border-[#EBEDF3] pt-3 mt-1">
@@ -66,7 +75,7 @@ export default function DepartmentPage({ employees, departments, setDepartments 
       </div>
 
       {showNew && (
-        <OrgModal title="បន្ថែមនាយកដ្ឋានថ្មី" onClose={() => setShowNew(false)} onSubmit={handleSubmit} submitLabel="រក្សាទុកនាយកដ្ឋាន" error={error}>
+        <OrgModal title={editingId ? "កែនាយកដ្ឋាន" : "បន្ថែមនាយកដ្ឋានថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកនាយកដ្ឋាន" error={error}>
           <div>
             <FieldLabel required>ឈ្មោះនាយកដ្ឋាន</FieldLabel>
             <TextField value={form.name} onChange={update("name")} placeholder="ឧ. ទីផ្សារឌីជីថល" />

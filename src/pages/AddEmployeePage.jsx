@@ -8,9 +8,11 @@ import { imageFileToDataUrl } from "../utils/employeePhoto";
 
 const emptyForm = (branches, departments, jobRoles) => ({
   name: "", gender: "ប្រុស", dob: "", phone: "", email: "", address: "",
-  department: departments[0]?.name || "", position: jobRoles[0]?.name || "",
-  branch: branches[0]?.name || "", employmentType: "ពេញម៉ោង", startDate: "",
-  shift: "ពេញមួយថ្ងៃ", status: "សកម្ម", photo: "",
+  department: departments.find((item) => item.status !== "អសកម្ម")?.name || "",
+  position: jobRoles.find((item) => item.status !== "អសកម្ម")?.name || "",
+  branch: branches.find((item) => item.status !== "អសកម្ម")?.name || "", employmentType: "ពេញម៉ោង", startDate: "",
+  shift: "ពេញមួយថ្ងៃ", status: "សកម្ម", photo: "", managerId: "",
+  emergencyName: "", emergencyPhone: "", emergencyRelation: "",
 });
 
 export default function AddEmployeePage({ onCancel, onSave, editingEmployee, employees = [], branches = [], departments = [], jobRoles = [], actorRole = "hr" }) {
@@ -30,14 +32,17 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
   const [saving, setSaving] = useState(false);
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+  const activeBranches = useMemo(() => branches.filter((item) => item.status !== "អសកម្ម"), [branches]);
+  const activeDepartments = useMemo(() => departments.filter((item) => item.status !== "អសកម្ម"), [departments]);
+  const activeJobRoles = useMemo(() => jobRoles.filter((item) => item.status !== "អសកម្ម"), [jobRoles]);
   const availableRoles = useMemo(() => {
-    const matching = jobRoles.filter((role) => !form.department || role.dept === form.department);
-    return matching.length ? matching : jobRoles;
-  }, [jobRoles, form.department]);
+    const matching = activeJobRoles.filter((role) => !form.department || role.dept === form.department);
+    return matching.length ? matching : activeJobRoles;
+  }, [activeJobRoles, form.department]);
 
   const handleDepartment = (event) => {
     const department = event.target.value;
-    const roles = jobRoles.filter((role) => role.dept === department);
+    const roles = activeJobRoles.filter((role) => role.dept === department);
     setForm((current) => ({ ...current, department, position: roles.some((role) => role.name === current.position) ? current.position : (roles[0]?.name || "") }));
   };
 
@@ -67,6 +72,12 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       setError("អ៊ីមែលមិនត្រឹមត្រូវ"); return;
     }
+    const normalizedPhone = form.phone.replace(/\D/g, "");
+    const duplicate = employees.find((employee) => employee.id !== editingEmployee?.id && (
+      (normalizedPhone && String(employee.phone || "").replace(/\D/g, "") === normalizedPhone) ||
+      (form.email && String(employee.email || "").trim().toLowerCase() === form.email.trim().toLowerCase())
+    ));
+    if (duplicate) { setError(`លេខទូរស័ព្ទ ឬអ៊ីមែលនេះមានប្រើដោយ ${duplicate.name} រួចហើយ`); return; }
     if (createLogin) {
       if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(account.username)) {
         setError("Username ត្រូវមានអក្សរអង់គ្លេស លេខ ឬ . _ - និងយ៉ាងតិច 2 តួអក្សរ"); return;
@@ -80,6 +91,11 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
       branch: form.branch, phone: form.phone.trim(), status: form.status, gender: form.gender,
       dob: form.dob, email: form.email.trim().toLowerCase(), address: form.address.trim(), photo: form.photo || "",
       employmentType: form.employmentType, startDate: form.startDate, shift: "ពេញមួយថ្ងៃ",
+      managerId: form.managerId || "", emergencyName: form.emergencyName.trim(),
+      emergencyPhone: form.emergencyPhone.trim(), emergencyRelation: form.emergencyRelation.trim(),
+      branchId: branches.find((item) => item.name === form.branch)?.id || form.branchId || "",
+      departmentId: departments.find((item) => item.name === form.department)?.id || form.departmentId || "",
+      roleId: jobRoles.find((item) => item.name === form.position)?.id || form.roleId || "",
     };
     setSaving(true); setError("");
     try {
@@ -158,13 +174,17 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
           <div><FieldLabel required>លេខទូរស័ព្ទ</FieldLabel><TextField dir="ltr" icon={Phone} value={form.phone} onChange={update("phone")} placeholder="012 345 678" /></div>
           <div><FieldLabel>អ៊ីមែល</FieldLabel><TextField dir="ltr" icon={Mail} type="email" value={form.email} onChange={update("email")} placeholder="name@borribo.com.kh" /></div>
           <div><FieldLabel>អាសយដ្ឋាន</FieldLabel><TextField icon={MapPin} value={form.address} onChange={update("address")} /></div>
+          <div><FieldLabel>ទំនាក់ទំនងបន្ទាន់</FieldLabel><TextField value={form.emergencyName} onChange={update("emergencyName")} placeholder="ឈ្មោះអ្នកទំនាក់ទំនង" /></div>
+          <div><FieldLabel>លេខទូរស័ព្ទបន្ទាន់</FieldLabel><TextField dir="ltr" icon={Phone} value={form.emergencyPhone} onChange={update("emergencyPhone")} placeholder="012 345 678" /></div>
+          <div><FieldLabel>ត្រូវជា</FieldLabel><TextField value={form.emergencyRelation} onChange={update("emergencyRelation")} placeholder="ឧ. ប្ដី/ប្រពន្ធ, បងប្អូន" /></div>
         </SectionCard>
 
         <SectionCard title="ព័ត៌មានការងារ" icon={Briefcase}>
           {isEditing && <div className="md:col-span-2 rounded-xl bg-[#EEF1FB] px-4 py-3 text-xs text-[#2A3F8F]">ការប្តូរសាខា នាយកដ្ឋាន តួនាទី ឬស្ថានភាព ត្រូវធ្វើតាមប៊ូតុង <b>ប្រតិបត្តិការបុគ្គលិក</b> ខាងលើ ដើម្បីរក្សាប្រវត្តិ និងលិខិតសម្រេច។</div>}
-          <div><FieldLabel required>នាយកដ្ឋាន</FieldLabel><SelectField options={departments.map((item) => item.name)} value={form.department} onChange={handleDepartment} disabled={isEditing} /></div>
+          <div><FieldLabel required>នាយកដ្ឋាន</FieldLabel><SelectField options={activeDepartments.map((item) => item.name)} value={form.department} onChange={handleDepartment} disabled={isEditing} /></div>
           <div><FieldLabel required>តួនាទី</FieldLabel><SelectField options={availableRoles.map((item) => item.name)} value={form.position} onChange={update("position")} disabled={isEditing} /></div>
-          <div><FieldLabel required>សាខា</FieldLabel><SelectField options={branches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={isEditing} /></div>
+          <div><FieldLabel required>សាខា</FieldLabel><SelectField options={activeBranches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={isEditing} /></div>
+          <div><FieldLabel>អ្នកគ្រប់គ្រងផ្ទាល់</FieldLabel><SelectField options={[{ value: "", label: "មិនទាន់កំណត់" }, ...employees.filter((item) => item.status !== "អសកម្ម" && item.id !== editingEmployee?.id).map((item) => ({ value: item.id, label: `${item.id} · ${item.name}` }))]} value={form.managerId} onChange={update("managerId")} /></div>
           <div><FieldLabel>ប្រភេទការងារ</FieldLabel><SelectField options={["ពេញម៉ោង", "ក្រៅម៉ោង", "កិច្ចសន្យា"]} value={form.employmentType} onChange={update("employmentType")} /></div>
           <div><FieldLabel>ថ្ងៃចូលបម្រើការងារ</FieldLabel><TextField type="date" value={form.startDate} onChange={update("startDate")} /></div>
           <div><FieldLabel>កាលវិភាគធ្វើការ</FieldLabel><TextField value="ចន្ទ–សុក្រ 08:00–17:00 · សៅរ៍ 08:00–12:00" disabled /></div>

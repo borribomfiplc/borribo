@@ -163,7 +163,8 @@ async function deleteDocument(env, path) {
 }
 
 function documentName(env, path) {
-  return `${firestoreBase(env)}/${path}`;
+  if (!env.FIREBASE_PROJECT_ID) throw new Error("FIREBASE_PROJECT_ID is missing");
+  return `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}`;
 }
 
 async function commitWrites(env, writes) {
@@ -306,7 +307,7 @@ async function handleCreateEmployee(user, env, body) {
 
   const unique = await assertEmployeeUnique(env, { ...employee, email }, "");
   const now = new Date().toISOString();
-  const baseEmployee = { ...employee, email: unique.email, phoneNormalized: unique.phone, status: employee.status || "សកម្ម", updatedAt: now };
+  const baseEmployee = { ...employee, email: unique.email, phoneNormalized: unique.phone, status: employee.status || "ážŸáž€áž˜áŸ’áž˜", updatedAt: now };
   const reservationWrites = await uniqueReservationWrites(env, baseEmployee);
 
   if (!accountEnabled) {
@@ -325,7 +326,7 @@ async function handleCreateEmployee(user, env, body) {
       { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
       { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
       { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
-      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }, exists: false },
+      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, status: "ážŸáž€áž˜áŸ’áž˜", active: true, createdAt: now }, exists: false },
       ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
@@ -345,8 +346,8 @@ async function handleProvisionEmployeeAccount(user, env, body) {
   const account = body?.account || {};
   const employee = await getDocument(env, `employees/${employeeId}`);
   if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
-  if (employee.uid) throw Object.assign(new Error("បុគ្គលិកនេះមាន Login Account រួចហើយ"), { status: 409 });
-  if (employee.status === "អសកម្ម") throw Object.assign(new Error("មិនអាចបង្កើត Account សម្រាប់បុគ្គលិកអសកម្មបានទេ"), { status: 400 });
+  if (employee.uid) throw Object.assign(new Error("áž”áž»áž‚áŸ’áž‚áž›áž·áž€áž“áŸáŸ‡áž˜áž¶áž“ Login Account ážšáž½áž…áž áž¾áž™"), { status: 409 });
+  if (employee.status === "áž¢ážŸáž€áž˜áŸ’áž˜") throw Object.assign(new Error("áž˜áž·áž“áž¢áž¶áž…áž”áž„áŸ’áž€áž¾áž Account ážŸáž˜áŸ’ážšáž¶áž”áŸ‹áž”áž»áž‚áŸ’áž‚áž›áž·áž€áž¢ážŸáž€áž˜áŸ’áž˜áž”áž¶áž“áž‘áŸ"), { status: 400 });
   const username = String(account.username || "").trim().toLowerCase();
   const email = normalizeEmail(account.email || `${username}@borribo.com.kh`);
   const role = String(account.role || "employee");
@@ -391,10 +392,10 @@ async function handleDeactivateEmployee(user, env, body) {
   if (!employeeId) throw Object.assign(new Error("Employee identifier is missing"), { status: 400 });
   const employee = await getDocument(env, `employees/${employeeId}`);
   if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
-  if (employee.status === "អសកម្ម") return { ok: true, employee, alreadyInactive: true };
+  if (employee.status === "áž¢ážŸáž€áž˜áŸ’áž˜") return { ok: true, employee, alreadyInactive: true };
   const pendingActions = await queryDocuments(env, "employmentActions", "employeeId", employeeId);
-  if (pendingActions.some((item) => item.status === "បានកំណត់")) {
-    throw Object.assign(new Error("បុគ្គលិកនេះមានប្រតិបត្តិការថ្ងៃអនាគត។ សូមលុបចោលវាមុននឹងដាក់ជាអសកម្ម។"), { status: 409 });
+  if (pendingActions.some((item) => item.status === "áž”áž¶áž“áž€áŸ†ážŽážáŸ‹")) {
+    throw Object.assign(new Error("áž”áž»áž‚áŸ’áž‚áž›áž·áž€áž“áŸáŸ‡áž˜áž¶áž“áž”áŸ’ážšážáž·áž”ážáŸ’ážáž·áž€áž¶ážšážáŸ’áž„áŸƒáž¢áž“áž¶áž‚ážáŸ” ážŸáž¼áž˜áž›áž»áž”áž…áŸ„áž›ážœáž¶áž˜áž»áž“áž“áž¹áž„ážŠáž¶áž€áŸ‹áž‡áž¶áž¢ážŸáž€áž˜áŸ’áž˜áŸ”"), { status: 409 });
   }
   const uid = String(employee.uid || body?.uid || "");
   const profile = uid ? await getDocument(env, `profiles/${uid}`) : null;
@@ -403,20 +404,20 @@ async function handleDeactivateEmployee(user, env, body) {
   if (uid === user.uid) throw Object.assign(new Error("You cannot deactivate your own account"), { status: 400 });
   if (uid) await authAdminRequest(env, "update", { localId: uid, disableUser: true });
   const now = new Date().toISOString();
-  const employeeRecord = { ...employee, status: "អសកម្ម", archivedAt: now, archivedByUid: user.uid, archivedByEmail: user.email, updatedAt: now };
+  const employeeRecord = { ...employee, status: "áž¢ážŸáž€áž˜áŸ’áž˜", archivedAt: now, archivedByUid: user.uid, archivedByEmail: user.email, updatedAt: now };
   try {
     await commitWrites(env, [
       { path: `employees/${employeeId}`, data: employeeRecord },
       ...(profile ? [
-        { path: `profiles/${uid}`, data: { ...profile, active: false, status: "អសកម្ម", updatedAt: now } },
+        { path: `profiles/${uid}`, data: { ...profile, active: false, status: "áž¢ážŸáž€áž˜áŸ’áž˜", updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: profile.email, uid, active: false } }] : []),
         ...(profile.email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid, active: false } }] : []),
-        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, status: "អសកម្ម", active: false, updatedAt: now } },
+        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, status: "áž¢ážŸáž€áž˜áŸ’áž˜", active: false, updatedAt: now } },
       ] : []),
     ]);
   } catch (error) {
     const committed = await getDocument(env, `employees/${employeeId}`).catch(() => null);
-    if (committed?.updatedAt === now && committed.status === "អសកម្ម") return { ok: true, deactivated: true, employee: committed, preservedHistory: true, recovered: true };
+    if (committed?.updatedAt === now && committed.status === "áž¢ážŸáž€áž˜áŸ’áž˜") return { ok: true, deactivated: true, employee: committed, preservedHistory: true, recovered: true };
     if (uid) await authAdminRequest(env, "update", { localId: uid, disableUser: false }).catch(() => {});
     throw error;
   }
@@ -435,7 +436,7 @@ async function handleUpdateEmployee(user, env, body) {
   const email = normalizeEmail(employee.email || profile?.email);
   if (profile && !email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
   const unique = await assertEmployeeUnique(env, { ...employee, email }, employee.id);
-  const disabled = employee.status === "អសកម្ម";
+  const disabled = employee.status === "áž¢ážŸáž€áž˜áŸ’áž˜";
   if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: disabled });
   const now = new Date().toISOString();
   const employeeRecord = { ...employee, email: unique.email, phoneNormalized: unique.phone, ...(profile ? { username: profile.username || employee.username || "", accountRole: profile.role } : {}), updatedAt: now };
@@ -455,7 +456,7 @@ async function handleUpdateEmployee(user, env, body) {
   } catch (error) {
     const committed = await getDocument(env, `employees/${employee.id}`).catch(() => null);
     if (committed?.updatedAt === now) return { ok: true, employee: committed, recovered: true };
-    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: profile.email, displayName: previous.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: previous.id }), disableUser: previous.status === "អសកម្ម" }).catch(() => {});
+    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: profile.email, displayName: previous.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: previous.id }), disableUser: previous.status === "áž¢ážŸáž€áž˜áŸ’áž˜" }).catch(() => {});
     throw error;
   }
   return { ok: true, employee: employeeRecord };
@@ -474,7 +475,7 @@ function currentCambodiaDateISO() {
 
 function actionNewValues(employee, action) {
   if (action.type === "resignation") {
-    return { status: "អសកម្ម", endDate: action.effectiveDate };
+    return { status: "áž¢ážŸáž€áž˜áŸ’áž˜", endDate: action.effectiveDate };
   }
   const values = {};
   if (["transfer", "transfer_and_job_change"].includes(action.type)) {
@@ -522,10 +523,10 @@ async function applyEmploymentActionRecord(env, record) {
     updatedAt: now,
   };
 
-  const applied = { ...record, oldValues, status: "បានអនុវត្ត", appliedAt: now, error: "" };
+  const applied = { ...record, oldValues, status: "áž”áž¶áž“áž¢áž“áž»ážœážáŸ’áž", appliedAt: now, error: "" };
   const profile = employee.uid ? await getDocument(env, `profiles/${employee.uid}`) : null;
   if (employee.uid && !profile) throw new Error("Linked account profile was not found");
-  const disabled = updated.status === "អសកម្ម";
+  const disabled = updated.status === "áž¢ážŸáž€áž˜áŸ’áž˜";
   if (employee.uid) await authAdminRequest(env, "update", {
     localId: employee.uid,
     email: updated.email || profile.email,
@@ -546,8 +547,8 @@ async function applyEmploymentActionRecord(env, record) {
     ]);
   } catch (error) {
     const committed = await getDocument(env, `employmentActions/${record.id}`).catch(() => null);
-    if (committed?.status === "បានអនុវត្ត") return { employee: updated, action: committed, recovered: true };
-    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: employee.email || profile.email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: employee.status === "អសកម្ម" }).catch(() => {});
+    if (committed?.status === "áž”áž¶áž“áž¢áž“áž»ážœážáŸ’áž") return { employee: updated, action: committed, recovered: true };
+    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: employee.email || profile.email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: employee.status === "áž¢ážŸáž€áž˜áŸ’áž˜" }).catch(() => {});
     throw error;
   }
   return { employee: updated, action: applied };
@@ -563,12 +564,12 @@ async function handleCreateEmploymentAction(user, env, body) {
   if (!validDateISO(action.effectiveDate)) throw Object.assign(new Error("Effective date is invalid"), { status: 400 });
   const decisionNo = normalizeDecisionNo(action.decisionNo);
   if (!String(action.reason || "").trim() || !decisionNo) throw Object.assign(new Error("Reason and decision number are required"), { status: 400 });
-  if (employee.status === "អសកម្ម") throw Object.assign(new Error("បុគ្គលិកនេះអសកម្មរួចហើយ"), { status: 400 });
-  if (action.type === "resignation" && employee.uid === user.uid) throw Object.assign(new Error("អ្នកមិនអាចបិទគណនីដែលកំពុងប្រើរបស់ខ្លួនបានទេ"), { status: 400 });
+  if (employee.status === "áž¢ážŸáž€áž˜áŸ’áž˜") throw Object.assign(new Error("áž”áž»áž‚áŸ’áž‚áž›áž·áž€áž“áŸáŸ‡áž¢ážŸáž€áž˜áŸ’áž˜ážšáž½áž…áž áž¾áž™"), { status: 400 });
+  if (action.type === "resignation" && employee.uid === user.uid) throw Object.assign(new Error("áž¢áŸ’áž“áž€áž˜áž·áž“áž¢áž¶áž…áž”áž·áž‘áž‚ážŽáž“áž¸ážŠáŸ‚áž›áž€áŸ†áž–áž»áž„áž”áŸ’ážšáž¾ážšáž”ážŸáŸ‹ážáŸ’áž›áž½áž“áž”áž¶áž“áž‘áŸ"), { status: 400 });
 
   const existingActions = await queryDocuments(env, "employmentActions", "employeeId", employeeId);
-  if (existingActions.some((item) => item.status === "បានកំណត់")) {
-    throw Object.assign(new Error("បុគ្គលិកនេះមានប្រតិបត្តិការថ្ងៃអនាគតរួចហើយ។ សូមលុបចោលវាមុន។"), { status: 409 });
+  if (existingActions.some((item) => item.status === "áž”áž¶áž“áž€áŸ†ážŽážáŸ‹")) {
+    throw Object.assign(new Error("áž”áž»áž‚áŸ’áž‚áž›áž·áž€áž“áŸáŸ‡áž˜áž¶áž“áž”áŸ’ážšážáž·áž”ážáŸ’ážáž·áž€áž¶ážšážáŸ’áž„áŸƒáž¢áž“áž¶áž‚ážážšáž½áž…áž áž¾áž™áŸ” ážŸáž¼áž˜áž›áž»áž”áž…áŸ„áž›ážœáž¶áž˜áž»áž“áŸ”"), { status: 409 });
   }
   const allActions = await listDocuments(env, "employmentActions");
   if (allActions.some((item) => normalizeDecisionNo(item.decisionNo) === decisionNo)) throw Object.assign(new Error("DECISION_NO_EXISTS"), { status: 409 });
@@ -585,7 +586,7 @@ async function handleCreateEmploymentAction(user, env, body) {
   if (["transfer", "transfer_and_job_change"].includes(action.type) && !newValues.branch) throw Object.assign(new Error("New branch is required"), { status: 400 });
   if (["promotion", "job_change", "transfer_and_job_change"].includes(action.type) && (!newValues.department || !newValues.role)) throw Object.assign(new Error("New department and role are required"), { status: 400 });
   const changed = Object.entries(newValues).some(([key, value]) => employmentSnapshot(employee)[key] !== value);
-  if (!changed) throw Object.assign(new Error("មិនមានព័ត៌មានថ្មីសម្រាប់អនុវត្តទេ"), { status: 400 });
+  if (!changed) throw Object.assign(new Error("áž˜áž·áž“áž˜áž¶áž“áž–áŸážáŸŒáž˜áž¶áž“ážáŸ’áž˜áž¸ážŸáž˜áŸ’ážšáž¶áž”áŸ‹áž¢áž“áž»ážœážáŸ’ážáž‘áŸ"), { status: 400 });
 
   const now = new Date().toISOString();
   const scheduled = action.effectiveDate > currentCambodiaDateISO();
@@ -602,7 +603,7 @@ async function handleCreateEmploymentAction(user, env, body) {
     note: String(action.note || "").trim(),
     oldValues: employmentSnapshot(employee),
     newValues,
-    status: scheduled ? "បានកំណត់" : "កំពុងអនុវត្ត",
+    status: scheduled ? "áž”áž¶áž“áž€áŸ†ážŽážáŸ‹" : "áž€áŸ†áž–áž»áž„áž¢áž“áž»ážœážáŸ’áž",
     createdAt: now,
     createdByUid: user.uid,
     createdByEmail: user.email,
@@ -616,7 +617,7 @@ async function handleCreateEmploymentAction(user, env, body) {
     const result = await applyEmploymentActionRecord(env, record);
     return { ok: true, scheduled: false, ...result };
   } catch (error) {
-    await putDocument(env, `employmentActions/${id}`, { ...record, status: "បរាជ័យ", error: error.message, failedAt: new Date().toISOString() }).catch(() => {});
+    await putDocument(env, `employmentActions/${id}`, { ...record, status: "áž”ážšáž¶áž‡áŸáž™", error: error.message, failedAt: new Date().toISOString() }).catch(() => {});
     throw error;
   }
 }
@@ -626,8 +627,8 @@ async function handleCancelEmploymentAction(user, env, body) {
   const actionId = String(body?.actionId || "").trim();
   const record = await getDocument(env, `employmentActions/${actionId}`);
   if (!record) throw Object.assign(new Error("Employment action was not found"), { status: 404 });
-  if (record.status !== "បានកំណត់") throw Object.assign(new Error("អាចលុបចោលបានតែប្រតិបត្តិការដែលមិនទាន់អនុវត្ត"), { status: 400 });
-  const canceled = { ...record, status: "បានលុបចោល", canceledAt: new Date().toISOString(), canceledByUid: user.uid, canceledByEmail: user.email };
+  if (record.status !== "áž”áž¶áž“áž€áŸ†ážŽážáŸ‹") throw Object.assign(new Error("áž¢áž¶áž…áž›áž»áž”áž…áŸ„áž›áž”áž¶áž“ážáŸ‚áž”áŸ’ážšážáž·áž”ážáŸ’ážáž·áž€áž¶ážšážŠáŸ‚áž›áž˜áž·áž“áž‘áž¶áž“áŸ‹áž¢áž“áž»ážœážáŸ’áž"), { status: 400 });
+  const canceled = { ...record, status: "áž”áž¶áž“áž›áž»áž”áž…áŸ„áž›", canceledAt: new Date().toISOString(), canceledByUid: user.uid, canceledByEmail: user.email };
   await putDocument(env, `employmentActions/${actionId}`, canceled);
   return { ok: true, action: canceled };
 }
@@ -635,17 +636,17 @@ async function handleCancelEmploymentAction(user, env, body) {
 async function processScheduledEmploymentActions(env) {
   const today = currentCambodiaDateISO();
   const records = (await listDocuments(env, "employmentActions"))
-    .filter((record) => record.status === "បានកំណត់" && record.effectiveDate <= today)
+    .filter((record) => record.status === "áž”áž¶áž“áž€áŸ†ážŽážáŸ‹" && record.effectiveDate <= today)
     .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
   const results = [];
   for (const record of records) {
-    const applying = { ...record, status: "កំពុងអនុវត្ត", startedAt: new Date().toISOString() };
+    const applying = { ...record, status: "áž€áŸ†áž–áž»áž„áž¢áž“áž»ážœážáŸ’áž", startedAt: new Date().toISOString() };
     await putDocument(env, `employmentActions/${record.id}`, applying);
     try {
       const result = await applyEmploymentActionRecord(env, applying);
       results.push({ id: record.id, ok: true, employeeId: result.employee.id });
     } catch (error) {
-      await putDocument(env, `employmentActions/${record.id}`, { ...applying, status: "បរាជ័យ", error: error.message, failedAt: new Date().toISOString() }).catch(() => {});
+      await putDocument(env, `employmentActions/${record.id}`, { ...applying, status: "áž”ážšáž¶áž‡áŸáž™", error: error.message, failedAt: new Date().toISOString() }).catch(() => {});
       results.push({ id: record.id, ok: false, error: error.message });
     }
   }
@@ -653,7 +654,7 @@ async function processScheduledEmploymentActions(env) {
 }
 
 function escapeHtml(value) {
-  return String(value ?? "—").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(value ?? "â€”").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 async function sendTelegram(env, chatId, text) {
@@ -685,16 +686,16 @@ function eventConfig(type) {
 function eventMessage(type, row) {
   if (type === "check_in") {
     const late = Number(row.lateMinutes || 0);
-    return `${late > 0 ? "🟠" : "🟢"} <b>Check-in</b>\n👤 ${escapeHtml(row.name)} (${escapeHtml(row.id)})\n🏢 ${escapeHtml(row.branch)}\n🕒 ${escapeHtml(row.checkIn)}${late > 0 ? `\n⏰ មកយឺត ${late} នាទី` : ""}`;
+    return `${late > 0 ? "ðŸŸ " : "ðŸŸ¢"} <b>Check-in</b>\nðŸ‘¤ ${escapeHtml(row.name)} (${escapeHtml(row.id)})\nðŸ¢ ${escapeHtml(row.branch)}\nðŸ•’ ${escapeHtml(row.checkIn)}${late > 0 ? `\nâ° áž˜áž€áž™ážºáž ${late} áž“áž¶áž‘áž¸` : ""}`;
   }
   if (type === "check_out") {
-    return `🔵 <b>Check-out</b>\n👤 ${escapeHtml(row.name)} (${escapeHtml(row.id)})\n🏢 ${escapeHtml(row.branch)}\n🕒 ${escapeHtml(row.checkOut)}\n⏱ ${escapeHtml(row.hours || "—")}`;
+    return `ðŸ”µ <b>Check-out</b>\nðŸ‘¤ ${escapeHtml(row.name)} (${escapeHtml(row.id)})\nðŸ¢ ${escapeHtml(row.branch)}\nðŸ•’ ${escapeHtml(row.checkOut)}\nâ± ${escapeHtml(row.hours || "â€”")}`;
   }
   if (type === "leave_request") {
-    return `📝 <b>សំណើសុំច្បាប់ថ្មី</b>\n👤 ${escapeHtml(row.name)} (${escapeHtml(row.employeeId || row.empId)})\n🏢 ${escapeHtml(row.branch)}\n📅 ${escapeHtml(row.startDate)} — ${escapeHtml(row.endDate)} (${escapeHtml(row.days)} ថ្ងៃ)\n📌 ${escapeHtml(row.leaveType)}\n💬 ${escapeHtml(row.reason)}`;
+    return `ðŸ“ <b>ážŸáŸ†ážŽáž¾ážŸáž»áŸ†áž…áŸ’áž”áž¶áž”áŸ‹ážáŸ’áž˜áž¸</b>\nðŸ‘¤ ${escapeHtml(row.name)} (${escapeHtml(row.employeeId || row.empId)})\nðŸ¢ ${escapeHtml(row.branch)}\nðŸ“… ${escapeHtml(row.startDate)} â€” ${escapeHtml(row.endDate)} (${escapeHtml(row.days)} ážáŸ’áž„áŸƒ)\nðŸ“Œ ${escapeHtml(row.leaveType)}\nðŸ’¬ ${escapeHtml(row.reason)}`;
   }
-  const approved = row.status === "បានអនុម័ត";
-  return `${approved ? "✅" : "❌"} <b>${escapeHtml(row.status)}</b>\n👤 ${escapeHtml(row.name)} (${escapeHtml(row.employeeId || row.empId)})\n📅 ${escapeHtml(row.startDate)} — ${escapeHtml(row.endDate)} (${escapeHtml(row.days)} ថ្ងៃ)\n📌 ${escapeHtml(row.leaveType)}`;
+  const approved = row.status === "áž”áž¶áž“áž¢áž“áž»áž˜áŸáž";
+  return `${approved ? "âœ…" : "âŒ"} <b>${escapeHtml(row.status)}</b>\nðŸ‘¤ ${escapeHtml(row.name)} (${escapeHtml(row.employeeId || row.empId)})\nðŸ“… ${escapeHtml(row.startDate)} â€” ${escapeHtml(row.endDate)} (${escapeHtml(row.days)} ážáŸ’áž„áŸƒ)\nðŸ“Œ ${escapeHtml(row.leaveType)}`;
 }
 
 async function loadTelegramSettings(env) {
@@ -710,10 +711,10 @@ async function handleTest(user, env) {
   const settings = await loadTelegramSettings(env);
   if (!settings.chatId) throw Object.assign(new Error("Telegram Chat ID is not configured"), { status: 400 });
   const senderEmail = String(user.email || "").replace(/@borribo\.com$/i, "@borribo.com.kh");
-  const message = `✅ <b>Borribo HRMS</b>\nTelegram Bot ភ្ជាប់បានជោគជ័យ\nផ្ញើដោយ: ${escapeHtml(senderEmail)}`;
+  const message = `âœ… <b>Borribo HRMS</b>\nTelegram Bot áž—áŸ’áž‡áž¶áž”áŸ‹áž”áž¶áž“áž‡áŸ„áž‚áž‡áŸáž™\náž•áŸ’áž‰áž¾ážŠáŸ„áž™: ${escapeHtml(senderEmail)}`;
   const sent = await sendTelegram(env, settings.chatId, message);
   const id = `TG-${Date.now()}`;
-  await logTelegramEvent(env, id, { chatId: settings.chatId, type: "test", message: message.replace(/<[^>]+>/g, ""), status: "បានផ្ញើ", telegramMessageId: sent.message_id, actorUid: user.uid });
+  await logTelegramEvent(env, id, { chatId: settings.chatId, type: "test", message: message.replace(/<[^>]+>/g, ""), status: "áž”áž¶áž“áž•áŸ’áž‰áž¾", telegramMessageId: sent.message_id, actorUid: user.uid });
   return { ok: true, messageId: sent.message_id };
 }
 
@@ -739,10 +740,10 @@ async function handleEvent(user, env, body) {
   try {
     const sent = await sendTelegram(env, settings.chatId, text);
     await putDocument(env, `telegramEvents/${id}`, { id, type: body.type, recordId: body.recordId, status: "sent", sentAt: new Date().toISOString(), telegramMessageId: sent.message_id });
-    await logTelegramEvent(env, id, { chatId: settings.chatId, type: body.type, message: text.replace(/<[^>]+>/g, ""), status: "បានផ្ញើ", telegramMessageId: sent.message_id, actorUid: user.uid, recordId: body.recordId });
+    await logTelegramEvent(env, id, { chatId: settings.chatId, type: body.type, message: text.replace(/<[^>]+>/g, ""), status: "áž”áž¶áž“áž•áŸ’áž‰áž¾", telegramMessageId: sent.message_id, actorUid: user.uid, recordId: body.recordId });
     return { ok: true, messageId: sent.message_id };
   } catch (error) {
-    await logTelegramEvent(env, id, { chatId: settings.chatId, type: body.type, message: text.replace(/<[^>]+>/g, ""), status: "ផ្ញើបរាជ័យ", error: error.message, actorUid: user.uid, recordId: body.recordId });
+    await logTelegramEvent(env, id, { chatId: settings.chatId, type: body.type, message: text.replace(/<[^>]+>/g, ""), status: "áž•áŸ’áž‰áž¾áž”ážšáž¶áž‡áŸáž™", error: error.message, actorUid: user.uid, recordId: body.recordId });
     throw error;
   }
 }
@@ -764,17 +765,17 @@ async function sendDailySummary(env, force = false) {
   const id = await hashKey(`daily-summary:${dateISO}`);
   if (await getDocument(env, `telegramEvents/${id}`)) return { ok: true, skipped: true, reason: "duplicate" };
   const [employees, attendance, approvedLeaves] = await Promise.all([
-    listDocuments(env, "employees"), queryDocuments(env, "attendanceToday", "dateISO", dateISO), queryDocuments(env, "leaveRequests", "status", "បានអនុម័ត"),
+    listDocuments(env, "employees"), queryDocuments(env, "attendanceToday", "dateISO", dateISO), queryDocuments(env, "leaveRequests", "status", "áž”áž¶áž“áž¢áž“áž»áž˜áŸáž"),
   ]);
-  const presentIds = new Set(attendance.filter((row) => row.checkIn && row.checkIn !== "—").map((row) => row.id));
+  const presentIds = new Set(attendance.filter((row) => row.checkIn && row.checkIn !== "â€”").map((row) => row.id));
   const onLeaveIds = new Set(approvedLeaves.filter((row) => row.startDate <= dateISO && row.endDate >= dateISO).map((row) => row.employeeId || row.empId));
-  const late = attendance.filter((row) => Number(row.lateMinutes || 0) > 0 || row.status === "យឺត").length;
+  const late = attendance.filter((row) => Number(row.lateMinutes || 0) > 0 || row.status === "áž™ážºáž").length;
   const present = presentIds.size;
   const absent = employees.filter((row) => !presentIds.has(row.id) && !onLeaveIds.has(row.id)).length;
-  const message = `📊 <b>របាយការណ៍វត្តមានប្រចាំថ្ងៃ</b>\n📅 ${dateISO}\n\n👥 បុគ្គលិកសរុប: ${employees.length}\n🟢 មានវត្តមាន: ${present}\n🟠 មកយឺត: ${late}\n🏖 សុំច្បាប់: ${onLeaveIds.size}\n🔴 អវត្តមាន: ${absent}`;
+  const message = `ðŸ“Š <b>ážšáž”áž¶áž™áž€áž¶ážšážŽáŸážœážáŸ’ážáž˜áž¶áž“áž”áŸ’ážšáž…áž¶áŸ†ážáŸ’áž„áŸƒ</b>\nðŸ“… ${dateISO}\n\nðŸ‘¥ áž”áž»áž‚áŸ’áž‚áž›áž·áž€ážŸážšáž»áž”: ${employees.length}\nðŸŸ¢ áž˜áž¶áž“ážœážáŸ’ážáž˜áž¶áž“: ${present}\nðŸŸ  áž˜áž€áž™ážºáž: ${late}\nðŸ– ážŸáž»áŸ†áž…áŸ’áž”áž¶áž”áŸ‹: ${onLeaveIds.size}\nðŸ”´ áž¢ážœážáŸ’ážáž˜áž¶áž“: ${absent}`;
   const sent = await sendTelegram(env, settings.chatId, message);
   await putDocument(env, `telegramEvents/${id}`, { id, type: "daily_summary", dateISO, status: "sent", sentAt: new Date().toISOString(), telegramMessageId: sent.message_id });
-  await logTelegramEvent(env, id, { chatId: settings.chatId, type: "daily_summary", message: message.replace(/<[^>]+>/g, ""), status: "បានផ្ញើ", telegramMessageId: sent.message_id });
+  await logTelegramEvent(env, id, { chatId: settings.chatId, type: "daily_summary", message: message.replace(/<[^>]+>/g, ""), status: "áž”áž¶áž“áž•áŸ’áž‰áž¾", telegramMessageId: sent.message_id });
   return { ok: true, messageId: sent.message_id };
 }
 

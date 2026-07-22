@@ -83,7 +83,8 @@ export default function EmploymentActionModal({ employee, branches = [], departm
       onSaved?.(result);
       onClose();
     } catch (submitError) {
-      setError(submitError?.message || "មិនអាចរក្សាទុកប្រតិបត្តិការបុគ្គលិកបានទេ");
+      const message = String(submitError?.message || "");
+      setError(/DECISION_NO_EXISTS/i.test(message) ? "លេខលិខិតសម្រេចនេះបានប្រើរួចហើយ" : (message || "មិនអាចរក្សាទុកប្រតិបត្តិការបុគ្គលិកបានទេ"));
     } finally { setSaving(false); }
   };
 

@@ -1,14 +1,22 @@
-import React, { useState } from "react";
-import { Search, ChevronDown, UserPlus, X, Pencil, Eye } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Search, ChevronDown, UserPlus, Archive, Pencil, Eye } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { statusStyle } from "../data/mockData";
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
+import { getEmployeeBackendStatus } from "../services/employees";
 
 export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick, onDeleteEmployee, employees, query, setQuery }) {
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
   const [deleteError, setDeleteError] = useState("");
   const [deletingId, setDeletingId] = useState("");
+  const [backendError, setBackendError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    getEmployeeBackendStatus().then((result) => { if (active) setBackendError(result.ok ? "" : result.error); });
+    return () => { active = false; };
+  }, []);
 
   const branches = ["ទាំងអស់", ...Array.from(new Set(employees.map((e) => e.branch)))];
 
@@ -22,8 +30,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
   const { page, setPage, totalPages, totalItems, pageSize, pageItems: paged } = usePagination(filtered);
 
   const handleDelete = async (emp) => {
-    const action = emp.uid ? "បិទ Login Account និងដកចេញពីបញ្ជី" : "លុបចេញពីបញ្ជី";
-    if (!window.confirm(`តើអ្នកចង់${action}សម្រាប់ "${emp.name}" មែនទេ?`)) return;
+    if (!window.confirm(`តើអ្នកចង់ប្តូរ "${emp.name}" ទៅអសកម្ម និងរក្សាទុកទិន្នន័យចាស់មែនទេ?`)) return;
     setDeletingId(emp.id); setDeleteError("");
     try { await onDeleteEmployee(emp); }
     catch (error) { setDeleteError(error?.message || "មិនអាចលុបបុគ្គលិកបានទេ"); }
@@ -50,6 +57,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
       </div>
 
       {deleteError && <div className="text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-4 py-3 mb-5">{deleteError}</div>}
+      {backendError && <div className="text-sm text-[#9A5B13] bg-[#FFF7ED] rounded-xl px-4 py-3 mb-5">Employee Worker មិនទាន់រួចរាល់៖ {backendError}។ មុខងារ Add/Edit/Account/Transfer នឹងត្រូវបានរារាំងរហូតដល់កំណត់រួច។</div>}
 
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-[#EBEDF3] p-3 sm:p-4 mb-5 flex flex-col sm:flex-row gap-3">
@@ -81,14 +89,16 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
       {/* Desktop table */}
       <div className="hidden md:block bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
         <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px] table-fixed text-sm">
+        <table className="w-full min-w-[1280px] table-fixed text-sm">
           <colgroup>
-            <col className="w-[27%]" />
             <col className="w-[18%]" />
-            <col className="w-[18%]" />
-            <col className="w-[16%]" />
+            <col className="w-[14%]" />
+            <col className="w-[13%]" />
             <col className="w-[12%]" />
             <col className="w-[9%]" />
+            <col className="w-[11%]" />
+            <col className="w-[10%]" />
+            <col className="w-[13%]" />
           </colgroup>
           <thead>
             <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
@@ -97,7 +107,9 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
               <th className="text-left font-medium px-5 py-3 whitespace-nowrap">សាខា</th>
               <th className="text-left font-medium px-5 py-3 whitespace-nowrap">លេខទូរស័ព្ទ</th>
               <th className="text-left font-medium px-5 py-3 whitespace-nowrap">ស្ថានភាព</th>
-              <th className="text-right font-medium px-5 py-3"></th>
+              <th className="text-center font-medium px-2 py-3">មើលព័ត៌មានលម្អិត</th>
+              <th className="text-center font-medium px-2 py-3">កែសម្រួលព័ត៌មាន</th>
+              <th className="text-center font-medium px-2 py-3">ដាក់បុគ្គលិកជាអសកម្ម</th>
             </tr>
           </thead>
           <tbody>
@@ -125,31 +137,35 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
                     {e.status}
                   </span>
                 </td>
-                <td className="px-5 py-3.5 text-left">
-                  <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => onViewClick(e)} aria-label={`មើល ${e.name}`} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"><Eye size={15} /></button>
-                    <button
-                      onClick={() => onEditClick(e)}
-                      aria-label={`កែសម្រួល ${e.name}`}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"
-                    >
-                      <Pencil size={15} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(e)}
-                      disabled={deletingId === e.id}
-                      aria-label={`លុប ${e.name}`}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
+                <td className="px-2 py-3.5 text-center">
+                  <button onClick={() => onViewClick(e)} title="មើលព័ត៌មានលម្អិត" aria-label={`មើលព័ត៌មានលម្អិតរបស់ ${e.name}`} className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"><Eye size={15} /></button>
+                </td>
+                <td className="px-2 py-3.5 text-center">
+                  <button
+                    onClick={() => onEditClick(e)}
+                    title="កែសម្រួលព័ត៌មាន"
+                    aria-label={`កែសម្រួលព័ត៌មានរបស់ ${e.name}`}
+                    className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                </td>
+                <td className="px-2 py-3.5 text-center">
+                  <button
+                    onClick={() => handleDelete(e)}
+                    disabled={deletingId === e.id}
+                    title="ដាក់បុគ្គលិកជាអសកម្ម"
+                    aria-label={`ដាក់ ${e.name} ជាអសកម្ម`}
+                    className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"
+                  >
+                    <Archive size={15} />
+                  </button>
                 </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center text-[#8A8FA3] text-sm py-10">
+                <td colSpan={8} className="text-center text-[#8A8FA3] text-sm py-10">
                   រកមិនឃើញបុគ្គលិកដែលត្រូវនឹងលក្ខខណ្ឌស្វែងរក
                 </td>
               </tr>
@@ -193,7 +209,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
                 disabled={deletingId === e.id}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#D9614F]"
               >
-                <X size={13} /> លុប
+                <Archive size={13} /> អសកម្ម
               </button>
             </div>
           </div>

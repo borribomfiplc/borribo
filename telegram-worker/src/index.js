@@ -162,9 +162,35 @@ async function deleteDocument(env, path) {
   return firestoreRequest(env, `/${path}`, { method: "DELETE" });
 }
 
+function documentName(env, path) {
+  return `${firestoreBase(env)}/${path}`;
+}
+
+async function commitWrites(env, writes) {
+  if (!writes.length) return null;
+  return firestoreRequest(env, ":commit", {
+    method: "POST",
+    body: JSON.stringify({ writes: writes.map((write) => {
+      if (write.delete) return { delete: documentName(env, write.delete) };
+      return {
+        update: { name: documentName(env, write.path), fields: encodeFields(write.data) },
+        ...(write.exists === undefined ? {} : { currentDocument: { exists: write.exists } }),
+      };
+    }) }),
+  });
+}
+
 async function listDocuments(env, collectionId, pageSize = 500) {
-  const result = await firestoreRequest(env, `/${collectionId}?pageSize=${pageSize}`);
-  return (result?.documents || []).map((doc) => ({ id: doc.name.split("/").pop(), ...decodeFields(doc.fields) }));
+  const documents = [];
+  let pageToken = "";
+  do {
+    const query = new URLSearchParams({ pageSize: String(pageSize) });
+    if (pageToken) query.set("pageToken", pageToken);
+    const result = await firestoreRequest(env, `/${collectionId}?${query}`);
+    documents.push(...(result?.documents || []).map((item) => ({ id: item.name.split("/").pop(), ...decodeFields(item.fields) })));
+    pageToken = result?.nextPageToken || "";
+  } while (pageToken);
+  return documents;
 }
 
 async function queryDocuments(env, collectionId, field, value) {
@@ -173,7 +199,6 @@ async function queryDocuments(env, collectionId, field, value) {
     body: JSON.stringify({ structuredQuery: {
       from: [{ collectionId }],
       where: { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: encodeValue(value) } },
-      limit: 500,
     } }),
   });
   return (result || []).filter((item) => item.document).map((item) => ({
@@ -222,90 +247,217 @@ async function authAdminRequest(env, action, body) {
 
 function validUsername(value) { return /^[a-z0-9][a-z0-9._-]{1,31}$/.test(value); }
 
+function normalizeEmail(value) { return String(value || "").trim().toLowerCase(); }
+function normalizePhone(value) { return String(value || "").replace(/[^0-9+]/g, ""); }
+function normalizeDecisionNo(value) { return String(value || "").trim().toUpperCase().replace(/\s+/g, " "); }
+function uniquePath(kind, value) { return `employeeUnique/${kind}_${base64Url(new TextEncoder().encode(value))}`; }
+
+async function assertEmployeeUnique(env, employee, excludeId = "") {
+  const email = normalizeEmail(employee.email);
+  const phone = normalizePhone(employee.phone);
+  const allEmployees = await listDocuments(env, "employees");
+  if (email && allEmployees.some((row) => row.id !== excludeId && normalizeEmail(row.email) === email)) throw Object.assign(new Error("EMAIL_EXISTS"), { status: 409 });
+  if (phone && allEmployees.some((row) => row.id !== excludeId && normalizePhone(row.phone) === phone)) throw Object.assign(new Error("PHONE_EXISTS"), { status: 409 });
+  for (const [field, value, label] of [["email", email, "EMAIL_EXISTS"], ["phoneNormalized", phone, "PHONE_EXISTS"]]) {
+    if (!value) continue;
+    const reservation = await getDocument(env, uniquePath(field, value));
+    if (reservation && reservation.employeeId !== excludeId) throw Object.assign(new Error(label), { status: 409 });
+  }
+  return { email, phone };
+}
+
+async function uniqueReservationWrites(env, nextEmployee, previousEmployee = null) {
+  const writes = [];
+  const next = { email: normalizeEmail(nextEmployee.email), phoneNormalized: normalizePhone(nextEmployee.phone) };
+  const previous = previousEmployee ? { email: normalizeEmail(previousEmployee.email), phoneNormalized: normalizePhone(previousEmployee.phone) } : {};
+  for (const field of ["email", "phoneNormalized"]) {
+    if (previous[field] && previous[field] !== next[field]) {
+      const oldPath = uniquePath(field, previous[field]);
+      const oldRecord = await getDocument(env, oldPath);
+      if (oldRecord?.employeeId === nextEmployee.id) writes.push({ delete: oldPath });
+    }
+    if (next[field]) {
+      const path = uniquePath(field, next[field]);
+      const current = await getDocument(env, path);
+      writes.push({ path, data: { employeeId: nextEmployee.id, field, value: next[field], updatedAt: new Date().toISOString() }, ...(current ? {} : { exists: false }) });
+    }
+  }
+  return writes;
+}
+
 async function handleCreateEmployee(user, env, body) {
   if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
   const employee = body?.employee || {};
   const account = body?.account || {};
+  const accountEnabled = account.enabled === true;
   const username = String(account.username || "").trim().toLowerCase();
-  const email = String(account.email || employee.email || "").trim().toLowerCase();
+  const email = normalizeEmail(account.email || employee.email);
   const role = String(account.role || "employee");
   if (!employee.id || !employee.name || !employee.branch || !employee.dept || !employee.role) throw Object.assign(new Error("Employee data is incomplete"), { status: 400 });
-  if (!validUsername(username)) throw Object.assign(new Error("Invalid username"), { status: 400 });
-  if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
-  if (String(account.password || "").length < 8) throw Object.assign(new Error("Temporary password must have at least 8 characters"), { status: 400 });
-  if (!["employee", "hr", "admin"].includes(role)) throw Object.assign(new Error("Invalid role"), { status: 400 });
-  if (user.role !== "admin" && role !== "employee") throw Object.assign(new Error("Only Admin can create HR or Admin accounts"), { status: 403 });
-  if (await getDocument(env, `usernames/${username}`)) throw Object.assign(new Error("USERNAME_EXISTS"), { status: 409 });
+  if (await getDocument(env, `employees/${employee.id}`)) throw Object.assign(new Error("EMPLOYEE_ID_EXISTS"), { status: 409 });
+  if (accountEnabled) {
+    if (!validUsername(username)) throw Object.assign(new Error("Invalid username"), { status: 400 });
+    if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
+    if (String(account.password || "").length < 8) throw Object.assign(new Error("Temporary password must have at least 8 characters"), { status: 400 });
+    if (!["employee", "hr", "admin"].includes(role)) throw Object.assign(new Error("Invalid role"), { status: 400 });
+    if (user.role !== "admin" && role !== "employee") throw Object.assign(new Error("Only Admin can create HR or Admin accounts"), { status: 403 });
+    if (await getDocument(env, `usernames/${username}`)) throw Object.assign(new Error("USERNAME_EXISTS"), { status: 409 });
+  }
+
+  const unique = await assertEmployeeUnique(env, { ...employee, email }, "");
+  const now = new Date().toISOString();
+  const baseEmployee = { ...employee, email: unique.email, phoneNormalized: unique.phone, status: employee.status || "សកម្ម", updatedAt: now };
+  const reservationWrites = await uniqueReservationWrites(env, baseEmployee);
+
+  if (!accountEnabled) {
+    await commitWrites(env, [{ path: `employees/${employee.id}`, data: baseEmployee, exists: false }, ...reservationWrites]);
+    return { ok: true, employee: baseEmployee };
+  }
 
   let uid = "";
   try {
     const created = await authAdminRequest(env, "create", { email, password: account.password, displayName: employee.name, emailVerified: false, disabled: false });
     uid = created.localId;
     await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId: employee.id }), disableUser: false });
-    const now = new Date().toISOString();
-    const employeeRecord = { ...employee, uid, email, username, accountRole: role, status: employee.status || "សកម្ម", updatedAt: now };
-    await Promise.all([
-      putDocument(env, `employees/${employee.id}`, employeeRecord),
-      putDocument(env, `profiles/${uid}`, { uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }),
-      putDocument(env, `usernames/${username}`, { username, email, uid, active: true }),
-      putDocument(env, `passwordResetEmails/${email}`, { email, uid, active: true }),
-      putDocument(env, `users/${uid}`, { id: uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }),
+    const employeeRecord = { ...baseEmployee, uid, email, username, accountRole: role };
+    await commitWrites(env, [
+      { path: `employees/${employee.id}`, data: employeeRecord, exists: false },
+      { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
+      { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
+      { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
+      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }, exists: false },
+      ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
   } catch (error) {
-    if (uid) await authAdminRequest(env, "delete", { localId: uid }).catch(() => {});
+    if (uid) {
+      const committed = await getDocument(env, `employees/${employee.id}`).catch(() => null);
+      if (committed?.uid === uid) return { ok: true, employee: committed, uid, recovered: true };
+      await authAdminRequest(env, "delete", { localId: uid }).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function handleProvisionEmployeeAccount(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const employeeId = String(body?.employeeId || "").trim();
+  const account = body?.account || {};
+  const employee = await getDocument(env, `employees/${employeeId}`);
+  if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
+  if (employee.uid) throw Object.assign(new Error("បុគ្គលិកនេះមាន Login Account រួចហើយ"), { status: 409 });
+  if (employee.status === "អសកម្ម") throw Object.assign(new Error("មិនអាចបង្កើត Account សម្រាប់បុគ្គលិកអសកម្មបានទេ"), { status: 400 });
+  const username = String(account.username || "").trim().toLowerCase();
+  const email = normalizeEmail(account.email || `${username}@borribo.com.kh`);
+  const role = String(account.role || "employee");
+  if (!validUsername(username)) throw Object.assign(new Error("Invalid username"), { status: 400 });
+  if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
+  if (String(account.password || "").length < 8) throw Object.assign(new Error("Temporary password must have at least 8 characters"), { status: 400 });
+  if (!["employee", "hr", "admin"].includes(role)) throw Object.assign(new Error("Invalid role"), { status: 400 });
+  if (user.role !== "admin" && role !== "employee") throw Object.assign(new Error("Only Admin can create HR or Admin accounts"), { status: 403 });
+  if (await getDocument(env, `usernames/${username}`)) throw Object.assign(new Error("USERNAME_EXISTS"), { status: 409 });
+  await assertEmployeeUnique(env, { ...employee, email }, employee.id);
+
+  let uid = "";
+  try {
+    const created = await authAdminRequest(env, "create", { email, password: account.password, displayName: employee.name, emailVerified: false, disabled: false });
+    uid = created.localId;
+    await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId }), disableUser: false });
+    const now = new Date().toISOString();
+    const employeeRecord = { ...employee, uid, email, username, accountRole: role, updatedAt: now };
+    const reservationWrites = await uniqueReservationWrites(env, employeeRecord, employee);
+    await commitWrites(env, [
+      { path: `employees/${employeeId}`, data: employeeRecord },
+      { path: `profiles/${uid}`, data: { uid, employeeId, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
+      { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
+      { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
+      { path: `users/${uid}`, data: { id: uid, employeeId, name: employee.name, email, username, role, branch: employee.branch, status: employee.status, active: true, createdAt: now }, exists: false },
+      ...reservationWrites,
+    ]);
+    return { ok: true, employee: employeeRecord, uid };
+  } catch (error) {
+    if (uid) {
+      const committed = await getDocument(env, `employees/${employeeId}`).catch(() => null);
+      if (committed?.uid === uid) return { ok: true, employee: committed, uid, recovered: true };
+      await authAdminRequest(env, "delete", { localId: uid }).catch(() => {});
+    }
     throw error;
   }
 }
 
 async function handleDeactivateEmployee(user, env, body) {
   if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
-  const uid = String(body?.uid || "");
   const employeeId = String(body?.employeeId || "");
-  if (!uid || !employeeId) throw Object.assign(new Error("Employee account identifiers are missing"), { status: 400 });
-  const profile = await getDocument(env, `profiles/${uid}`);
-  if (!profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
-  if (user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can deactivate HR or Admin accounts"), { status: 403 });
+  if (!employeeId) throw Object.assign(new Error("Employee identifier is missing"), { status: 400 });
+  const employee = await getDocument(env, `employees/${employeeId}`);
+  if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
+  if (employee.status === "អសកម្ម") return { ok: true, employee, alreadyInactive: true };
+  const pendingActions = await queryDocuments(env, "employmentActions", "employeeId", employeeId);
+  if (pendingActions.some((item) => item.status === "បានកំណត់")) {
+    throw Object.assign(new Error("បុគ្គលិកនេះមានប្រតិបត្តិការថ្ងៃអនាគត។ សូមលុបចោលវាមុននឹងដាក់ជាអសកម្ម។"), { status: 409 });
+  }
+  const uid = String(employee.uid || body?.uid || "");
+  const profile = uid ? await getDocument(env, `profiles/${uid}`) : null;
+  if (uid && !profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
+  if (profile && user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can deactivate HR or Admin accounts"), { status: 403 });
   if (uid === user.uid) throw Object.assign(new Error("You cannot deactivate your own account"), { status: 400 });
-  await authAdminRequest(env, "update", { localId: uid, disableUser: true });
+  if (uid) await authAdminRequest(env, "update", { localId: uid, disableUser: true });
   const now = new Date().toISOString();
-  await Promise.all([
-    putDocument(env, `profiles/${uid}`, { ...profile, active: false, status: "អសកម្ម", updatedAt: now }),
-    profile.username ? putDocument(env, `usernames/${profile.username}`, { username: profile.username, email: profile.email, uid, active: false }) : Promise.resolve(),
-    profile.email ? putDocument(env, `passwordResetEmails/${profile.email}`, { email: profile.email, uid, active: false }) : Promise.resolve(),
-    putDocument(env, `users/${uid}`, { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, status: "អសកម្ម", active: false, updatedAt: now }),
-  ]);
-  await deleteDocument(env, `employees/${employeeId}`);
-  return { ok: true, deactivated: true };
+  const employeeRecord = { ...employee, status: "អសកម្ម", archivedAt: now, archivedByUid: user.uid, archivedByEmail: user.email, updatedAt: now };
+  try {
+    await commitWrites(env, [
+      { path: `employees/${employeeId}`, data: employeeRecord },
+      ...(profile ? [
+        { path: `profiles/${uid}`, data: { ...profile, active: false, status: "អសកម្ម", updatedAt: now } },
+        ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: profile.email, uid, active: false } }] : []),
+        ...(profile.email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid, active: false } }] : []),
+        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, status: "អសកម្ម", active: false, updatedAt: now } },
+      ] : []),
+    ]);
+  } catch (error) {
+    const committed = await getDocument(env, `employees/${employeeId}`).catch(() => null);
+    if (committed?.updatedAt === now && committed.status === "អសកម្ម") return { ok: true, deactivated: true, employee: committed, preservedHistory: true, recovered: true };
+    if (uid) await authAdminRequest(env, "update", { localId: uid, disableUser: false }).catch(() => {});
+    throw error;
+  }
+  return { ok: true, deactivated: true, employee: employeeRecord, preservedHistory: true };
 }
 
 async function handleUpdateEmployee(user, env, body) {
   if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
   const employee = body?.employee || {};
-  if (!employee.id || !employee.uid) throw Object.assign(new Error("Employee account identifiers are missing"), { status: 400 });
-  const profile = await getDocument(env, `profiles/${employee.uid}`);
-  if (!profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
-  if (user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can edit HR or Admin accounts"), { status: 403 });
-  const email = String(employee.email || profile.email || "").trim().toLowerCase();
-  if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
+  if (!employee.id) throw Object.assign(new Error("Employee identifier is missing"), { status: 400 });
+  const previous = await getDocument(env, `employees/${employee.id}`);
+  if (!previous) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
+  const profile = employee.uid ? await getDocument(env, `profiles/${employee.uid}`) : null;
+  if (employee.uid && !profile) throw Object.assign(new Error("Linked account profile was not found"), { status: 404 });
+  if (profile && user.role !== "admin" && profile.role !== "employee") throw Object.assign(new Error("Only Admin can edit HR or Admin accounts"), { status: 403 });
+  const email = normalizeEmail(employee.email || profile?.email);
+  if (profile && !email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
+  const unique = await assertEmployeeUnique(env, { ...employee, email }, employee.id);
   const disabled = employee.status === "អសកម្ម";
-  await authAdminRequest(env, "update", {
-    localId: employee.uid,
-    email,
-    displayName: employee.name,
-    customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }),
-    disableUser: disabled,
-  });
+  if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: disabled });
   const now = new Date().toISOString();
-  const employeeRecord = { ...employee, email, username: profile.username || employee.username || "", accountRole: profile.role, updatedAt: now };
-  await Promise.all([
-    putDocument(env, `employees/${employee.id}`, employeeRecord),
-    putDocument(env, `profiles/${employee.uid}`, { ...profile, name: employee.name, email, branch: employee.branch, active: !disabled, status: employee.status, updatedAt: now }),
-    profile.username ? putDocument(env, `usernames/${profile.username}`, { username: profile.username, email, uid: employee.uid, active: !disabled }) : Promise.resolve(),
-    profile.email && profile.email !== email ? putDocument(env, `passwordResetEmails/${profile.email}`, { email: profile.email, uid: employee.uid, active: false }) : Promise.resolve(),
-    putDocument(env, `passwordResetEmails/${email}`, { email, uid: employee.uid, active: !disabled }),
-    putDocument(env, `users/${employee.uid}`, { id: employee.uid, employeeId: employee.id, name: employee.name, email, username: profile.username, role: profile.role, branch: employee.branch, status: employee.status, active: !disabled, updatedAt: now }),
-  ]);
+  const employeeRecord = { ...employee, email: unique.email, phoneNormalized: unique.phone, ...(profile ? { username: profile.username || employee.username || "", accountRole: profile.role } : {}), updatedAt: now };
+  const reservationWrites = await uniqueReservationWrites(env, employeeRecord, previous);
+  try {
+    await commitWrites(env, [
+      { path: `employees/${employee.id}`, data: employeeRecord },
+      ...(profile ? [
+        { path: `profiles/${employee.uid}`, data: { ...profile, name: employee.name, email, branch: employee.branch, active: !disabled, status: employee.status, updatedAt: now } },
+        ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email, uid: employee.uid, active: !disabled } }] : []),
+        ...(profile.email && profile.email !== email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid: employee.uid, active: false } }] : []),
+        { path: `passwordResetEmails/${email}`, data: { email, uid: employee.uid, active: !disabled } },
+        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: employee.id, name: employee.name, email, username: profile.username, role: profile.role, branch: employee.branch, status: employee.status, active: !disabled, updatedAt: now } },
+      ] : []),
+      ...reservationWrites,
+    ]);
+  } catch (error) {
+    const committed = await getDocument(env, `employees/${employee.id}`).catch(() => null);
+    if (committed?.updatedAt === now) return { ok: true, employee: committed, recovered: true };
+    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: profile.email, displayName: previous.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: previous.id }), disableUser: previous.status === "អសកម្ម" }).catch(() => {});
+    throw error;
+  }
   return { ok: true, employee: employeeRecord };
 }
 
@@ -359,30 +511,34 @@ async function applyEmploymentActionRecord(env, record) {
     updatedAt: now,
   };
 
-  if (employee.uid) {
-    const profile = await getDocument(env, `profiles/${employee.uid}`);
-    if (!profile) throw new Error("Linked account profile was not found");
-    const disabled = updated.status === "អសកម្ម";
-    await authAdminRequest(env, "update", {
-      localId: employee.uid,
-      email: updated.email || profile.email,
-      displayName: updated.name,
-      customAttributes: JSON.stringify({ role: profile.role, employeeId: updated.id }),
-      disableUser: disabled,
-    });
-    await Promise.all([
-      putDocument(env, `employees/${updated.id}`, updated),
-      putDocument(env, `profiles/${employee.uid}`, { ...profile, name: updated.name, branch: updated.branch, active: !disabled, status: updated.status, updatedAt: now }),
-      profile.username ? putDocument(env, `usernames/${profile.username}`, { username: profile.username, email: updated.email || profile.email, uid: employee.uid, active: !disabled }) : Promise.resolve(),
-      (updated.email || profile.email) ? putDocument(env, `passwordResetEmails/${updated.email || profile.email}`, { email: updated.email || profile.email, uid: employee.uid, active: !disabled }) : Promise.resolve(),
-      putDocument(env, `users/${employee.uid}`, { id: employee.uid, employeeId: updated.id, name: updated.name, email: updated.email || profile.email, username: profile.username || updated.username || "", role: profile.role, branch: updated.branch, status: updated.status, active: !disabled, updatedAt: now }),
-    ]);
-  } else {
-    await putDocument(env, `employees/${updated.id}`, updated);
-  }
-
   const applied = { ...record, oldValues, status: "បានអនុវត្ត", appliedAt: now, error: "" };
-  await putDocument(env, `employmentActions/${record.id}`, applied);
+  const profile = employee.uid ? await getDocument(env, `profiles/${employee.uid}`) : null;
+  if (employee.uid && !profile) throw new Error("Linked account profile was not found");
+  const disabled = updated.status === "អសកម្ម";
+  if (employee.uid) await authAdminRequest(env, "update", {
+    localId: employee.uid,
+    email: updated.email || profile.email,
+    displayName: updated.name,
+    customAttributes: JSON.stringify({ role: profile.role, employeeId: updated.id }),
+    disableUser: disabled,
+  });
+  try {
+    await commitWrites(env, [
+      { path: `employees/${updated.id}`, data: updated },
+      { path: `employmentActions/${record.id}`, data: applied },
+      ...(profile ? [
+        { path: `profiles/${employee.uid}`, data: { ...profile, name: updated.name, branch: updated.branch, active: !disabled, status: updated.status, updatedAt: now } },
+        ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: updated.email || profile.email, uid: employee.uid, active: !disabled } }] : []),
+        ...((updated.email || profile.email) ? [{ path: `passwordResetEmails/${updated.email || profile.email}`, data: { email: updated.email || profile.email, uid: employee.uid, active: !disabled } }] : []),
+        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: updated.id, name: updated.name, email: updated.email || profile.email, username: profile.username || updated.username || "", role: profile.role, branch: updated.branch, status: updated.status, active: !disabled, updatedAt: now } },
+      ] : []),
+    ]);
+  } catch (error) {
+    const committed = await getDocument(env, `employmentActions/${record.id}`).catch(() => null);
+    if (committed?.status === "បានអនុវត្ត") return { employee: updated, action: committed, recovered: true };
+    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: employee.email || profile.email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: employee.status === "អសកម្ម" }).catch(() => {});
+    throw error;
+  }
   return { employee: updated, action: applied };
 }
 
@@ -394,7 +550,8 @@ async function handleCreateEmploymentAction(user, env, body) {
   if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
   if (!EMPLOYMENT_ACTION_TYPES.includes(action.type)) throw Object.assign(new Error("Invalid employment action type"), { status: 400 });
   if (!validDateISO(action.effectiveDate)) throw Object.assign(new Error("Effective date is invalid"), { status: 400 });
-  if (!String(action.reason || "").trim() || !String(action.decisionNo || "").trim()) throw Object.assign(new Error("Reason and decision number are required"), { status: 400 });
+  const decisionNo = normalizeDecisionNo(action.decisionNo);
+  if (!String(action.reason || "").trim() || !decisionNo) throw Object.assign(new Error("Reason and decision number are required"), { status: 400 });
   if (employee.status === "អសកម្ម") throw Object.assign(new Error("បុគ្គលិកនេះអសកម្មរួចហើយ"), { status: 400 });
   if (action.type === "resignation" && employee.uid === user.uid) throw Object.assign(new Error("អ្នកមិនអាចបិទគណនីដែលកំពុងប្រើរបស់ខ្លួនបានទេ"), { status: 400 });
 
@@ -402,6 +559,10 @@ async function handleCreateEmploymentAction(user, env, body) {
   if (existingActions.some((item) => item.status === "បានកំណត់")) {
     throw Object.assign(new Error("បុគ្គលិកនេះមានប្រតិបត្តិការថ្ងៃអនាគតរួចហើយ។ សូមលុបចោលវាមុន។"), { status: 409 });
   }
+  const allActions = await listDocuments(env, "employmentActions");
+  if (allActions.some((item) => normalizeDecisionNo(item.decisionNo) === decisionNo)) throw Object.assign(new Error("DECISION_NO_EXISTS"), { status: 409 });
+  const decisionPath = `decisionUnique/${base64Url(new TextEncoder().encode(decisionNo))}`;
+  if (await getDocument(env, decisionPath)) throw Object.assign(new Error("DECISION_NO_EXISTS"), { status: 409 });
 
   if (employee.uid) {
     const profile = await getDocument(env, `profiles/${employee.uid}`);
@@ -424,7 +585,8 @@ async function handleCreateEmploymentAction(user, env, body) {
     employeeName: employee.name,
     type: action.type,
     effectiveDate: action.effectiveDate,
-    decisionNo: String(action.decisionNo).trim(),
+    decisionNo,
+    decisionNoNormalized: decisionNo,
     reason: String(action.reason).trim(),
     note: String(action.note || "").trim(),
     oldValues: employmentSnapshot(employee),
@@ -434,7 +596,10 @@ async function handleCreateEmploymentAction(user, env, body) {
     createdByUid: user.uid,
     createdByEmail: user.email,
   };
-  await putDocument(env, `employmentActions/${id}`, record);
+  await commitWrites(env, [
+    { path: `employmentActions/${id}`, data: record, exists: false },
+    { path: decisionPath, data: { actionId: id, decisionNo, employeeId, createdAt: now }, exists: false },
+  ]);
   if (scheduled) return { ok: true, scheduled: true, action: record };
   try {
     const result = await applyEmploymentActionRecord(env, record);
@@ -458,7 +623,7 @@ async function handleCancelEmploymentAction(user, env, body) {
 
 async function processScheduledEmploymentActions(env) {
   const today = currentCambodiaDateISO();
-  const records = (await listDocuments(env, "employmentActions", 500))
+  const records = (await listDocuments(env, "employmentActions"))
     .filter((record) => record.status === "បានកំណត់" && record.effectiveDate <= today)
     .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
   const results = [];
@@ -606,7 +771,8 @@ async function handleRequest(request, env) {
   if (request.method === "OPTIONS") return origin ? preflight(origin) : json({ error: "Origin not allowed" }, 403);
   const url = new URL(request.url);
   if (url.pathname === "/health" && request.method === "GET") {
-    return json({ ok: true, configured: Boolean(env.TELEGRAM_BOT_TOKEN && env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY && env.FIREBASE_PROJECT_ID && env.FIREBASE_WEB_API_KEY) }, 200, origin);
+    const adminConfigured = Boolean(env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY && env.FIREBASE_PROJECT_ID && env.FIREBASE_WEB_API_KEY);
+    return json({ ok: true, configured: adminConfigured, adminConfigured, telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN) }, 200, origin);
   }
   try {
     const user = await verifyFirebaseUser(request, env);
@@ -614,6 +780,7 @@ async function handleRequest(request, env) {
     if (url.pathname === "/api/telegram/test" && request.method === "POST") result = await handleTest(user, env);
     else if (url.pathname === "/api/telegram/event" && request.method === "POST") result = await handleEvent(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/create" && request.method === "POST") result = await handleCreateEmployee(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employees/provision-account" && request.method === "POST") result = await handleProvisionEmployeeAccount(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/update" && request.method === "POST") result = await handleUpdateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/deactivate" && request.method === "POST") result = await handleDeactivateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/create" && request.method === "POST") result = await handleCreateEmploymentAction(user, env, await request.json());

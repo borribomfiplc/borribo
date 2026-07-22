@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Briefcase, Camera, ChevronRight, Eye, EyeOff, Mail, MapPin, Phone, Save, Shield, User } from "lucide-react";
+import { Briefcase, BriefcaseBusiness, Camera, ChevronRight, Eye, EyeOff, Mail, MapPin, Phone, Save, Shield, User } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, SectionCard, SelectField, TextField } from "../components/shared/FormFields";
+import EmploymentActionModal from "../components/EmploymentActionModal";
 import { createEmployee, updateEmployee } from "../services/employees";
 import { imageFileToDataUrl } from "../utils/employeePhoto";
 
@@ -23,6 +24,8 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
   const [account, setAccount] = useState({ username: "", password: "", role: "employee" });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [showAction, setShowAction] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -93,9 +96,26 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
       const message = String(saveError?.message || "");
       if (/EMAIL_EXISTS/i.test(message)) setError("អ៊ីមែលនេះមាន Account រួចហើយ");
       else if (/USERNAME_EXISTS/i.test(message)) setError("Username នេះមានអ្នកប្រើរួចហើយ");
+      else if (/PHONE_EXISTS/i.test(message)) setError("លេខទូរស័ព្ទនេះមានបុគ្គលិកប្រើរួចហើយ");
+      else if (/EMPLOYEE_ID_EXISTS/i.test(message)) setError("លេខសម្គាល់បុគ្គលិកនេះមានរួចហើយ។ សូមសាកម្តងទៀត");
       else if (/permission|សិទ្ធិ/i.test(message)) setError("គណនីនេះមិនមានសិទ្ធិរក្សាទុក ឬគ្រប់គ្រង Account ទេ");
       else setError(message || "មិនអាចរក្សាទុកព័ត៌មានបុគ្គលិកបានទេ");
     } finally { setSaving(false); }
+  };
+
+  const handleActionSaved = (result) => {
+    if (result?.employee) {
+      setForm((current) => ({
+        ...current,
+        department: result.employee.dept || current.department,
+        position: result.employee.role || current.position,
+        branch: result.employee.branch || current.branch,
+        status: result.employee.status || current.status,
+      }));
+    }
+    setActionMessage(result?.scheduled
+      ? "បានកំណត់ប្រតិបត្តិការសម្រាប់ថ្ងៃអនាគត។ ប្រព័ន្ធនឹងអនុវត្តដោយស្វ័យប្រវត្តិ។"
+      : "បានអនុវត្ត និងរក្សាទុកប្រវត្តិការងារជោគជ័យ។");
   };
 
   return (
@@ -108,7 +128,8 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
           <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">{isEditing ? "កែសម្រួលព័ត៌មានបុគ្គលិក" : "បន្ថែមបុគ្គលិកថ្មី"}</h1>
           {isEditing && <p className="text-xs text-[#8A8FA3] mt-1">លេខសម្គាល់៖ {editingEmployee.id}</p>}
         </div>
-        <div className="flex gap-2.5">
+        <div className="flex flex-wrap gap-2.5">
+          {isEditing && <button type="button" onClick={() => setShowAction(true)} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-white text-sm font-semibold" style={{ background: COLORS.green }}><BriefcaseBusiness size={16} /> ប្រតិបត្តិការបុគ្គលិក</button>}
           <button onClick={onCancel} className="border border-[#EBEDF3] rounded-xl px-4 py-2.5 text-sm text-[#5B5F73]">បោះបង់</button>
           <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 text-white text-sm font-semibold rounded-xl px-4 py-2.5 disabled:opacity-60" style={{ background: COLORS.primary }}>
             <Save size={16} /> {saving ? "កំពុងរក្សាទុក..." : "រក្សាទុក"}
@@ -117,6 +138,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
       </div>
 
       {error && <div className="text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-4 py-3 mb-5">{error}</div>}
+      {actionMessage && <div className="text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-4 py-3 mb-5">{actionMessage}</div>}
       {saved && <div className="text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-4 py-3 mb-5">រក្សាទុកបានជោគជ័យ! កំពុងត្រឡប់ទៅបញ្ជី...</div>}
 
       <div className="flex flex-col gap-5">
@@ -139,7 +161,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
         </SectionCard>
 
         <SectionCard title="ព័ត៌មានការងារ" icon={Briefcase}>
-          {isEditing && <div className="md:col-span-2 rounded-xl bg-[#EEF1FB] px-4 py-3 text-xs text-[#2A3F8F]">ការប្តូរសាខា នាយកដ្ឋាន តួនាទី ឬស្ថានភាព ត្រូវធ្វើតាមប៊ូតុង <b>ប្រតិបត្តិការបុគ្គលិក</b> ក្នុងទំព័រព័ត៌មានលម្អិត ដើម្បីរក្សាប្រវត្តិ និងលិខិតសម្រេច។</div>}
+          {isEditing && <div className="md:col-span-2 rounded-xl bg-[#EEF1FB] px-4 py-3 text-xs text-[#2A3F8F]">ការប្តូរសាខា នាយកដ្ឋាន តួនាទី ឬស្ថានភាព ត្រូវធ្វើតាមប៊ូតុង <b>ប្រតិបត្តិការបុគ្គលិក</b> ខាងលើ ដើម្បីរក្សាប្រវត្តិ និងលិខិតសម្រេច។</div>}
           <div><FieldLabel required>នាយកដ្ឋាន</FieldLabel><SelectField options={departments.map((item) => item.name)} value={form.department} onChange={handleDepartment} disabled={isEditing} /></div>
           <div><FieldLabel required>តួនាទី</FieldLabel><SelectField options={availableRoles.map((item) => item.name)} value={form.position} onChange={update("position")} disabled={isEditing} /></div>
           <div><FieldLabel required>សាខា</FieldLabel><SelectField options={branches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={isEditing} /></div>
@@ -159,6 +181,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
           </>}
         </SectionCard>}
       </div>
+      {showAction && <EmploymentActionModal employee={{ ...editingEmployee, branch: form.branch, dept: form.department, role: form.position, status: form.status }} branches={branches} departments={departments} jobRoles={jobRoles} onClose={() => setShowAction(false)} onSaved={handleActionSaved} />}
     </>
   );
 }

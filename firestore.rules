@@ -91,6 +91,16 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Backend-only uniqueness reservations. They prevent concurrent requests
+    // from reusing an employee email/phone or an HR decision number.
+    match /employeeUnique/{reservationId} {
+      allow read, write: if false;
+    }
+
+    match /decisionUnique/{reservationId} {
+      allow read, write: if false;
+    }
+
     // Transactional counter used to reserve unique employee numbers even
     // when two HR users add staff at the same time.
     match /counters/employees {

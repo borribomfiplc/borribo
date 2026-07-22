@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { ArrowLeft, Briefcase, BriefcaseBusiness, CalendarDays, FileClock, FileText, Mail, MapPin, Pencil, Phone, Shield, User, XCircle } from "lucide-react";
+import { ArrowLeft, Briefcase, CalendarDays, FileClock, FileText, Mail, MapPin, Pencil, Phone, Shield, User, XCircle } from "lucide-react";
 import { COLORS } from "../data/theme";
-import EmploymentActionModal from "../components/EmploymentActionModal";
+import AccountProvisionModal from "../components/AccountProvisionModal";
 import { cancelEmploymentAction } from "../services/employees";
 
 function Item({ icon: Icon, label, value, dir }) {
@@ -55,8 +55,8 @@ function EmploymentHistory({ items, onCancel }) {
   </section>;
 }
 
-export default function EmployeeDetailsPage({ employee, onBack, onEdit, employmentActions = [], branches = [], departments = [], jobRoles = [] }) {
-  const [showAction, setShowAction] = useState(false);
+export default function EmployeeDetailsPage({ employee, onBack, onEdit, employmentActions = [], branches = [], departments = [], jobRoles = [], actorRole = "hr" }) {
+  const [showAccount, setShowAccount] = useState(false);
   const [message, setMessage] = useState("");
   if (!employee) return null;
   const history = employmentActions
@@ -65,7 +65,7 @@ export default function EmployeeDetailsPage({ employee, onBack, onEdit, employme
   return <>
     <div className="flex items-start justify-between gap-3 mb-5 flex-wrap">
       <div><button onClick={onBack} className="flex items-center gap-1.5 text-xs text-[#8A8FA3] hover:text-[#2A3F8F] mb-2"><ArrowLeft size={14} /> ត្រឡប់ទៅបញ្ជី</button><h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ព័ត៌មានបុគ្គលិកលម្អិត</h1></div>
-      <div className="flex flex-wrap gap-2"><button onClick={() => setShowAction(true)} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-white text-sm font-semibold" style={{ background: COLORS.green }}><BriefcaseBusiness size={15} /> ប្រតិបត្តិការបុគ្គលិក</button><button onClick={() => onEdit(employee)} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-white text-sm font-semibold" style={{ background: COLORS.primary }}><Pencil size={15} /> កែព័ត៌មានផ្ទាល់ខ្លួន</button></div>
+      <button onClick={() => onEdit(employee)} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-white text-sm font-semibold" style={{ background: COLORS.primary }}><Pencil size={15} /> កែសម្រួលព័ត៌មានបុគ្គលិក</button>
     </div>
     {message && <div className="text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-4 py-3 mb-5">{message}</div>}
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
@@ -78,10 +78,10 @@ export default function EmployeeDetailsPage({ employee, onBack, onEdit, employme
       <div className="flex flex-col gap-5">
         <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><h3 className="font-semibold text-[#1E2333] mb-4 flex items-center gap-2"><User size={18} color={COLORS.primary} />ព័ត៌មានផ្ទាល់ខ្លួន</h3><div className="grid sm:grid-cols-2 gap-3"><Item icon={Phone} label="លេខទូរស័ព្ទ" value={employee.phone} dir="ltr" /><Item icon={Mail} label="អ៊ីមែល" value={employee.email} dir="ltr" /><Item icon={CalendarDays} label="ថ្ងៃខែឆ្នាំកំណើត" value={employee.dob} /><Item icon={User} label="ភេទ" value={employee.gender} /><div className="sm:col-span-2"><Item icon={MapPin} label="អាសយដ្ឋាន" value={employee.address} /></div></div></section>
         <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><h3 className="font-semibold text-[#1E2333] mb-4 flex items-center gap-2"><Briefcase size={18} color={COLORS.primary} />ព័ត៌មានការងារ</h3><div className="grid sm:grid-cols-2 gap-3"><Item icon={Briefcase} label="នាយកដ្ឋាន" value={employee.dept} /><Item icon={Briefcase} label="តួនាទី" value={employee.role} /><Item icon={MapPin} label="សាខា" value={employee.branch} /><Item icon={CalendarDays} label="ថ្ងៃចូលបម្រើការងារ" value={employee.startDate} /><Item icon={Briefcase} label="ប្រភេទការងារ" value={employee.employmentType} /><Item icon={CalendarDays} label="វេនការងារ" value={employee.shift} /></div></section>
-        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><h3 className="font-semibold text-[#1E2333] mb-3 flex items-center gap-2"><Shield size={18} color={COLORS.primary} />ស្ថានភាពគណនី</h3><p className="text-sm text-[#5B5F73]">{employee.uid ? `បានភ្ជាប់ Login Account (${employee.accountRole || "employee"})` : "មិនទាន់មាន Login Account"}</p></section>
+        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><div className="flex items-center justify-between gap-3 flex-wrap"><div><h3 className="font-semibold text-[#1E2333] mb-2 flex items-center gap-2"><Shield size={18} color={COLORS.primary} />ស្ថានភាពគណនី</h3><p className="text-sm text-[#5B5F73]">{employee.uid ? `បានភ្ជាប់ Login Account (${employee.accountRole || "employee"})` : "មិនទាន់មាន Login Account"}</p></div>{!employee.uid && employee.status !== "អសកម្ម" && <button type="button" onClick={() => setShowAccount(true)} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-white" style={{ background: COLORS.primary }}>បង្កើត Login Account</button>}</div></section>
         <EmploymentHistory items={history} onCancel={cancelEmploymentAction} />
       </div>
     </div>
-    {showAction && <EmploymentActionModal employee={employee} branches={branches} departments={departments} jobRoles={jobRoles} onClose={() => setShowAction(false)} onSaved={(result) => setMessage(result?.scheduled ? "បានកំណត់ប្រតិបត្តិការសម្រាប់ថ្ងៃអនាគត។ ប្រព័ន្ធនឹងអនុវត្តដោយស្វ័យប្រវត្តិ។" : "បានអនុវត្ត និងរក្សាទុកប្រវត្តិការងារជោគជ័យ។")} />}
+    {showAccount && <AccountProvisionModal employee={employee} actorRole={actorRole} onClose={() => setShowAccount(false)} onSaved={() => setMessage("បានបង្កើត Login Account ជោគជ័យ។")} />}
   </>;
 }

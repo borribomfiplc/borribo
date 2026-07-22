@@ -305,7 +305,7 @@ function App() {
         </nav>
 
         <div className="px-5 py-4 border-t border-[#EBEDF3] text-[11px] text-[#B4B7C6] shrink-0">
-          © 2026 BORRIBO MFI · v1.0.0
+          © 2026 BORRIBO MFI · v30
         </div>
       </aside>
 
@@ -478,6 +478,7 @@ function App() {
             branches={branches}
             departments={departments}
             jobRoles={jobRoles}
+            actorRole={profile.role}
           />
         ) : active === "វត្តមានប្រចាំថ្ងៃ" ? (
           <DailyAttendancePage

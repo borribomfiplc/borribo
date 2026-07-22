@@ -4,14 +4,35 @@ import {
 } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { login, authErrorMessage, sendPasswordReset } from "../firebase/auth";
+import { AUTO_SIGN_OUT_NOTICE_KEY } from "../hooks/useAutoSignOut";
+
+const REMEMBERED_IDENTIFIER_KEY = "borribo_hrms_remembered_identifier";
+
+function getRememberedIdentifier() {
+  try {
+    return window.localStorage.getItem(REMEMBERED_IDENTIFIER_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function getAutoSignOutNotice() {
+  try {
+    if (window.sessionStorage.getItem(AUTO_SIGN_OUT_NOTICE_KEY) !== "1") return "";
+    window.sessionStorage.removeItem(AUTO_SIGN_OUT_NOTICE_KEY);
+    return "អ្នកត្រូវបានចាកចេញដោយស្វ័យប្រវត្តិ ព្រោះមិនមានសកម្មភាពរយៈពេល 5 នាទី។";
+  } catch {
+    return "";
+  }
+}
 
 export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
-  const [remember, setRemember] = useState(true);
-  const [identifier, setIdentifier] = useState("");
+  const [identifier, setIdentifier] = useState(getRememberedIdentifier);
+  const [remember, setRemember] = useState(() => Boolean(getRememberedIdentifier()));
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(getAutoSignOutNotice);
   const [submitting, setSubmitting] = useState(false);
 
   const handleLogin = async () => {
@@ -26,6 +47,15 @@ export default function LoginPage() {
       // App.jsx listens for the auth state change and switches to the
       // dashboard automatically — no local "loggedIn" flag needed here.
       await login(identifier, password, remember);
+      try {
+        if (remember) {
+          window.localStorage.setItem(REMEMBERED_IDENTIFIER_KEY, identifier.trim());
+        } else {
+          window.localStorage.removeItem(REMEMBERED_IDENTIFIER_KEY);
+        }
+      } catch {
+        // Login remains usable when storage is blocked by the browser.
+      }
     } catch (err) {
       setError(authErrorMessage(err));
     } finally {
@@ -53,6 +83,18 @@ export default function LoginPage() {
     handleLogin();
   };
 
+  const handleRememberChange = (e) => {
+    const checked = e.target.checked;
+    setRemember(checked);
+    if (!checked) {
+      try {
+        window.localStorage.removeItem(REMEMBERED_IDENTIFIER_KEY);
+      } catch {
+        // Ignore browser storage restrictions.
+      }
+    }
+  };
+
   return (
     <div
       className="min-h-screen flex items-center justify-center p-4"
@@ -75,14 +117,14 @@ export default function LoginPage() {
             className="absolute -bottom-24 -left-10 w-56 h-56 rounded-full opacity-10"
             style={{ background: "#fff" }}
           />
-          <div className="relative z-10">
-            <div className="mb-10 inline-flex rounded-xl bg-white px-3 py-2 shadow-sm">
-              <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-52 h-auto object-contain" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="mb-10 flex w-full items-center justify-center rounded-2xl bg-white px-5 py-4 shadow-sm">
+              <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-full max-w-[340px] h-auto object-contain" />
             </div>
-            <h2 className="text-2xl font-bold leading-snug mb-3">
+            <h2 className="text-[28px] font-bold leading-[1.55] mb-3 text-center">
               ប្រព័ន្ធគ្រប់គ្រងវត្តមាន<br />និងច្បាប់ឈប់សម្រាក។
             </h2>
-            <p className="text-sm text-white/70 leading-relaxed max-w-[280px]">
+            <p className="text-base text-white/75 leading-relaxed max-w-[320px] text-center">
               ធ្វើអោយជីវិតអ្នកកាន់តែប្រសើរ
             </p>
           </div>
@@ -94,8 +136,8 @@ export default function LoginPage() {
 
         {/* Right form panel */}
         <div className="p-8 sm:p-12 flex flex-col justify-center">
-          <div className="lg:hidden mb-8">
-            <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-48 h-auto object-contain object-left" />
+          <div className="lg:hidden mb-8 flex justify-center">
+            <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-full max-w-[300px] h-auto object-contain" />
           </div>
 
           <h1 className="text-xl sm:text-2xl font-bold text-[#1E2333] mb-1.5">ចូលប្រើប្រព័ន្ធ</h1>
@@ -134,6 +176,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
+                  autoComplete="current-password"
                   className="w-full bg-[#F5F6FA] rounded-xl pl-4 pr-10 py-3 text-sm text-[#1E2333] placeholder:text-[#B4B7C6] outline-none focus:ring-2 focus:ring-[#2A3F8F]/25 border border-transparent focus:border-[#2A3F8F]/20"
                 />
               </div>
@@ -151,7 +194,7 @@ export default function LoginPage() {
                 <input
                   type="checkbox"
                   checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
+                  onChange={handleRememberChange}
                   className="w-3.5 h-3.5 rounded accent-[#2A3F8F]"
                 />
                 ចងចាំខ្ញុំ
@@ -163,7 +206,6 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              onClick={handleSubmit}
               disabled={submitting}
               className="mt-2 w-full text-white text-sm font-semibold rounded-xl py-3 flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
               style={{ background: COLORS.primary }}

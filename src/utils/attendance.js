@@ -27,9 +27,9 @@ export const time24Now = (date = new Date()) => new Intl.DateTimeFormat("en-GB",
 // manual entry) applies the exact same schedule when a setting has not been
 // saved yet.
 export const DEFAULT_WORKING_HOURS = {
-  shifts: {
-    morning: { start: "08:00", end: "17:00", grace: "15" },
-    evening: { start: "13:00", end: "21:00", grace: "15" },
+  schedules: {
+    weekday: { start: "08:00", end: "17:00", grace: "15" },
+    saturday: { start: "08:00", end: "12:00", grace: "15" },
   },
   workDays: ["ច័ន្ទ", "អង្គារ", "ពុធ", "ព្រហ", "សុក្រ", "សៅរ៍"],
 };
@@ -45,25 +45,45 @@ const minutesFromTime = (value) => {
 };
 
 const safeWorkingHours = (workingHours = {}) => ({
-  shifts: {
-    morning: { ...DEFAULT_WORKING_HOURS.shifts.morning, ...(workingHours.shifts?.morning || {}) },
-    evening: { ...DEFAULT_WORKING_HOURS.shifts.evening, ...(workingHours.shifts?.evening || {}) },
+  schedules: {
+    // `shifts.morning` keeps previously saved settings compatible while the
+    // organisation moves from a shift model to a day-based work schedule.
+    weekday: {
+      ...DEFAULT_WORKING_HOURS.schedules.weekday,
+      ...(workingHours.shifts?.morning || {}),
+      ...(workingHours.schedules?.weekday || {}),
+    },
+    saturday: {
+      ...DEFAULT_WORKING_HOURS.schedules.saturday,
+      ...(workingHours.schedules?.saturday || {}),
+    },
   },
   workDays: Array.isArray(workingHours.workDays) ? workingHours.workDays : DEFAULT_WORKING_HOURS.workDays,
 });
 
-export const calculateAttendanceMetrics = ({ shift = "ព្រឹក", workingHours, checkInAt, checkOutAt }) => {
+const scheduleDetailsForDate = (date, workingHours) => {
   const scheduleSettings = safeWorkingHours(workingHours);
-  const referenceTime = minutesFromTime(time24Now(new Date(checkInAt || checkOutAt || new Date())));
-  // For rotating staff, choose the scheduled start closest to the first scan,
-  // then persist that resolved shift on the attendance record for check-out.
-  const shiftKey = shift === "ល្ងាច" ? "evening" : shift === "ប្តូរវេន"
-    && Math.abs(referenceTime - minutesFromTime(scheduleSettings.shifts.evening.start)) < Math.abs(referenceTime - minutesFromTime(scheduleSettings.shifts.morning.start))
-      ? "evening" : "morning";
-  const schedule = scheduleSettings.shifts[shiftKey];
-  const referenceDate = checkInAt || checkOutAt || new Date();
-  const englishWeekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Phnom_Penh", weekday: "long" }).format(new Date(referenceDate));
+  const englishWeekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Phnom_Penh", weekday: "long" }).format(new Date(date));
   const workDay = weekdayNames[englishWeekday];
+  const scheduleKey = englishWeekday === "Saturday" ? "saturday" : "weekday";
+  return {
+    scheduleSettings,
+    schedule: scheduleSettings.schedules[scheduleKey],
+    scheduleKey,
+    workDay,
+  };
+};
+
+export const scheduleTextForRecord = (record = {}) => {
+  if (record.scheduledStart && record.scheduledEnd) return `${record.scheduledStart}–${record.scheduledEnd}`;
+  const referenceDate = record.dateISO ? `${record.dateISO}T12:00:00+07:00` : new Date();
+  const { schedule } = scheduleDetailsForDate(referenceDate, DEFAULT_WORKING_HOURS);
+  return `${schedule.start}–${schedule.end}`;
+};
+
+export const calculateAttendanceMetrics = ({ workingHours, checkInAt, checkOutAt }) => {
+  const referenceDate = checkInAt || checkOutAt || new Date();
+  const { scheduleSettings, schedule, scheduleKey, workDay } = scheduleDetailsForDate(referenceDate, workingHours);
   const isWorkingDay = scheduleSettings.workDays.includes(workDay);
   const checkInMinutes = checkInAt ? minutesFromTime(time24Now(new Date(checkInAt))) : null;
   const checkOutMinutes = checkOutAt ? minutesFromTime(time24Now(new Date(checkOutAt))) : null;
@@ -76,7 +96,11 @@ export const calculateAttendanceMetrics = ({ shift = "ព្រឹក", workingH
     ? Math.max(0, endMinutes - checkOutMinutes) : 0;
 
   return {
-    shift: shiftKey === "evening" ? "ល្ងាច" : "ព្រឹក",
+    // Keep `shift` on new records for compatibility with existing reports and
+    // Firestore documents. It now describes the organisation-wide schedule.
+    shift: scheduleKey === "saturday" ? "កន្លះថ្ងៃ" : "ពេញម៉ោង",
+    scheduleType: scheduleKey,
+    scheduleLabel: scheduleKey === "saturday" ? "សៅរ៍ កន្លះថ្ងៃ" : "ចន្ទ–សុក្រ ពេញមួយថ្ងៃ",
     scheduledStart: schedule.start,
     scheduledEnd: schedule.end,
     graceMinutes,

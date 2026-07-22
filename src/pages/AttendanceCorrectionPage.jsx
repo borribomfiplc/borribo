@@ -50,7 +50,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
       branch: correction.branch,
       dateISO,
       date: correction.date || formatKhmerDate(dateISO),
-      shift: "ព្រឹក",
+      shift: "ពេញម៉ោង",
       checkIn: correction.newCheckIn,
       checkOut: correction.newCheckOut,
       hours: correction.newStatus === "អវត្តមាន" || correction.newStatus === "ច្បាប់" ? "—" : "បានកែតម្រូវ",

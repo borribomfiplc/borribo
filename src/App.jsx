@@ -24,6 +24,7 @@ import AccessDeniedPage from "./pages/AccessDeniedPage";
 import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { useEnglishUi } from "./i18n/useEnglishUi";
 import { removeEmployee } from "./services/employees";
+import { useAutoSignOut } from "./hooks/useAutoSignOut";
 
 // Every other page is code-split with React.lazy so the initial bundle only
 // pays for the dashboard home screen; each page's JS loads on first visit.
@@ -194,6 +195,7 @@ function App() {
     setOpenSection((prev) => (prev === key ? null : key));
 
   const handleLogout = () => firebaseLogout();
+  useAutoSignOut(authUser, firebaseLogout);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -305,7 +307,7 @@ function App() {
         </nav>
 
         <div className="px-5 py-4 border-t border-[#EBEDF3] text-[11px] text-[#B4B7C6] shrink-0">
-          © 2026 BORRIBO MFI · v30
+          © 2026 BORRIBO MFI · v34
         </div>
       </aside>
 

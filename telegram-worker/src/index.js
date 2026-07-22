@@ -698,7 +698,8 @@ async function handleTest(user, env) {
   if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
   const settings = await loadTelegramSettings(env);
   if (!settings.chatId) throw Object.assign(new Error("Telegram Chat ID is not configured"), { status: 400 });
-  const message = `✅ <b>Borribo HRMS</b>\nTelegram Bot ភ្ជាប់បានជោគជ័យ\nផ្ញើដោយ: ${escapeHtml(user.email)}`;
+  const senderEmail = String(user.email || "").replace(/@borribo\.com$/i, "@borribo.com.kh");
+  const message = `✅ <b>Borribo HRMS</b>\nTelegram Bot ភ្ជាប់បានជោគជ័យ\nផ្ញើដោយ: ${escapeHtml(senderEmail)}`;
   const sent = await sendTelegram(env, settings.chatId, message);
   const id = `TG-${Date.now()}`;
   await logTelegramEvent(env, id, { chatId: settings.chatId, type: "test", message: message.replace(/<[^>]+>/g, ""), status: "បានផ្ញើ", telegramMessageId: sent.message_id, actorUid: user.uid });

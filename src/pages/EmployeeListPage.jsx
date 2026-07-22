@@ -33,7 +33,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
     if (!window.confirm(`តើអ្នកចង់ប្តូរ "${emp.name}" ទៅអសកម្ម និងរក្សាទុកទិន្នន័យចាស់មែនទេ?`)) return;
     setDeletingId(emp.id); setDeleteError("");
     try { await onDeleteEmployee(emp); }
-    catch (error) { setDeleteError(error?.message || "មិនអាចលុបបុគ្គលិកបានទេ"); }
+    catch (error) { setDeleteError(error?.message || "មិនអាចដាក់បុគ្គលិកជាអសកម្មបានទេ"); }
     finally { setDeletingId(""); }
   };
 
@@ -89,47 +89,47 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
       {/* Desktop table */}
       <div className="hidden md:block bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
         <div className="overflow-x-auto">
-        <table className="w-full min-w-[1280px] table-fixed text-sm">
+        <table className="w-full min-w-[1400px] table-fixed text-sm">
           <colgroup>
-            <col className="w-[18%]" />
-            <col className="w-[14%]" />
-            <col className="w-[13%]" />
-            <col className="w-[12%]" />
-            <col className="w-[9%]" />
-            <col className="w-[11%]" />
-            <col className="w-[10%]" />
-            <col className="w-[13%]" />
+            <col className="w-[17%]" />
+            <col className="w-[17%]" />
+            <col className="w-[17%]" />
+            <col className="w-[17%]" />
+            <col className="w-[17%]" />
+            <col className="w-[5%]" />
+            <col className="w-[5%]" />
+            <col className="w-[5%]" />
           </colgroup>
           <thead>
             <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
-              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">បុគ្គលិក</th>
-              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">តួនាទី</th>
-              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">សាខា</th>
-              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">លេខទូរស័ព្ទ</th>
-              <th className="text-left font-medium px-5 py-3 whitespace-nowrap">ស្ថានភាព</th>
-              <th className="text-center font-medium px-2 py-3">មើលព័ត៌មានលម្អិត</th>
-              <th className="text-center font-medium px-2 py-3">កែសម្រួលព័ត៌មាន</th>
-              <th className="text-center font-medium px-2 py-3">ដាក់បុគ្គលិកជាអសកម្ម</th>
+              <th className="text-center font-medium px-4 py-4 whitespace-nowrap">បុគ្គលិក</th>
+              <th className="text-center font-medium px-4 py-4 whitespace-nowrap">តួនាទី</th>
+              <th className="text-center font-medium px-4 py-4 whitespace-nowrap">សាខា</th>
+              <th className="text-center font-medium px-4 py-4 whitespace-nowrap">លេខទូរស័ព្ទ</th>
+              <th className="text-center font-medium px-4 py-4 whitespace-nowrap">ស្ថានភាព</th>
+              <th className="text-center font-medium px-2 py-4 leading-5">ព័ត៌មានលម្អិត</th>
+              <th className="text-center font-medium px-2 py-4 leading-5">កែព័ត៌មាន</th>
+              <th className="text-center font-medium px-2 py-4 leading-5">ដាក់បុគ្គលិកអសកម្ម</th>
             </tr>
           </thead>
           <tbody>
             {paged.map((e) => (
               <tr key={e.id} className="border-t border-[#EBEDF3] hover:bg-[#F7F8FB]/60">
-                <td className="px-5 py-3.5">
-                  <div className="flex items-center gap-3">
+                <td className="px-4 py-3.5 text-center">
+                  <div className="flex items-center justify-center gap-3">
                     {e.photo ? <img src={e.photo} alt={e.name} className="w-9 h-9 rounded-full object-cover shrink-0" /> : <div className="w-9 h-9 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-xs font-bold flex items-center justify-center shrink-0">{e.name.slice(0, 1)}</div>}
-                    <div>
+                    <div className="min-w-0 text-left">
                       <div className="font-medium text-[#1E2333]">{e.name}</div>
                       <div className="text-xs text-[#B4B7C6]">{e.id}</div>
                     </div>
                   </div>
                 </td>
-                <td className="px-5 py-3.5 text-[#5B5F73] truncate">{e.role}</td>
-                <td className="px-5 py-3.5 text-[#5B5F73] truncate">{e.branch}</td>
-                <td className="px-5 py-3.5 text-[#5B5F73] whitespace-nowrap" dir="ltr">
+                <td className="px-4 py-3.5 text-center text-[#5B5F73] truncate">{e.role}</td>
+                <td className="px-4 py-3.5 text-center text-[#5B5F73] truncate">{e.branch}</td>
+                <td className="px-4 py-3.5 text-center text-[#5B5F73] whitespace-nowrap" dir="ltr">
                   {e.phone}
                 </td>
-                <td className="px-5 py-3.5">
+                <td className="px-4 py-3.5 text-center">
                   <span
                     className="text-xs font-medium rounded-full px-2.5 py-1"
                     style={{ background: statusStyle[e.status].bg, color: statusStyle[e.status].fg }}
@@ -138,27 +138,27 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
                   </span>
                 </td>
                 <td className="px-2 py-3.5 text-center">
-                  <button onClick={() => onViewClick(e)} title="មើលព័ត៌មានលម្អិត" aria-label={`មើលព័ត៌មានលម្អិតរបស់ ${e.name}`} className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"><Eye size={15} /></button>
+                  <button onClick={() => onViewClick(e)} title="មើលព័ត៌មានលម្អិត" aria-label={`មើលព័ត៌មានលម្អិតរបស់ ${e.name}`} className="mx-auto w-10 h-10 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"><Eye size={16} /></button>
                 </td>
                 <td className="px-2 py-3.5 text-center">
                   <button
                     onClick={() => onEditClick(e)}
                     title="កែសម្រួលព័ត៌មាន"
                     aria-label={`កែសម្រួលព័ត៌មានរបស់ ${e.name}`}
-                    className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"
+                    className="mx-auto w-10 h-10 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] hover:text-[#2A3F8F]"
                   >
-                    <Pencil size={15} />
+                    <Pencil size={16} />
                   </button>
                 </td>
                 <td className="px-2 py-3.5 text-center">
                   <button
                     onClick={() => handleDelete(e)}
                     disabled={deletingId === e.id}
-                    title="ដាក់បុគ្គលិកជាអសកម្ម"
+                    title="ដាក់បុគ្គលិកអសកម្ម"
                     aria-label={`ដាក់ ${e.name} ជាអសកម្ម`}
-                    className="mx-auto w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"
+                    className="mx-auto w-10 h-10 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"
                   >
-                    <Archive size={15} />
+                    <Archive size={16} />
                   </button>
                 </td>
               </tr>
@@ -196,20 +196,20 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
               <span>{e.branch}</span>
               <span dir="ltr">{e.phone}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => onViewClick(e)} className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#2A3F8F]"><Eye size={13} /> មើល</button>
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={() => onViewClick(e)} className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#2A3F8F]"><Eye size={13} /> មើលព័ត៌មាន</button>
               <button
                 onClick={() => onEditClick(e)}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#5B5F73]"
               >
-                <Pencil size={13} /> កែសម្រួល
+                <Pencil size={13} /> កែព័ត៌មាន
               </button>
               <button
                 onClick={() => handleDelete(e)}
                 disabled={deletingId === e.id}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-[#EBEDF3] rounded-lg py-2 text-xs font-medium text-[#D9614F]"
               >
-                <Archive size={13} /> អសកម្ម
+                <Archive size={13} /> បុគ្គលិកជាអសកម្ម
               </button>
             </div>
           </div>

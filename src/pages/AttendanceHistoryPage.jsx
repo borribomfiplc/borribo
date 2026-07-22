@@ -7,7 +7,7 @@ import { attendanceStatusStyle } from "../data/mockData";
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
-import { todayISO } from "../utils/attendance";
+import { scheduleTextForRecord, todayISO } from "../utils/attendance";
 
 const initialFromDate = () => {
   const date = new Date(); date.setDate(date.getDate() - 30);
@@ -46,7 +46,7 @@ export default function AttendanceHistoryPage({ historyData }) {
     ? (((counts.present + counts.late) / filtered.length) * 100).toFixed(0)
     : 0;
   const exportCsv = () => {
-    const rows = [["Employee ID", "Name", "Branch", "Date", "Shift", "Check-in", "Check-out", "Working hours", "Late (minutes)", "Early leave (minutes)", "Status"], ...filtered.map((a) => [a.id, a.name, a.branch, a.dateISO, a.shift, a.checkIn, a.checkOut, a.hours, a.lateMinutes || 0, a.earlyLeaveMinutes || 0, a.status])];
+    const rows = [["Employee ID", "Name", "Branch", "Date", "Schedule", "Check-in", "Check-out", "Working hours", "Late (minutes)", "Early leave (minutes)", "Status"], ...filtered.map((a) => [a.id, a.name, a.branch, a.dateISO, scheduleTextForRecord(a), a.checkIn, a.checkOut, a.hours, a.lateMinutes || 0, a.earlyLeaveMinutes || 0, a.status])];
     const csv = "\ufeff" + rows.map((row) => row.map((v) => `\"${String(v ?? "").replaceAll("\"", "\"\"")}\"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "attendance-history.csv"; link.click(); URL.revokeObjectURL(url);
@@ -179,7 +179,7 @@ export default function AttendanceHistoryPage({ historyData }) {
             <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
               <th className="text-right font-medium px-5 py-3">បុគ្គលិក</th>
               <th className="text-right font-medium px-5 py-3">កាលបរិច្ឆេទ</th>
-              <th className="text-right font-medium px-5 py-3">សាខា / វេន</th>
+              <th className="text-right font-medium px-5 py-3">សាខា / កាលវិភាគ</th>
               <th className="text-right font-medium px-5 py-3">ម៉ោងចូល</th>
               <th className="text-right font-medium px-5 py-3">ម៉ោងចេញ</th>
               <th className="text-right font-medium px-5 py-3">ម៉ោងធ្វើការ</th>
@@ -206,7 +206,7 @@ export default function AttendanceHistoryPage({ historyData }) {
                   <td className="px-5 py-3.5 text-[#5B5F73] whitespace-nowrap">{a.date}</td>
                   <td className="px-5 py-3.5 text-[#5B5F73]">
                     <div>{a.branch}</div>
-                    <div className="text-xs text-[#B4B7C6]">វេន{a.shift}</div>
+                    <div className="text-xs text-[#B4B7C6]" dir="ltr">{scheduleTextForRecord(a)}</div>
                   </td>
                   <td className="px-5 py-3.5 text-[#5B5F73]" dir="ltr">
                     {a.checkIn}
@@ -254,7 +254,7 @@ export default function AttendanceHistoryPage({ historyData }) {
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-[#1E2333] text-sm truncate">{a.name}</div>
                   <div className="text-xs text-[#8A8FA3] truncate">
-                    {a.branch} · វេន{a.shift}
+                    {a.branch} · <span dir="ltr">{scheduleTextForRecord(a)}</span>
                   </div>
                 </div>
                 <span

@@ -10,7 +10,7 @@ import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, todayISO } from "../utils/attendance";
+import { calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, scheduleTextForRecord, todayISO } from "../utils/attendance";
 
 export default function DailyAttendancePage({ employees, attendanceToday, setAttendanceToday }) {
   const [query, setQuery] = useState("");
@@ -211,7 +211,7 @@ export default function DailyAttendancePage({ employees, attendanceToday, setAtt
           <thead>
             <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
               <th className="text-right font-medium px-5 py-3">បុគ្គលិក</th>
-              <th className="text-right font-medium px-5 py-3">សាខា / វេន</th>
+              <th className="text-right font-medium px-5 py-3">សាខា / កាលវិភាគ</th>
               <th className="text-right font-medium px-5 py-3">ម៉ោងចូល</th>
               <th className="text-right font-medium px-5 py-3">ម៉ោងចេញ</th>
               <th className="text-right font-medium px-5 py-3">ម៉ោងធ្វើការ</th>
@@ -238,7 +238,7 @@ export default function DailyAttendancePage({ employees, attendanceToday, setAtt
                   </td>
                   <td className="px-5 py-3.5 text-[#5B5F73]">
                     <div>{a.branch}</div>
-                    <div className="text-xs text-[#B4B7C6]">វេន{a.shift}</div>
+                    <div className="text-xs text-[#B4B7C6]" dir="ltr">{scheduleTextForRecord(a)}</div>
                   </td>
                   <td className="px-5 py-3.5 text-[#5B5F73]" dir="ltr">
                     {a.checkIn}
@@ -290,7 +290,7 @@ export default function DailyAttendancePage({ employees, attendanceToday, setAtt
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-[#1E2333] text-sm truncate">{a.name}</div>
                   <div className="text-xs text-[#8A8FA3] truncate">
-                    {a.branch} · វេន{a.shift}
+                    {a.branch} · <span dir="ltr">{scheduleTextForRecord(a)}</span>
                   </div>
                 </div>
                 <span

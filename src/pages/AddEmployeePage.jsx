@@ -10,7 +10,7 @@ const emptyForm = (branches, departments, jobRoles) => ({
   name: "", gender: "ប្រុស", dob: "", phone: "", email: "", address: "",
   department: departments[0]?.name || "", position: jobRoles[0]?.name || "",
   branch: branches[0]?.name || "", employmentType: "ពេញម៉ោង", startDate: "",
-  shift: "ព្រឹក", status: "សកម្ម", photo: "",
+  shift: "ពេញមួយថ្ងៃ", status: "សកម្ម", photo: "",
 });
 
 export default function AddEmployeePage({ onCancel, onSave, editingEmployee, employees = [], branches = [], departments = [], jobRoles = [], actorRole = "hr" }) {
@@ -79,7 +79,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
       ...(editingEmployee || {}), name: form.name.trim(), role: form.position, dept: form.department,
       branch: form.branch, phone: form.phone.trim(), status: form.status, gender: form.gender,
       dob: form.dob, email: form.email.trim().toLowerCase(), address: form.address.trim(), photo: form.photo || "",
-      employmentType: form.employmentType, startDate: form.startDate, shift: form.shift,
+      employmentType: form.employmentType, startDate: form.startDate, shift: "ពេញមួយថ្ងៃ",
     };
     setSaving(true); setError("");
     try {
@@ -167,7 +167,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
           <div><FieldLabel required>សាខា</FieldLabel><SelectField options={branches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={isEditing} /></div>
           <div><FieldLabel>ប្រភេទការងារ</FieldLabel><SelectField options={["ពេញម៉ោង", "ក្រៅម៉ោង", "កិច្ចសន្យា"]} value={form.employmentType} onChange={update("employmentType")} /></div>
           <div><FieldLabel>ថ្ងៃចូលបម្រើការងារ</FieldLabel><TextField type="date" value={form.startDate} onChange={update("startDate")} /></div>
-          <div><FieldLabel>វេន</FieldLabel><SelectField options={["ព្រឹក", "ល្ងាច", "ប្តូរវេន"]} value={form.shift} onChange={update("shift")} /></div>
+          <div><FieldLabel>កាលវិភាគធ្វើការ</FieldLabel><TextField value="ចន្ទ–សុក្រ 08:00–17:00 · សៅរ៍ 08:00–12:00" disabled /></div>
           <div><FieldLabel>ស្ថានភាព</FieldLabel><SelectField options={["សកម្ម", "ឈប់សម្រាក", "អសកម្ម"]} value={form.status} onChange={update("status")} disabled={isEditing} /></div>
         </SectionCard>
 

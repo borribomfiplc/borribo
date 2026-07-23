@@ -148,6 +148,28 @@ npm run build
 npm run preview
 ```
 
+## Clear all login accounts except Admin
+
+This command removes Firebase Authentication logins and their login-directory
+documents, while preserving employees, attendance, leave, payroll, and other
+business records. It refuses to continue unless the account being kept exists
+and has the `admin` role.
+
+Preview first (nothing is deleted):
+
+```bash
+npm run clear-login-users -- --keep-email admin@borribo.com.kh
+```
+
+After checking the preview list, confirm the deletion:
+
+```bash
+npm run clear-login-users -- --keep-email admin@borribo.com.kh --confirm
+```
+
+`serviceAccountKey.json` must remain in the project root and must never be
+uploaded to GitHub.
+
 ## Project structure
 
 ```

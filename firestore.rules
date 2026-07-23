@@ -10,8 +10,13 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function activeAccount() {
+      return signedIn()
+        && get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('active', true) == true;
+    }
+
     function hasRole(role) {
-      return signedIn() && request.auth.token.role == role;
+      return activeAccount() && request.auth.token.role == role;
     }
 
     function manager() {
@@ -102,7 +107,7 @@ service cloud.firestore {
     }
 
     match /employees/{employeeId} {
-      allow get, list: if manager() || kiosk() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow get, list: if manager() || kiosk() || (activeAccount() && resource.data.uid == request.auth.uid);
       allow create, update, delete: if manager();
     }
 
@@ -111,6 +116,12 @@ service cloud.firestore {
     // browser users can inspect them but cannot forge or rewrite history.
     match /employmentActions/{actionId} {
       allow get, list: if manager();
+      allow create, update, delete: if false;
+    }
+
+    // Security-sensitive actions are written only by the trusted Worker.
+    match /auditLogs/{logId} {
+      allow get, list: if administrator();
       allow create, update, delete: if false;
     }
 
@@ -132,7 +143,7 @@ service cloud.firestore {
     }
 
     match /leaveRequests/{requestId} {
-      allow get, list: if manager() || (signedIn() && resource.data.employeeUid == request.auth.uid);
+      allow get, list: if manager() || (activeAccount() && resource.data.employeeUid == request.auth.uid);
       allow create: if hasRole('employee')
         && request.resource.data.employeeUid == request.auth.uid
         && request.resource.data.status == 'រង់ចាំពិនិត្យ'
@@ -169,7 +180,7 @@ service cloud.firestore {
       // Employees use a stable per-day record ID and can only read/write the
       // record that contains their own UID. A query/list is deliberately not
       // exposed to employees, so they cannot enumerate other staff records.
-      allow get: if manager() || kiosk() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow get: if manager() || kiosk() || (activeAccount() && resource.data.uid == request.auth.uid);
       allow list: if manager() || kiosk();
       allow create: if manager() || validKioskAttendance(request.resource.data, recordId) || (
         hasRole('employee')
@@ -211,7 +222,7 @@ service cloud.firestore {
         && request.resource.data.checkInClientAt == resource.data.checkInClientAt
       );
       allow delete: if manager();
-      allow get: if signedIn() && resource.data.uid == request.auth.uid;
+      allow get: if activeAccount() && resource.data.uid == request.auth.uid;
       allow create: if hasRole('employee')
         && validSelfHistory(request.resource.data, recordId);
       allow update: if hasRole('employee')
@@ -231,12 +242,12 @@ service cloud.firestore {
     }
 
     match /branches/{branchId} {
-      allow get, list: if signedIn();
+      allow get, list: if activeAccount();
       allow create, update, delete: if manager();
     }
 
     match /holidays/{holidayId} {
-      allow get, list: if signedIn();
+      allow get, list: if activeAccount();
       allow create, update, delete: if manager();
     }
 
@@ -262,14 +273,14 @@ service cloud.firestore {
     }
 
     match /settings/gpsQrPublic {
-      allow get: if signedIn() || kiosk();
+      allow get: if activeAccount() || kiosk();
       allow list: if false;
       allow create, update: if manager();
       allow delete: if administrator();
     }
 
     match /qrTokens/{branchId} {
-      allow get: if signedIn() || kiosk();
+      allow get: if activeAccount() || kiosk();
       allow list: if manager();
       allow create, update: if manager()
         && request.resource.data.branchId == branchId
@@ -282,7 +293,7 @@ service cloud.firestore {
     match /settings/{settingId} {
       // Employees and a kiosk need the shift schedule only to calculate their
       // own attendance. Other settings remain manager-only.
-      allow get: if manager() || kiosk() || (signedIn() && settingId == 'workingHours');
+      allow get: if manager() || kiosk() || (activeAccount() && settingId == 'workingHours');
       allow create, update: if manager();
       allow delete: if administrator();
     }

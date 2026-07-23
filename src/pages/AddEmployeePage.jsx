@@ -1,11 +1,12 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Briefcase, BriefcaseBusiness, Camera, ChevronRight, Eye, EyeOff, Mail, MapPin, Phone, Save, Shield, User } from "lucide-react";
+import { Briefcase, BriefcaseBusiness, Camera, ChevronRight, Eye, EyeOff, Mail, MapPin, Phone, Save, Shield, Trash2, User, X } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, SectionCard, SelectField, TextField } from "../components/shared/FormFields";
 import EmploymentActionModal from "../components/EmploymentActionModal";
-import { createEmployee, updateEmployee } from "../services/employees";
+import { createEmployee, deleteEmployeeLoginAccount, updateEmployee } from "../services/employees";
 import { imageFileToDataUrl } from "../utils/employeePhoto";
 import { isEmployeeInactive, normalizeEmployeeStatus } from "../utils/employeeStatus";
+import { getEmployeeAccountMeta } from "../utils/accountStatus";
 
 const emptyForm = (branches, departments, jobRoles) => ({
   name: "", englishName: "", gender: "ប្រុស", dob: "", phone: "", email: "", address: "",
@@ -16,7 +17,7 @@ const emptyForm = (branches, departments, jobRoles) => ({
   emergencyName: "", emergencyPhone: "", emergencyRelation: "",
 });
 
-export default function AddEmployeePage({ onCancel, onSave, editingEmployee, employees = [], branches = [], departments = [], jobRoles = [], actorRole = "hr" }) {
+export default function AddEmployeePage({ onCancel, onSave, onLoginDeleted, editingEmployee, employees = [], branches = [], departments = [], jobRoles = [], actorRole = "hr", currentUserUid = "" }) {
   const isEditing = Boolean(editingEmployee);
   const fileRef = useRef(null);
   const [form, setForm] = useState(() => isEditing ? {
@@ -32,6 +33,10 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
   const [showAction, setShowAction] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [accountDeleted, setAccountDeleted] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
   const updateEnglishName = (event) => setForm((current) => ({ ...current, englishName: event.target.value.toUpperCase() }));
@@ -85,6 +90,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
     ));
     if (duplicate) { setError(`លេខទូរស័ព្ទ ឬអ៊ីមែលនេះមានប្រើដោយ ${duplicate.name} រួចហើយ`); return; }
     if (createLogin) {
+      if (actorRole !== "admin") { setError("មានតែ Admin ប៉ុណ្ណោះដែលអាចបង្កើត Login Account"); return; }
       if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(account.username)) {
         setError("Username ត្រូវមានអក្សរអង់គ្លេស លេខ ឬ . _ - និងយ៉ាងតិច 2 តួអក្សរ"); return;
       }
@@ -139,6 +145,27 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
       ? "បានកំណត់ប្រតិបត្តិការសម្រាប់ថ្ងៃអនាគត។ ប្រព័ន្ធនឹងអនុវត្តដោយស្វ័យប្រវត្តិ។"
       : "បានអនុវត្ត និងរក្សាទុកប្រវត្តិការងារជោគជ័យ។");
   };
+
+  const handleDeleteLoginAccount = async () => {
+    if (deleteConfirmation !== "DELETE" || deletingAccount) return;
+    setDeletingAccount(true); setError("");
+    try {
+      const result = await deleteEmployeeLoginAccount(editingEmployee);
+      setAccountDeleted(true);
+      setShowDeleteAccount(false);
+      setDeleteConfirmation("");
+      setActionMessage("បានលុបគណនី Login ជាអចិន្ត្រៃយ៍។ ព័ត៌មានបុគ្គលិក និងប្រវត្តិការងារទាំងអស់នៅដដែល។");
+      onLoginDeleted?.(result.employee);
+    } catch (deleteError) {
+      setError(deleteError?.message || "មិនអាចលុបគណនី Login បានទេ");
+    } finally { setDeletingAccount(false); }
+  };
+
+  const linkedAccountUid = accountDeleted ? "" : String(editingEmployee?.uid || "");
+  const deletingOwnAccount = linkedAccountUid && linkedAccountUid === currentUserUid;
+  const accountMeta = getEmployeeAccountMeta(accountDeleted
+    ? { ...editingEmployee, uid: "", accountStatus: "deleted", loginDeletedAt: new Date().toISOString() }
+    : editingEmployee);
 
   return (
     <>
@@ -198,7 +225,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
           <div><FieldLabel>ស្ថានភាព</FieldLabel><SelectField options={["សកម្ម", "ឈប់សម្រាក", "អសកម្ម"]} value={form.status} onChange={update("status")} disabled={isEditing} /></div>
         </SectionCard>
 
-        {!isEditing && <SectionCard title="គណនី និងសិទ្ធិចូលប្រើ" icon={Shield}>
+        {!isEditing && actorRole === "admin" && <SectionCard title="គណនី និងសិទ្ធិចូលប្រើ" icon={Shield}>
           <label className="md:col-span-2 flex items-start gap-3 rounded-xl bg-[#F7F8FB] p-4 cursor-pointer"><input type="checkbox" checked={createLogin} onChange={(event) => setCreateLogin(event.target.checked)} className="mt-1" /><span><span className="block text-sm font-semibold text-[#1E2333]">បង្កើត Login Account ផង</span><span className="block text-xs text-[#8A8FA3] mt-1">បង្កើត Firebase Account, Username និង Profile ដោយស្វ័យប្រវត្តិ</span></span></label>
           {createLogin && <>
             <div><FieldLabel required>Username</FieldLabel><TextField dir="ltr" value={account.username} onChange={handleUsername} placeholder="bora.chhun" /></div>
@@ -207,8 +234,51 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
             <div className="text-xs text-[#8A8FA3] self-end pb-3">Email Login: <span dir="ltr" className="font-medium text-[#2A3F8F]">{form.email || "username@borribo.com.kh"}</span></div>
           </>}
         </SectionCard>}
+        {!isEditing && actorRole !== "admin" && <SectionCard title="គណនី និងសិទ្ធិចូលប្រើ" icon={Shield}>
+          <div className="md:col-span-2 rounded-xl bg-[#F7F8FB] px-4 py-3 text-sm text-[#8A8FA3]">HR អាចបង្កើត និងកែព័ត៌មានបុគ្គលិកបាន។ មានតែ Admin ប៉ុណ្ណោះដែលអាចបង្កើត ឬលុប Login Account។</div>
+        </SectionCard>}
+
+        {isEditing && <SectionCard title="គណនី និងសិទ្ធិចូលប្រើ" icon={Shield}>
+          <div className="md:col-span-2 flex flex-col gap-4">
+            <div className="rounded-xl bg-[#F7F8FB] p-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2"><div className="text-sm font-semibold text-[#1E2333]">ស្ថានភាពគណនី</div><span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: accountMeta.bg, color: accountMeta.fg }}>{accountMeta.label}</span></div>
+                <div className="text-xs text-[#8A8FA3] mt-1">
+                  {linkedAccountUid ? `${editingEmployee.username || editingEmployee.email || "Firebase Account"} · ${editingEmployee.accountRole || "employee"}` : accountMeta.description}
+                </div>
+              </div>
+              {linkedAccountUid && actorRole === "admin" && <button
+                type="button"
+                disabled={deletingOwnAccount}
+                onClick={() => { setDeleteConfirmation(""); setShowDeleteAccount(true); }}
+                className="rounded-xl border border-[#E7B5AE] bg-white px-4 py-2.5 text-sm font-semibold text-[#B84637] flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+                title={deletingOwnAccount ? "មិនអាចលុបគណនី Admin ដែលកំពុងប្រើ" : "លុបតែគណនី Login"}
+              ><Trash2 size={16} />{deletingOwnAccount ? "គណនី Admin កំពុងប្រើ" : "លុបគណនី Login"}</button>}
+            </div>
+            {linkedAccountUid && actorRole !== "admin" && <div className="text-xs text-[#8A8FA3]">មានតែ Admin ប៉ុណ្ណោះដែលអាចលុបគណនី Login ជាអចិន្ត្រៃយ៍។</div>}
+            {linkedAccountUid && actorRole === "admin" && !deletingOwnAccount && <div className="rounded-xl border border-[#F1D1CC] bg-[#FFF8F7] px-4 py-3 text-xs text-[#8B4A40]">
+              ការលុបនេះលុបតែ Firebase Login, Username និង Profile។ វាមិនលុបព័ត៌មានបុគ្គលិក, Attendance, Leave, Payroll ឬរបាយការណ៍ទេ។
+            </div>}
+          </div>
+        </SectionCard>}
       </div>
       {showAction && <EmploymentActionModal employee={{ ...editingEmployee, branch: form.branch, dept: form.department, role: form.position, status: form.status }} branches={branches} departments={departments} jobRoles={jobRoles} onClose={() => setShowAction(false)} onSaved={handleActionSaved} />}
+      {showDeleteAccount && <div className="fixed inset-0 z-[110] bg-[#111827]/50 p-3 flex items-center justify-center" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingAccount) setShowDeleteAccount(false); }}>
+        <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-[#EBEDF3]">
+            <div><h2 className="font-bold text-[#B84637] flex items-center gap-2"><Trash2 size={18} />លុបគណនី Login ជាអចិន្ត្រៃយ៍</h2><p className="text-xs text-[#8A8FA3] mt-1">{editingEmployee.name} · {editingEmployee.id}</p></div>
+            <button type="button" disabled={deletingAccount} onClick={() => setShowDeleteAccount(false)} className="w-9 h-9 rounded-xl bg-[#F5F6FA] flex items-center justify-center text-[#8A8FA3] disabled:opacity-50"><X size={17} /></button>
+          </div>
+          <div className="p-5">
+            <div className="rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#8B3F34]">User នេះនឹងមិនអាច Login បានទៀតទេ។ ទិន្នន័យបុគ្គលិក និងប្រវត្តិការងារមិនត្រូវបានលុបទេ។</div>
+            <label className="block text-xs text-[#5B5F73] mt-4">វាយ <b dir="ltr">DELETE</b> ដើម្បីបញ្ជាក់<input autoFocus dir="ltr" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())} className="mt-1.5 w-full rounded-xl border border-[#EBEDF3] bg-[#F7F8FB] px-3.5 py-3 text-sm outline-none focus:border-[#D9614F]" placeholder="DELETE" /></label>
+          </div>
+          <div className="border-t border-[#EBEDF3] px-5 py-4 flex justify-end gap-2">
+            <button type="button" disabled={deletingAccount} onClick={() => setShowDeleteAccount(false)} className="rounded-xl border border-[#EBEDF3] px-4 py-2.5 text-sm text-[#5B5F73] disabled:opacity-50">បោះបង់</button>
+            <button type="button" disabled={deleteConfirmation !== "DELETE" || deletingAccount} onClick={handleDeleteLoginAccount} className="rounded-xl bg-[#D9614F] px-4 py-2.5 text-sm font-semibold text-white flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={16} />{deletingAccount ? "កំពុងលុប..." : "លុបគណនី Login"}</button>
+          </div>
+        </div>
+      </div>}
     </>
   );
 }

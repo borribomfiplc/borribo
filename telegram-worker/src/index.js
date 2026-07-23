@@ -221,6 +221,9 @@ async function verifyFirebaseUser(request, env) {
   });
   const result = await response.json();
   if (!response.ok || !result.users?.[0]) throw Object.assign(new Error("Firebase session is invalid or expired"), { status: 401 });
+  if (result.users[0].disabled) throw Object.assign(new Error("This Login Account is disabled"), { status: 403 });
+  const profile = await getDocument(env, `profiles/${result.users[0].localId}`);
+  if (profile?.active === false) throw Object.assign(new Error("This Login Account is disabled"), { status: 403 });
   let custom = {};
   try { custom = JSON.parse(result.users[0].customAttributes || "{}"); } catch { custom = {}; }
   const payload = decodeJwtPayload(token);
@@ -278,6 +281,65 @@ function requireEmployeeStatus(value, fallback = "") {
   return status;
 }
 
+function accountStatusForEmployee(employee = {}) {
+  const stored = String(employee.accountStatus || "").trim().toLowerCase();
+  if (["none", "active", "disabled", "deleted"].includes(stored)) return stored;
+  if (employee.uid) return normalizeEmployeeStatus(employee.status) === "អសកម្ម" ? "disabled" : "active";
+  return employee.loginDeletedAt ? "deleted" : "none";
+}
+
+function auditLogWrite(type, user, employee, extra = {}) {
+  const id = `AUD-${String(type).toUpperCase().replace(/[^A-Z0-9]+/g, "-")}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  return {
+    path: `auditLogs/${id}`,
+    data: {
+      id,
+      type,
+      employeeId: employee.id || "",
+      employeeName: employee.name || "",
+      targetUid: employee.uid || "",
+      targetEmail: employee.email || "",
+      targetRole: employee.accountRole || "",
+      actorUid: user.uid || "",
+      actorEmail: user.email || "System",
+      createdAt: new Date().toISOString(),
+      ...extra,
+    },
+    exists: false,
+  };
+}
+
+function employmentPeriods(employee = {}) {
+  if (Array.isArray(employee.employmentPeriods) && employee.employmentPeriods.length) {
+    return employee.employmentPeriods.map((period) => ({
+      startDate: String(period?.startDate || ""),
+      endDate: String(period?.endDate || ""),
+    }));
+  }
+  if (!employee.startDate) return [];
+  return [{
+    startDate: String(employee.startDate),
+    endDate: String(employee.endDate || ""),
+  }];
+}
+
+function closeEmploymentPeriod(employee, endDate) {
+  const periods = employmentPeriods(employee);
+  if (!periods.length) return periods;
+  const last = periods.length - 1;
+  if (!periods[last].endDate) periods[last] = { ...periods[last], endDate };
+  return periods;
+}
+
+function appendEmploymentPeriod(employee, startDate) {
+  const periods = employmentPeriods(employee);
+  if (periods.some((period) => !period.endDate)) {
+    throw Object.assign(new Error("Employee already has an open employment period"), { status: 409 });
+  }
+  periods.push({ startDate, endDate: "" });
+  return periods;
+}
+
 async function assertEmployeeUnique(env, employee, excludeId = "") {
   const email = normalizeEmail(employee.email);
   const phone = normalizePhone(employee.phone);
@@ -324,6 +386,7 @@ async function handleCreateEmployee(user, env, body) {
   if (!/^[A-Z][A-Z .'-]*$/.test(employee.englishName)) throw Object.assign(new Error("Invalid English employee name"), { status: 400 });
   if (await getDocument(env, `employees/${employee.id}`)) throw Object.assign(new Error("EMPLOYEE_ID_EXISTS"), { status: 409 });
   if (accountEnabled) {
+    if (user.role !== "admin") throw Object.assign(new Error("Only Admin can create Login Accounts"), { status: 403 });
     if (!validUsername(username)) throw Object.assign(new Error("Invalid username"), { status: 400 });
     if (!email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
     if (String(account.password || "").length < 8) throw Object.assign(new Error("Temporary password must have at least 8 characters"), { status: 400 });
@@ -339,6 +402,8 @@ async function handleCreateEmployee(user, env, body) {
     email: unique.email,
     phoneNormalized: unique.phone,
     status: requireEmployeeStatus(employee.status, "សកម្ម"),
+    accountStatus: accountEnabled ? "active" : "none",
+    employmentPeriods: employmentPeriods(employee),
     updatedAt: now,
   };
   const reservationWrites = await uniqueReservationWrites(env, baseEmployee);
@@ -353,13 +418,24 @@ async function handleCreateEmployee(user, env, body) {
     const created = await authAdminRequest(env, "create", { email, password: account.password, displayName: employee.name, emailVerified: false, disabled: false });
     uid = created.localId;
     await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId: employee.id, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: false });
-    const employeeRecord = { ...baseEmployee, uid, email, username, accountRole: role };
+    const employeeRecord = {
+      ...baseEmployee,
+      uid,
+      email,
+      username,
+      accountRole: role,
+      accountStatus: "active",
+      loginCreatedAt: now,
+      loginCreatedByUid: user.uid,
+      loginCreatedByEmail: user.email,
+    };
     await commitWrites(env, [
       { path: `employees/${employee.id}`, data: employeeRecord, exists: false },
       { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, branchId: employee.branchId || "", active: true, createdAt: now, updatedAt: now }, exists: false },
       { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
       { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
       { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, branchId: employee.branchId || "", status: "សកម្ម", active: true, createdAt: now }, exists: false },
+      auditLogWrite("login_account_created", user, employeeRecord),
       ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
@@ -374,7 +450,7 @@ async function handleCreateEmployee(user, env, body) {
 }
 
 async function handleProvisionEmployeeAccount(user, env, body) {
-  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  if (user.role !== "admin") throw Object.assign(new Error("Admin role is required to create Login Accounts"), { status: 403 });
   const employeeId = String(body?.employeeId || "").trim();
   const account = body?.account || {};
   const employee = await getDocument(env, `employees/${employeeId}`);
@@ -398,7 +474,18 @@ async function handleProvisionEmployeeAccount(user, env, body) {
     uid = created.localId;
     await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: false });
     const now = new Date().toISOString();
-    const employeeRecord = { ...employee, uid, email, username, accountRole: role, updatedAt: now };
+    const employeeRecord = {
+      ...employee,
+      uid,
+      email,
+      username,
+      accountRole: role,
+      accountStatus: "active",
+      loginCreatedAt: now,
+      loginCreatedByUid: user.uid,
+      loginCreatedByEmail: user.email,
+      updatedAt: now,
+    };
     const reservationWrites = await uniqueReservationWrites(env, employeeRecord, employee);
     await commitWrites(env, [
       { path: `employees/${employeeId}`, data: employeeRecord },
@@ -406,6 +493,7 @@ async function handleProvisionEmployeeAccount(user, env, body) {
       { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
       { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
       { path: `users/${uid}`, data: { id: uid, employeeId, name: employee.name, englishName: employee.englishName || "", email, username, role, branch: employee.branch, branchId: employee.branchId || "", status: employee.status, active: true, createdAt: now }, exists: false },
+      auditLogWrite("login_account_created", user, employeeRecord),
       ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
@@ -439,7 +527,18 @@ async function handleDeactivateEmployee(user, env, body) {
   if (uid === user.uid) throw Object.assign(new Error("You cannot deactivate your own account"), { status: 400 });
   if (uid) await authAdminRequest(env, "update", { localId: uid, disableUser: true });
   const now = new Date().toISOString();
-  const employeeRecord = { ...employee, status: "អសកម្ម", archivedAt: now, archivedByUid: user.uid, archivedByEmail: user.email, updatedAt: now };
+  const inactiveDate = currentCambodiaDateISO();
+  const employeeRecord = {
+    ...employee,
+    status: "អសកម្ម",
+    accountStatus: uid ? "disabled" : accountStatusForEmployee(employee),
+    endDate: inactiveDate,
+    employmentPeriods: closeEmploymentPeriod(employee, inactiveDate),
+    archivedAt: now,
+    archivedByUid: user.uid,
+    archivedByEmail: user.email,
+    updatedAt: now,
+  };
   try {
     await commitWrites(env, [
       { path: `employees/${employeeId}`, data: employeeRecord },
@@ -449,6 +548,8 @@ async function handleDeactivateEmployee(user, env, body) {
         ...(profile.email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid, active: false } }] : []),
         { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, englishName: profile.englishName || employee.englishName || "", email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, branchId: profile.branchId || employee.branchId || "", status: "អសកម្ម", active: false, updatedAt: now } },
       ] : []),
+      auditLogWrite("employee_deactivated", user, employeeRecord, { effectiveDate: inactiveDate, accountAffected: Boolean(uid) }),
+      ...(uid ? [auditLogWrite("login_account_disabled", user, employeeRecord, { reason: "employee_deactivated" })] : []),
     ]);
   } catch (error) {
     const committed = await getDocument(env, `employees/${employeeId}`).catch(() => null);
@@ -477,12 +578,29 @@ async function handleReactivateEmployee(user, env, body) {
   if (profile && user.role !== "admin" && profile.role !== "employee") {
     throw Object.assign(new Error("Only Admin can reactivate HR or Admin accounts"), { status: 403 });
   }
+  const rehireDate = String(body?.rehireDate || "").trim();
+  if (!validDateISO(rehireDate)) throw Object.assign(new Error("សូមបញ្ចូលថ្ងៃចូលធ្វើការវិញឲ្យត្រឹមត្រូវ"), { status: 400 });
+  const initialPeriods = employmentPeriods(employee);
+  const inferredLegacyEndDate = String(employee.endDate || employee.archivedAt || "").slice(0, 10);
+  const employeeWithClosedPeriod = initialPeriods.some((period) => !period.endDate) && inferredLegacyEndDate
+    ? { ...employee, endDate: inferredLegacyEndDate, employmentPeriods: closeEmploymentPeriod(employee, inferredLegacyEndDate) }
+    : employee;
+  const previousPeriods = employmentPeriods(employeeWithClosedPeriod);
+  const lastEndDate = [...previousPeriods].reverse().find((period) => period.endDate)?.endDate || employeeWithClosedPeriod.endDate || "";
+  if (lastEndDate && rehireDate <= lastEndDate) {
+    throw Object.assign(new Error(`ថ្ងៃចូលធ្វើការវិញត្រូវក្រោយថ្ងៃបញ្ចប់ការងារ ${lastEndDate}`), { status: 400 });
+  }
   if (uid) await authAdminRequest(env, "update", { localId: uid, disableUser: false });
 
   const now = new Date().toISOString();
+  const nextPeriods = appendEmploymentPeriod(employeeWithClosedPeriod, rehireDate);
   const employeeRecord = {
     ...employee,
     status: "សកម្ម",
+    accountStatus: uid ? "active" : accountStatusForEmployee(employee),
+    currentStartDate: rehireDate,
+    endDate: "",
+    employmentPeriods: nextPeriods,
     archivedAt: "",
     archivedByUid: "",
     archivedByEmail: "",
@@ -491,15 +609,41 @@ async function handleReactivateEmployee(user, env, body) {
     reactivatedByEmail: user.email,
     updatedAt: now,
   };
+  const actionId = `EA-${employeeId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const actionRecord = {
+    id: actionId,
+    employeeId,
+    employeeName: employee.name || "",
+    type: "rehire",
+    effectiveDate: rehireDate,
+    decisionNo: "",
+    reason: String(body?.reason || "").trim() || "ចូលធ្វើការវិញ",
+    note: "",
+    oldValues: employmentSnapshot(employee),
+    newValues: {
+      status: "សកម្ម",
+      currentStartDate: rehireDate,
+      endDate: "",
+      employmentPeriods: nextPeriods,
+    },
+    status: "បានអនុវត្ត",
+    createdAt: now,
+    createdByUid: user.uid,
+    createdByEmail: user.email,
+    appliedAt: now,
+  };
   try {
     await commitWrites(env, [
       { path: `employees/${employeeId}`, data: employeeRecord },
+      { path: `employmentActions/${actionId}`, data: actionRecord, exists: false },
       ...(profile ? [
         { path: `profiles/${uid}`, data: { ...profile, branch: employee.branch, branchId: employee.branchId || profile.branchId || "", active: true, status: "សកម្ម", updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: profile.email, uid, active: true } }] : []),
         ...(profile.email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid, active: true } }] : []),
         { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, englishName: profile.englishName || employee.englishName || "", email: profile.email, username: profile.username, role: profile.role, branch: employee.branch, branchId: employee.branchId || profile.branchId || "", status: "សកម្ម", active: true, updatedAt: now } },
       ] : []),
+      auditLogWrite("employee_rehired", user, employeeRecord, { effectiveDate: rehireDate, accountAffected: Boolean(uid) }),
+      ...(uid ? [auditLogWrite("login_account_enabled", user, employeeRecord, { reason: "employee_rehired", effectiveDate: rehireDate })] : []),
     ]);
   } catch (error) {
     const committed = await getDocument(env, `employees/${employeeId}`).catch(() => null);
@@ -510,6 +654,83 @@ async function handleReactivateEmployee(user, env, body) {
     throw error;
   }
   return { ok: true, reactivated: true, employee: employeeRecord, preservedHistory: true };
+}
+
+async function handleDeleteEmployeeAccount(user, env, body) {
+  if (user.role !== "admin") throw Object.assign(new Error("Admin role is required"), { status: 403 });
+  const employeeId = String(body?.employeeId || "").trim();
+  if (!employeeId) throw Object.assign(new Error("Employee identifier is missing"), { status: 400 });
+  const employee = await getDocument(env, `employees/${employeeId}`);
+  if (!employee) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
+
+  const uid = String(employee.uid || body?.uid || "").trim();
+  if (!uid) {
+    return { ok: true, alreadyDeleted: true, employee, preservedHistory: true };
+  }
+  if (uid === user.uid) {
+    throw Object.assign(new Error("អ្នកមិនអាចលុបគណនី Admin ដែលកំពុងប្រើរបស់ខ្លួនបានទេ"), { status: 400 });
+  }
+
+  const [profile, usernameRows, resetEmailRows] = await Promise.all([
+    getDocument(env, `profiles/${uid}`),
+    queryDocuments(env, "usernames", "uid", uid),
+    queryDocuments(env, "passwordResetEmails", "uid", uid),
+  ]);
+  const username = String(profile?.username || employee.username || "").trim().toLowerCase();
+  const accountEmail = normalizeEmail(profile?.email || employee.email);
+
+  try {
+    await authAdminRequest(env, "delete", { localId: uid });
+  } catch (error) {
+    // This keeps the cleanup endpoint safely retryable when Firebase Auth was
+    // deleted but a prior Firestore commit was interrupted.
+    if (!/USER_NOT_FOUND|EMAIL_NOT_FOUND/i.test(String(error?.message || ""))) throw error;
+  }
+
+  const now = new Date().toISOString();
+  const employeeRecord = {
+    ...employee,
+    uid: "",
+    username: "",
+    accountRole: "",
+    accountStatus: "deleted",
+    loginDeletedAt: now,
+    loginDeletedByUid: user.uid,
+    loginDeletedByEmail: user.email,
+    updatedAt: now,
+  };
+  const deletePaths = new Set([
+    `profiles/${uid}`,
+    `users/${uid}`,
+    ...usernameRows.map((row) => `usernames/${row.id}`),
+    ...resetEmailRows.map((row) => `passwordResetEmails/${row.id}`),
+  ]);
+  if (username) deletePaths.add(`usernames/${username}`);
+  if (accountEmail) deletePaths.add(`passwordResetEmails/${accountEmail}`);
+  const auditId = `AUD-ACCOUNT-DELETE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+  await commitWrites(env, [
+    { path: `employees/${employeeId}`, data: employeeRecord },
+    ...Array.from(deletePaths).map((path) => ({ delete: path })),
+    {
+      path: `auditLogs/${auditId}`,
+      data: {
+        id: auditId,
+        type: "login_account_deleted",
+        employeeId,
+        employeeName: employee.name || "",
+        targetUid: uid,
+        targetEmail: accountEmail,
+        targetRole: profile?.role || employee.accountRole || "",
+        actorUid: user.uid,
+        actorEmail: user.email,
+        createdAt: now,
+        preservedEmployeeHistory: true,
+      },
+      exists: false,
+    },
+  ]);
+  return { ok: true, deleted: true, employee: employeeRecord, preservedHistory: true };
 }
 
 async function handleUpdateEmployee(user, env, body) {
@@ -536,7 +757,14 @@ async function handleUpdateEmployee(user, env, body) {
   const disabled = previousStatus === "អសកម្ម";
   if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: disabled });
   const now = new Date().toISOString();
-  const employeeRecord = { ...employee, email: unique.email, phoneNormalized: unique.phone, ...(profile ? { username: profile.username || employee.username || "", accountRole: profile.role } : {}), updatedAt: now };
+  const employeeRecord = {
+    ...employee,
+    email: unique.email,
+    phoneNormalized: unique.phone,
+    accountStatus: profile ? (disabled ? "disabled" : "active") : accountStatusForEmployee(employee),
+    ...(profile ? { username: profile.username || employee.username || "", accountRole: profile.role } : {}),
+    updatedAt: now,
+  };
   const reservationWrites = await uniqueReservationWrites(env, employeeRecord, previous);
   try {
     await commitWrites(env, [
@@ -597,7 +825,10 @@ function employmentSnapshot(employee) {
     role: employee.role || "",
     roleId: employee.roleId || "",
     status: normalizeEmployeeStatus(employee.status, "សកម្ម"),
+    startDate: employee.startDate || "",
+    currentStartDate: employee.currentStartDate || "",
     endDate: employee.endDate || "",
+    employmentPeriods: employmentPeriods(employee),
   };
 }
 
@@ -625,6 +856,10 @@ async function applyEmploymentActionRecord(env, record) {
   const profile = employee.uid ? await getDocument(env, `profiles/${employee.uid}`) : null;
   if (employee.uid && !profile) throw new Error("Linked account profile was not found");
   const disabled = normalizeEmployeeStatus(updated.status) === "អសកម្ម";
+  if (disabled) {
+    updated.accountStatus = employee.uid ? "disabled" : accountStatusForEmployee(employee);
+    updated.employmentPeriods = closeEmploymentPeriod(employee, patch.endDate || currentCambodiaDateISO());
+  }
   if (employee.uid) await authAdminRequest(env, "update", {
     localId: employee.uid,
     email: updated.email || profile.email,
@@ -641,6 +876,10 @@ async function applyEmploymentActionRecord(env, record) {
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: updated.email || profile.email, uid: employee.uid, active: !disabled } }] : []),
         ...((updated.email || profile.email) ? [{ path: `passwordResetEmails/${updated.email || profile.email}`, data: { email: updated.email || profile.email, uid: employee.uid, active: !disabled } }] : []),
         { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: updated.id, name: updated.name, englishName: updated.englishName || profile.englishName || "", email: updated.email || profile.email, username: profile.username || updated.username || "", role: profile.role, branch: updated.branch, branchId: updated.branchId || "", status: updated.status, active: !disabled, updatedAt: now } },
+      ] : []),
+      ...(disabled ? [
+        auditLogWrite("employee_deactivated", { uid: record.createdByUid, email: record.createdByEmail }, updated, { effectiveDate: patch.endDate || record.effectiveDate, source: "employment_action", accountAffected: Boolean(employee.uid) }),
+        ...(employee.uid ? [auditLogWrite("login_account_disabled", { uid: record.createdByUid, email: record.createdByEmail }, updated, { reason: "employment_action_resignation", effectiveDate: patch.endDate || record.effectiveDate })] : []),
       ] : []),
     ]);
   } catch (error) {
@@ -896,6 +1135,7 @@ async function handleRequest(request, env) {
     else if (url.pathname === "/api/admin/employees/update" && request.method === "POST") result = await handleUpdateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/deactivate" && request.method === "POST") result = await handleDeactivateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/reactivate" && request.method === "POST") result = await handleReactivateEmployee(user, env, await request.json());
+    else if (url.pathname === "/api/admin/employees/delete-account" && request.method === "POST") result = await handleDeleteEmployeeAccount(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/create" && request.method === "POST") result = await handleCreateEmploymentAction(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/cancel" && request.method === "POST") result = await handleCancelEmploymentAction(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {

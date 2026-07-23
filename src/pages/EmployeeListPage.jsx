@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Search, ChevronDown, UserPlus, Archive, Pencil, Eye, Users, UserCheck, UserX } from "lucide-react";
+import { Search, ChevronDown, UserPlus, Archive, Pencil, Eye, Users, UserCheck, UserX, CalendarDays, X } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { statusStyle } from "../data/mockData";
 import { usePagination } from "../hooks/usePagination";
@@ -7,11 +7,20 @@ import PaginationBar from "../components/shared/PaginationBar";
 import { getEmployeeBackendStatus } from "../services/employees";
 import { isEmployeeInactive, normalizeEmployeeStatus } from "../utils/employeeStatus";
 
+function todayISO() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Phnom_Penh", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+
 export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick, onDeleteEmployee, onReactivateEmployee, employees, query, setQuery }) {
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
   const [deleteError, setDeleteError] = useState("");
   const [deletingId, setDeletingId] = useState("");
   const [backendError, setBackendError] = useState("");
+  const [rehireEmployee, setRehireEmployee] = useState(null);
+  const [rehireDate, setRehireDate] = useState(todayISO());
+  const [rehireReason, setRehireReason] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -44,10 +53,21 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
     finally { setDeletingId(""); }
   };
 
-  const handleReactivate = async (emp) => {
-    if (!window.confirm(`តើអ្នកចង់ដាក់ "${emp.name}" ឲ្យសកម្ម និងបើក Login Account វិញមែនទេ?`)) return;
+  const handleReactivate = (emp) => {
+    setDeleteError("");
+    setRehireEmployee(emp);
+    setRehireDate(todayISO());
+    setRehireReason("");
+  };
+
+  const submitRehire = async () => {
+    const emp = rehireEmployee;
+    if (!emp || !rehireDate) return setDeleteError("សូមជ្រើសថ្ងៃចូលធ្វើការវិញ");
     setDeletingId(emp.id); setDeleteError("");
-    try { await onReactivateEmployee(emp); }
+    try {
+      await onReactivateEmployee(emp, { rehireDate, reason: rehireReason.trim() });
+      setRehireEmployee(null);
+    }
     catch (error) { setDeleteError(error?.message || "មិនអាចដាក់បុគ្គលិកឲ្យសកម្មវិញបានទេ"); }
     finally { setDeletingId(""); }
   };
@@ -246,6 +266,24 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
         )}
       </div>
       <PaginationBar page={page} totalPages={totalPages} totalItems={totalItems} pageSize={pageSize} onPageChange={setPage} />
+      {rehireEmployee && <div className="fixed inset-0 z-[100] bg-[#111827]/45 p-3 flex items-center justify-center" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingId) setRehireEmployee(null); }}>
+        <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-[#EBEDF3]">
+            <div><h2 className="font-bold text-[#1E2333] flex items-center gap-2"><UserCheck size={18} color={COLORS.green} />ចូលធ្វើការវិញ</h2><p className="text-xs text-[#8A8FA3] mt-1">{rehireEmployee.name} · {rehireEmployee.id}</p></div>
+            <button type="button" disabled={Boolean(deletingId)} onClick={() => setRehireEmployee(null)} className="w-9 h-9 rounded-xl bg-[#F5F6FA] flex items-center justify-center text-[#8A8FA3] disabled:opacity-50"><X size={17} /></button>
+          </div>
+          <div className="p-5 grid gap-4">
+            {deleteError && <div className="rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#B84637]">{deleteError}</div>}
+            <div className="rounded-xl bg-[#EAF8F0] px-4 py-3 text-sm text-[#257C4B]">ប្រព័ន្ធនឹងរក្សា Employee ID និងប្រវត្តិចាស់ ហើយបន្ថែមរយៈពេលការងារថ្មី។ {rehireEmployee.uid ? "Login Account នឹងត្រូវបើកវិញដោយស្វ័យប្រវត្តិ។" : "បុគ្គលិកនេះគ្មាន Login Account ទេ; Admin អាចបង្កើតថ្មីក្រោយពេលសកម្មវិញ។"}</div>
+            <label className="text-xs text-[#5B5F73]">ថ្ងៃចូលធ្វើការវិញ *<div className="relative mt-1.5"><CalendarDays size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#8A8FA3]" /><input type="date" value={rehireDate} onChange={(event) => setRehireDate(event.target.value)} className="w-full rounded-xl bg-[#F5F6FA] py-3 pl-10 pr-3.5 text-sm text-[#1E2333] outline-none focus:ring-2 focus:ring-[#2A3F8F]/20" /></div></label>
+            <label className="text-xs text-[#5B5F73]">មូលហេតុ/កំណត់សម្គាល់<textarea value={rehireReason} onChange={(event) => setRehireReason(event.target.value)} rows={3} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3.5 py-3 text-sm text-[#1E2333] outline-none focus:ring-2 focus:ring-[#2A3F8F]/20 resize-y" placeholder="ឧ. ចូលបម្រើការងារវិញតាមការសម្រេចរបស់គ្រឹះស្ថាន" /></label>
+          </div>
+          <div className="border-t border-[#EBEDF3] px-5 py-4 flex justify-end gap-2">
+            <button type="button" disabled={Boolean(deletingId)} onClick={() => setRehireEmployee(null)} className="rounded-xl border border-[#EBEDF3] px-4 py-2.5 text-sm text-[#5B5F73] disabled:opacity-50">បោះបង់</button>
+            <button type="button" disabled={!rehireDate || Boolean(deletingId)} onClick={submitRehire} className="rounded-xl bg-[#2F9D62] px-4 py-2.5 text-sm font-semibold text-white flex items-center gap-2 disabled:opacity-50"><UserCheck size={16} />{deletingId ? "កំពុងរក្សាទុក..." : "បញ្ជាក់ចូលធ្វើការវិញ"}</button>
+          </div>
+        </div>
+      </div>}
     </>
   );
 }

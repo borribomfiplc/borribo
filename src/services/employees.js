@@ -75,6 +75,19 @@ export async function removeEmployee(employee) {
   return adminRequest("/api/admin/employees/deactivate", { employeeId: employee.id, uid: employee.uid || "" });
 }
 
-export async function reactivateEmployee(employee) {
-  return adminRequest("/api/admin/employees/reactivate", { employeeId: employee.id, uid: employee.uid || "" });
+export async function reactivateEmployee(employee, rehire = {}) {
+  return adminRequest("/api/admin/employees/reactivate", {
+    employeeId: employee.id,
+    uid: employee.uid || "",
+    rehireDate: rehire.rehireDate || "",
+    reason: rehire.reason || "",
+  });
+}
+
+export async function deleteEmployeeLoginAccount(employee) {
+  if (!employee?.id) throw new Error("រកមិនឃើញលេខសម្គាល់បុគ្គលិក");
+  return adminRequest("/api/admin/employees/delete-account", {
+    employeeId: employee.id,
+    uid: employee.uid || "",
+  });
 }

@@ -72,9 +72,10 @@ function App() {
   useEffect(() => watchAuthState(setAuthUser), []);
   const loggedIn = !!authUser;
   const { profile, loading: profileLoading } = useUserProfile(authUser);
-  const managerAccess = Boolean(profile && isManager(profile.role));
-  const adminAccess = profile?.role === ROLES.ADMIN;
-  const kioskAccess = profile?.role === ROLES.KIOSK;
+  const accountActive = profile?.active !== false;
+  const managerAccess = Boolean(accountActive && profile && isManager(profile.role));
+  const adminAccess = accountActive && profile?.role === ROLES.ADMIN;
+  const kioskAccess = accountActive && profile?.role === ROLES.KIOSK;
 
   const [openSection, setOpenSection] = useState("attendance");
   const [active, setActive] = useState("dashboard");
@@ -127,6 +128,7 @@ function App() {
   const [staffLoans, setStaffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
   const [telegramOutbox, setTelegramOutbox] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
   const [employmentActions] = useFirestoreCollection("employmentActions", [], "id", managerAccess);
+  const [auditLogs] = useFirestoreCollection("auditLogs", [], "id", adminAccess);
 
   // Branch is a reporting dimension. The Topbar selection deliberately scopes
   // dashboard and report inputs without mutating records from other branches.
@@ -141,7 +143,7 @@ function App() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
 
   const deleteEmployee = (employee) => removeEmployee(employee);
-  const restoreEmployee = (employee) => reactivateEmployee(employee);
+  const restoreEmployee = (employee, rehire) => reactivateEmployee(employee, rehire);
   const [headerQuery, setHeaderQuery] = useState(""); // topbar quick-search text
 
   useEffect(() => {
@@ -257,6 +259,10 @@ function App() {
 
   if (!profile) {
     return <AccessDeniedPage onLogout={handleLogout} />;
+  }
+
+  if (!accountActive) {
+    return <AccessDeniedPage onLogout={handleLogout} title="គណនីនេះត្រូវបានបិទ" message="អ្នកមិនអាច Login ឬប្រើ Check-in បានទេ។ សូមទាក់ទង Admin ឬ HR។" />;
   }
 
   if (profile.role === ROLES.KIOSK) {
@@ -474,6 +480,8 @@ function App() {
             departments={departments}
             jobRoles={jobRoles}
             actorRole={profile.role}
+            currentUserUid={authUser.uid}
+            onLoginDeleted={(employee) => setEditingEmployee(employee)}
           />
         ) : active === "ព័ត៌មានបុគ្គលិក" ? (
           <EmployeeDetailsPage
@@ -486,6 +494,7 @@ function App() {
             departments={departments}
             jobRoles={jobRoles}
             actorRole={profile.role}
+            accountAuditLogs={auditLogs}
           />
         ) : active === "វត្តមានប្រចាំថ្ងៃ" ? (
           <DailyAttendancePage

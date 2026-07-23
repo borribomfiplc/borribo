@@ -4,6 +4,7 @@ import { COLORS } from "../data/theme";
 import AccountProvisionModal from "../components/AccountProvisionModal";
 import { cancelEmploymentAction } from "../services/employees";
 import { isEmployeeInactive, normalizeEmployeeStatus } from "../utils/employeeStatus";
+import { ACCOUNT_STATUS, getEmployeeAccountMeta, getEmployeeAccountStatus } from "../utils/accountStatus";
 
 function Item({ icon: Icon, label, value, dir }) {
   return <div className="flex gap-3 rounded-xl bg-[#F7F8FB] p-3.5"><Icon size={17} className="text-[#8A8FA3] shrink-0 mt-0.5" /><div className="min-w-0"><div className="text-[11px] text-[#8A8FA3]">{label}</div><div dir={dir} className="text-sm font-medium text-[#1E2333] mt-1 break-words">{value || "—"}</div></div></div>;
@@ -15,6 +16,16 @@ const ACTION_LABELS = {
   job_change: "ប្តូរតួនាទី/នាយកដ្ឋាន",
   transfer_and_job_change: "ប្តូរសាខា និងតួនាទី",
   resignation: "លាឈប់/បញ្ចប់ការងារ",
+  rehire: "ចូលធ្វើការវិញ",
+};
+
+const AUDIT_LABELS = {
+  login_account_created: "បានបង្កើត Login Account",
+  login_account_disabled: "បានបិទ Login Account",
+  login_account_enabled: "បានបើក Login Account វិញ",
+  login_account_deleted: "បានលុប Login Account",
+  employee_deactivated: "បានដាក់បុគ្គលិកអសកម្ម",
+  employee_rehired: "បានដាក់បុគ្គលិកចូលធ្វើការវិញ",
 };
 
 function EmploymentHistory({ items, onCancel }) {
@@ -45,6 +56,8 @@ function EmploymentHistory({ items, onCancel }) {
             {(oldValue.branch !== nextValue.branch) && <div className="rounded-lg bg-[#F7F8FB] px-3 py-2"><span className="text-[#8A8FA3]">សាខា៖</span> {oldValue.branch || "—"} → <b>{nextValue.branch || "—"}</b></div>}
             {(oldValue.department !== nextValue.department) && <div className="rounded-lg bg-[#F7F8FB] px-3 py-2"><span className="text-[#8A8FA3]">នាយកដ្ឋាន៖</span> {oldValue.department || "—"} → <b>{nextValue.department || "—"}</b></div>}
             {(oldValue.role !== nextValue.role) && <div className="rounded-lg bg-[#F7F8FB] px-3 py-2"><span className="text-[#8A8FA3]">តួនាទី៖</span> {oldValue.role || "—"} → <b>{nextValue.role || "—"}</b></div>}
+            {(oldValue.status !== nextValue.status) && <div className="rounded-lg bg-[#F7F8FB] px-3 py-2"><span className="text-[#8A8FA3]">ស្ថានភាព៖</span> {oldValue.status || "—"} → <b>{nextValue.status || "—"}</b></div>}
+            {nextValue.currentStartDate && <div className="rounded-lg bg-[#F7F8FB] px-3 py-2"><span className="text-[#8A8FA3]">ថ្ងៃចូលវិញ៖</span> <b>{nextValue.currentStartDate}</b></div>}
           </div>}
           <div className="text-xs text-[#5B5F73] mt-3"><span className="text-[#8A8FA3]">មូលហេតុ៖</span> {item.reason}</div>
           {item.note && <div className="text-xs text-[#5B5F73] mt-1"><span className="text-[#8A8FA3]">សម្គាល់៖</span> {item.note}</div>}
@@ -56,7 +69,7 @@ function EmploymentHistory({ items, onCancel }) {
   </section>;
 }
 
-export default function EmployeeDetailsPage({ employee, employees = [], onBack, onEdit, employmentActions = [], branches = [], departments = [], jobRoles = [], actorRole = "hr" }) {
+export default function EmployeeDetailsPage({ employee, employees = [], onBack, onEdit, employmentActions = [], branches = [], departments = [], jobRoles = [], actorRole = "hr", accountAuditLogs = [] }) {
   const [showAccount, setShowAccount] = useState(false);
   const [message, setMessage] = useState("");
   if (!employee) return null;
@@ -65,6 +78,15 @@ export default function EmployeeDetailsPage({ employee, employees = [], onBack, 
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const directManager = employees.find((item) => item.id === employee.managerId);
   const employeeStatus = normalizeEmployeeStatus(employee.status);
+  const accountStatus = getEmployeeAccountStatus(employee);
+  const accountMeta = getEmployeeAccountMeta(employee);
+  const accountHistory = accountAuditLogs
+    .filter((item) => item.employeeId === employee.id)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 8);
+  const periods = Array.isArray(employee.employmentPeriods) && employee.employmentPeriods.length
+    ? employee.employmentPeriods
+    : (employee.startDate ? [{ startDate: employee.startDate, endDate: employee.endDate || "" }] : []);
   return <>
     <div className="flex items-start justify-between gap-3 mb-5 flex-wrap">
       <div><button onClick={onBack} className="flex items-center gap-1.5 text-xs text-[#8A8FA3] hover:text-[#2A3F8F] mb-2"><ArrowLeft size={14} /> ត្រឡប់ទៅបញ្ជី</button><h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ព័ត៌មានបុគ្គលិកលម្អិត</h1></div>
@@ -80,8 +102,16 @@ export default function EmployeeDetailsPage({ employee, employees = [], onBack, 
       </aside>
       <div className="flex flex-col gap-5">
         <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><h3 className="font-semibold text-[#1E2333] mb-4 flex items-center gap-2"><User size={18} color={COLORS.primary} />ព័ត៌មានផ្ទាល់ខ្លួន</h3><div className="grid sm:grid-cols-2 gap-3"><Item icon={Phone} label="លេខទូរស័ព្ទ" value={employee.phone} dir="ltr" /><Item icon={Mail} label="អ៊ីមែល" value={employee.email} dir="ltr" /><Item icon={CalendarDays} label="ថ្ងៃខែឆ្នាំកំណើត" value={employee.dob} /><Item icon={User} label="ភេទ" value={employee.gender} /><div className="sm:col-span-2"><Item icon={MapPin} label="អាសយដ្ឋាន" value={employee.address} /></div><Item icon={User} label="ទំនាក់ទំនងបន្ទាន់" value={employee.emergencyName} /><Item icon={Phone} label="លេខទូរស័ព្ទបន្ទាន់" value={employee.emergencyPhone} dir="ltr" /><Item icon={User} label="ត្រូវជា" value={employee.emergencyRelation} /></div></section>
-        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><h3 className="font-semibold text-[#1E2333] mb-4 flex items-center gap-2"><Briefcase size={18} color={COLORS.primary} />ព័ត៌មានការងារ</h3><div className="grid sm:grid-cols-2 gap-3"><Item icon={Briefcase} label="នាយកដ្ឋាន" value={employee.dept} /><Item icon={Briefcase} label="តួនាទី" value={employee.role} /><Item icon={MapPin} label="សាខា" value={employee.branch} /><Item icon={User} label="អ្នកគ្រប់គ្រងផ្ទាល់" value={directManager ? `${directManager.id} · ${directManager.name}` : "មិនទាន់កំណត់"} /><Item icon={CalendarDays} label="ថ្ងៃចូលបម្រើការងារ" value={employee.startDate} /><Item icon={Briefcase} label="ប្រភេទការងារ" value={employee.employmentType} /><Item icon={CalendarDays} label="វេនការងារ" value={employee.shift} /></div></section>
-        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><div className="flex items-center justify-between gap-3 flex-wrap"><div><h3 className="font-semibold text-[#1E2333] mb-2 flex items-center gap-2"><Shield size={18} color={COLORS.primary} />ស្ថានភាពគណនី</h3><p className="text-sm text-[#5B5F73]">{employee.uid ? `បានភ្ជាប់ Login Account (${employee.accountRole || "employee"})` : "មិនទាន់មាន Login Account"}</p></div>{!employee.uid && !isEmployeeInactive(employee.status) && <button type="button" onClick={() => setShowAccount(true)} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-white" style={{ background: COLORS.primary }}>បង្កើត Login Account</button>}</div></section>
+        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5"><h3 className="font-semibold text-[#1E2333] mb-4 flex items-center gap-2"><Briefcase size={18} color={COLORS.primary} />ព័ត៌មានការងារ</h3><div className="grid sm:grid-cols-2 gap-3"><Item icon={Briefcase} label="នាយកដ្ឋាន" value={employee.dept} /><Item icon={Briefcase} label="តួនាទី" value={employee.role} /><Item icon={MapPin} label="សាខា" value={employee.branch} /><Item icon={User} label="អ្នកគ្រប់គ្រងផ្ទាល់" value={directManager ? `${directManager.id} · ${directManager.name}` : "មិនទាន់កំណត់"} /><Item icon={CalendarDays} label="ថ្ងៃចូលបម្រើការងារដំបូង" value={employee.startDate} /><Item icon={CalendarDays} label="ថ្ងៃចូលធ្វើការវិញចុងក្រោយ" value={employee.currentStartDate} /><Item icon={Briefcase} label="ប្រភេទការងារ" value={employee.employmentType} /><Item icon={CalendarDays} label="វេនការងារ" value={employee.shift} /></div>{periods.length > 0 && <div className="mt-4 rounded-xl bg-[#F7F8FB] p-3.5"><div className="text-xs font-semibold text-[#5B5F73] mb-2">រយៈពេលការងារ</div><div className="flex flex-wrap gap-2">{periods.map((period, index) => <span key={`${period.startDate}-${index}`} className="rounded-lg bg-white border border-[#EBEDF3] px-3 py-2 text-xs text-[#5B5F73]">លើកទី {index + 1}៖ {period.startDate || "—"} → {period.endDate || "បច្ចុប្បន្ន"}</span>)}</div></div>}</section>
+        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div><h3 className="font-semibold text-[#1E2333] mb-2 flex items-center gap-2"><Shield size={18} color={COLORS.primary} />គណនី និងសិទ្ធិចូលប្រើ</h3><div className="flex flex-wrap items-center gap-2"><span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: accountMeta.bg, color: accountMeta.fg }}>{accountMeta.label}</span>{employee.uid && <span className="text-xs text-[#8A8FA3]">{employee.username || employee.email || "Firebase Account"} · {employee.accountRole || "employee"}</span>}</div><p className="text-xs text-[#8A8FA3] mt-2">{accountMeta.description}</p></div>
+            {!employee.uid && !isEmployeeInactive(employee.status) && actorRole === "admin" && <button type="button" onClick={() => setShowAccount(true)} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-white" style={{ background: COLORS.primary }}>{accountStatus === ACCOUNT_STATUS.DELETED ? "បង្កើត Login Account ថ្មី" : "បង្កើត Login Account"}</button>}
+          </div>
+          {!employee.uid && actorRole !== "admin" && <div className="mt-3 rounded-xl bg-[#F7F8FB] px-4 py-3 text-xs text-[#8A8FA3]">មានតែ Admin ប៉ុណ្ណោះដែលអាចបង្កើត Login Account។</div>}
+          {isEmployeeInactive(employee.status) && <div className="mt-3 rounded-xl bg-[#FFF7ED] px-4 py-3 text-xs text-[#9A5B13]">ត្រូវដាក់បុគ្គលិកឲ្យសកម្មវិញ មុនបង្កើត ឬបើក Login Account។</div>}
+          {actorRole === "admin" && accountHistory.length > 0 && <div className="mt-4 border-t border-[#EBEDF3] pt-4"><div className="text-xs font-semibold text-[#5B5F73] mb-2">Audit Log គណនី</div><div className="space-y-2">{accountHistory.map((item) => <div key={item.id} className="rounded-xl bg-[#F7F8FB] px-3.5 py-3 text-xs"><div className="font-medium text-[#1E2333]">{AUDIT_LABELS[item.type] || item.type}</div><div className="text-[#8A8FA3] mt-1">{item.actorEmail || "System"} · {String(item.createdAt || "").slice(0, 16).replace("T", " ")}</div></div>)}</div></div>}
+        </section>
         <EmploymentHistory items={history} onCancel={cancelEmploymentAction} />
       </div>
     </div>

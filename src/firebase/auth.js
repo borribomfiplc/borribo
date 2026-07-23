@@ -41,7 +41,7 @@ async function verifyPasswordResetEmail(email) {
  */
 export async function resolveLoginEmail(identifier) {
   const value = identifier.trim();
-  if (value.includes("@")) return value;
+  if (value.includes("@")) return value.toLowerCase();
 
   const username = value.toLowerCase();
   if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(username)) {
@@ -88,6 +88,7 @@ export function authErrorMessage(err) {
   if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
     return "ឈ្មោះអ្នកប្រើប្រាស់ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ";
   }
+  if (code === "auth/user-disabled") return "គណនី Login នេះត្រូវបានបិទ។ សូមទាក់ទង Admin ឬ HR";
   if (code === "auth/invalid-email") return "អ៊ីមែលមិនត្រឹមត្រូវ";
   if (code === "auth/invalid-username") return "Username ត្រូវមានអក្សរអង់គ្លេស លេខ ឬ . _ - និងយ៉ាងតិច 2 តួអក្សរ";
   if (code === "auth/username-not-found") return "មិនរកឃើញ Username នេះទេ។ សូមប្រើអ៊ីមែល ឬទាក់ទងផ្នែកព័ត៌មានវិទ្យា";

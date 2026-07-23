@@ -31,6 +31,10 @@ export async function getEmployeeBackendStatus() {
   }
 }
 
+export async function auditLoginAccounts(repair = false) {
+  return adminRequest("/api/admin/login-accounts/audit", { repair });
+}
+
 export async function reserveEmployeeId(minimum = 1) {
   const counterRef = doc(db, "counters", "employees");
   return runTransaction(db, async (transaction) => {

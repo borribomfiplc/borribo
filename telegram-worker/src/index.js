@@ -253,6 +253,25 @@ async function authAdminRequest(env, action, body) {
   return result;
 }
 
+async function listAuthAccounts(env) {
+  const token = await getGoogleAccessToken(env);
+  const accounts = [];
+  let nextPageToken = "";
+  do {
+    const query = new URLSearchParams({ maxResults: "1000" });
+    if (nextPageToken) query.set("nextPageToken", nextPageToken);
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/accounts:batchGet?${query}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error?.message || `Firebase Auth list failed (${response.status})`);
+    accounts.push(...(result.users || []));
+    nextPageToken = result.nextPageToken || "";
+  } while (nextPageToken);
+  return accounts;
+}
+
 function validUsername(value) { return /^[a-z0-9][a-z0-9._-]{1,31}$/.test(value); }
 
 function normalizeEmail(value) { return String(value || "").trim().toLowerCase(); }
@@ -286,6 +305,233 @@ function accountStatusForEmployee(employee = {}) {
   if (["none", "active", "disabled", "deleted"].includes(stored)) return stored;
   if (employee.uid) return normalizeEmployeeStatus(employee.status) === "អសកម្ម" ? "disabled" : "active";
   return employee.loginDeletedAt ? "deleted" : "none";
+}
+
+const LOGIN_ROLES = new Set(["admin", "hr", "employee", "kiosk"]);
+
+function customClaims(account = {}) {
+  try { return JSON.parse(account.customAttributes || "{}"); } catch { return {}; }
+}
+
+function accountAuditRow(account, context) {
+  const uid = String(account.localId || "");
+  const email = normalizeEmail(account.email);
+  const profile = context.profiles.get(uid) || null;
+  const userDocument = context.users.get(uid) || null;
+  const linkedEmployees = context.employeesByUid.get(uid) || [];
+  const claims = customClaims(account);
+  const claimRole = String(claims.role || "");
+  const profileRole = String(profile?.role || "");
+  const role = claimRole || profileRole || String(userDocument?.role || "");
+  const employeeId = String(
+    claims.employeeId || profile?.employeeId || userDocument?.employeeId || linkedEmployees[0]?.id || "",
+  );
+  const employee = (employeeId && context.employees.get(employeeId)) || linkedEmployees[0] || null;
+  const username = String(profile?.username || userDocument?.username || employee?.username || "").trim().toLowerCase();
+  const usernameDocument = username ? context.usernames.get(username) : null;
+  const resetDocument = email ? context.passwordResetEmails.get(email) : null;
+  const blockers = [];
+  const warnings = [];
+
+  if (!email) blockers.push("missing-email");
+  if (account.disabled === true) blockers.push("auth-disabled");
+  if (!profile) blockers.push("missing-profile");
+  else if (profile.active === false) blockers.push("profile-inactive");
+  if (!LOGIN_ROLES.has(role)) blockers.push("invalid-role");
+  if (claimRole && profileRole && claimRole !== profileRole) blockers.push("role-mismatch");
+  else if (LOGIN_ROLES.has(role) && claimRole !== role) blockers.push("missing-role-claim");
+
+  if (role === "employee") {
+    if (!employeeId) blockers.push("missing-employee-id");
+    else if (!employee) blockers.push("missing-employee");
+    else {
+      if (String(employee.uid || "") !== uid) blockers.push("employee-link-mismatch");
+      if (normalizeEmployeeStatus(employee.status) === "អសកម្ម") blockers.push("employee-inactive");
+    }
+  }
+
+  if (!userDocument) warnings.push("missing-user-directory");
+  if (!username) warnings.push("missing-username");
+  else if (!usernameDocument || usernameDocument.uid !== uid || usernameDocument.active === false) {
+    warnings.push("username-directory-mismatch");
+  }
+  if (!resetDocument || resetDocument.uid !== uid || resetDocument.active === false) {
+    warnings.push("password-reset-directory-mismatch");
+  }
+
+  return {
+    uid,
+    email,
+    name: account.displayName || profile?.name || userDocument?.name || employee?.name || email || uid,
+    username,
+    role,
+    employeeId,
+    branch: profile?.branch || userDocument?.branch || employee?.branch || "",
+    disabled: account.disabled === true,
+    active: account.disabled !== true && profile?.active !== false,
+    ready: blockers.length === 0,
+    blockers,
+    warnings,
+    createdAt: account.createdAt ? new Date(Number(account.createdAt)).toISOString() : "",
+    lastLoginAt: account.lastLoginAt ? new Date(Number(account.lastLoginAt)).toISOString() : "",
+  };
+}
+
+async function buildLoginAccountAudit(env) {
+  const [authAccounts, profiles, users, employees, usernames, passwordResetEmails] = await Promise.all([
+    listAuthAccounts(env),
+    listDocuments(env, "profiles"),
+    listDocuments(env, "users"),
+    listDocuments(env, "employees"),
+    listDocuments(env, "usernames"),
+    listDocuments(env, "passwordResetEmails"),
+  ]);
+  const employeesByUid = new Map();
+  for (const employee of employees) {
+    const uid = String(employee.uid || "");
+    if (!uid) continue;
+    employeesByUid.set(uid, [...(employeesByUid.get(uid) || []), employee]);
+  }
+  const context = {
+    profiles: new Map(profiles.map((row) => [row.id, row])),
+    users: new Map(users.map((row) => [row.id, row])),
+    employees: new Map(employees.map((row) => [row.id, row])),
+    employeesByUid,
+    usernames: new Map(usernames.map((row) => [row.id, row])),
+    passwordResetEmails: new Map(passwordResetEmails.map((row) => [normalizeEmail(row.id), row])),
+  };
+  const rows = authAccounts.map((account) => accountAuditRow(account, context));
+  const authUids = new Set(authAccounts.map((account) => String(account.localId || "")));
+  for (const profile of profiles) {
+    if (authUids.has(profile.id)) continue;
+    rows.push({
+      uid: profile.id,
+      email: normalizeEmail(profile.email),
+      name: profile.name || profile.email || profile.id,
+      username: profile.username || "",
+      role: profile.role || "",
+      employeeId: profile.employeeId || "",
+      branch: profile.branch || "",
+      disabled: true,
+      active: false,
+      ready: false,
+      blockers: ["missing-auth-account"],
+      warnings: [],
+      createdAt: "",
+      lastLoginAt: "",
+    });
+  }
+  rows.sort((a, b) => a.role.localeCompare(b.role) || a.email.localeCompare(b.email));
+  return {
+    rows,
+    summary: {
+      total: rows.length,
+      ready: rows.filter((row) => row.ready).length,
+      blocked: rows.filter((row) => !row.ready).length,
+      warnings: rows.filter((row) => row.warnings.length > 0).length,
+    },
+    raw: { authAccounts, context },
+  };
+}
+
+async function repairLoginAccountDirectories(user, env, audit) {
+  let repaired = 0;
+  const { authAccounts, context } = audit.raw;
+  const auditRows = new Map(audit.rows.map((row) => [row.uid, row]));
+  for (const account of authAccounts) {
+    const uid = String(account.localId || "");
+    const email = normalizeEmail(account.email);
+    if (!uid || !email) continue;
+    const currentAudit = auditRows.get(uid);
+    if (currentAudit?.ready && !currentAudit.warnings.length) continue;
+    const claims = customClaims(account);
+    const profile = context.profiles.get(uid) || null;
+    const userDocument = context.users.get(uid) || null;
+    const linkedEmployees = context.employeesByUid.get(uid) || [];
+    const claimRole = LOGIN_ROLES.has(claims.role) ? claims.role : "";
+    const profileRole = LOGIN_ROLES.has(profile?.role) ? profile.role : "";
+    if (claimRole && profileRole && claimRole !== profileRole) continue;
+    const role = claimRole || profileRole || (LOGIN_ROLES.has(userDocument?.role) ? userDocument.role : "");
+    if (!role) continue;
+
+    const employeeId = String(
+      claims.employeeId || profile?.employeeId || userDocument?.employeeId || linkedEmployees[0]?.id || "",
+    );
+    const employee = (employeeId && context.employees.get(employeeId)) || linkedEmployees[0] || null;
+    if (role === "employee" && (!employeeId || !employee)) continue;
+    const branch = String(claims.branch || profile?.branch || userDocument?.branch || employee?.branch || "");
+    const branchId = String(claims.branchId || profile?.branchId || userDocument?.branchId || employee?.branchId || "");
+    let username = String(profile?.username || userDocument?.username || employee?.username || "").trim().toLowerCase();
+    if (!validUsername(username)) {
+      const emailUsername = email.split("@")[0].toLowerCase();
+      username = validUsername(emailUsername) ? emailUsername : "";
+    }
+    const usernameOwner = username ? context.usernames.get(username) : null;
+    if (usernameOwner && usernameOwner.uid && usernameOwner.uid !== uid) username = "";
+    const active = account.disabled !== true && profile?.active !== false
+      && (!employee || normalizeEmployeeStatus(employee.status) !== "អសកម្ម");
+    const name = account.displayName || profile?.name || userDocument?.name || employee?.name || email;
+    const now = new Date().toISOString();
+
+    const nextClaims = { ...claims, role, employeeId: employeeId || null, branch, branchId: branchId || null };
+    if (JSON.stringify(nextClaims) !== JSON.stringify(claims)) {
+      await authAdminRequest(env, "update", {
+        localId: uid,
+        customAttributes: JSON.stringify(nextClaims),
+        disableUser: account.disabled === true,
+      });
+    }
+
+    const writes = [
+      {
+        path: `profiles/${uid}`,
+        data: {
+          ...(profile || {}),
+          uid, email, username, name, role, employeeId: employeeId || null,
+          branch, branchId: branchId || null, active, updatedAt: now,
+        },
+      },
+      {
+        path: `users/${uid}`,
+        data: {
+          ...(userDocument || {}),
+          id: uid, email, username, name, role, employeeId: employeeId || null,
+          branch, branchId: branchId || null, status: active ? "សកម្ម" : "អសកម្ម",
+          active, updatedAt: now,
+        },
+      },
+      { path: `passwordResetEmails/${email}`, data: { email, uid, active, updatedAt: now } },
+      ...(username ? [{ path: `usernames/${username}`, data: { username, email, uid, active, updatedAt: now } }] : []),
+      ...(employee ? [{
+        path: `employees/${employee.id}`,
+        data: {
+          ...employee, uid, email, username, accountRole: role,
+          accountStatus: active ? "active" : "disabled", updatedAt: now,
+        },
+      }] : []),
+      auditLogWrite("login_account_repaired", user, {
+        id: employee?.id || employeeId,
+        name,
+        uid,
+        email,
+        accountRole: role,
+      }),
+    ];
+    await commitWrites(env, writes);
+    repaired += 1;
+  }
+  return repaired;
+}
+
+async function handleAuditLoginAccounts(user, env, body) {
+  if (user.role !== "admin") throw Object.assign(new Error("Admin role is required"), { status: 403 });
+  let audit = await buildLoginAccountAudit(env);
+  let repaired = 0;
+  if (body?.repair === true) {
+    repaired = await repairLoginAccountDirectories(user, env, audit);
+    audit = await buildLoginAccountAudit(env);
+  }
+  return { ok: true, ...audit, raw: undefined, repaired };
 }
 
 function auditLogWrite(type, user, employee, extra = {}) {
@@ -1136,6 +1382,7 @@ async function handleRequest(request, env) {
     else if (url.pathname === "/api/admin/employees/deactivate" && request.method === "POST") result = await handleDeactivateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/reactivate" && request.method === "POST") result = await handleReactivateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/delete-account" && request.method === "POST") result = await handleDeleteEmployeeAccount(user, env, await request.json());
+    else if (url.pathname === "/api/admin/login-accounts/audit" && request.method === "POST") result = await handleAuditLoginAccounts(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/create" && request.method === "POST") result = await handleCreateEmploymentAction(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/cancel" && request.method === "POST") result = await handleCancelEmploymentAction(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {

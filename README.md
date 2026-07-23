@@ -1,6 +1,8 @@
 # MFI វត្តមានបុគ្គលិក — Attendance Dashboard
 
-> v46 adds employee leave requests, HR/Admin approval, leave-to-attendance sync, and protected leave-document uploads. After upgrading, deploy both Firestore and Storage rules: `npx firebase-tools deploy --only firestore:rules,firestore:indexes,storage`.
+> v57 adds a live Admin login-account audit for Firebase Auth, Profile, Role,
+> Employee link, Username, and Password Reset Directory. Deploy the Telegram
+> Worker after upgrading: `npm run deploy:telegram`.
 
 React + Vite + Tailwind CSS project for the MFI staff attendance dashboard,
 backed by **Firebase** (Firestore + Auth) and deployed on **Cloudflare
@@ -169,6 +171,22 @@ npm run clear-login-users -- --keep-email admin@borribo.com.kh --confirm
 
 `serviceAccountKey.json` must remain in the project root and must never be
 uploaded to GitHub.
+
+## Check every Login Account
+
+Sign in as Admin and open **ការកំណត់ → អ្នកប្រើប្រាស់ និងតួនាទី**.
+The page checks every real Firebase Authentication account against its
+Firestore Profile, Role claim, Employee link, Username directory, and password
+reset directory.
+
+- **អាច Login** means the account structure is ready for email/password login.
+- **ត្រូវកែ** shows the exact missing or conflicting record.
+- **ពិនិត្យ និងជួសជុល** rebuilds safe account metadata and directory records.
+  It never reads or changes a user's password, never enables an intentionally
+  disabled account, and does not guess when two valid roles conflict.
+
+The audit uses the existing protected Worker endpoint and is available only to
+an authenticated `admin` account.
 
 ## Project structure
 

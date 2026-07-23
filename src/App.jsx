@@ -25,6 +25,9 @@ import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { useEnglishUi } from "./i18n/useEnglishUi";
 import { reactivateEmployee, removeEmployee } from "./services/employees";
 import { useAutoSignOut } from "./hooks/useAutoSignOut";
+import { useSettingsDoc } from "./firebase/useSettingsDoc";
+import { updateSystemSettings } from "./firebase/settingsDoc";
+import { DEFAULT_PUBLIC_SYSTEM_SETTINGS, sessionTimeoutMs } from "./config/systemSettings";
 
 // Every other page is code-split with React.lazy so the initial bundle only
 // pays for the dashboard home screen; each page's JS loads on first visit.
@@ -54,6 +57,7 @@ const SystemSettingsPage = lazy(() => import("./pages/SystemSettingsPage"));
 const KpiDashboardPage = lazy(() => import("./pages/KpiDashboardPage"));
 const AssetManagementPage = lazy(() => import("./pages/AssetManagementPage"));
 const StaffLoanPage = lazy(() => import("./pages/StaffLoanPage"));
+const PayrollPage = lazy(() => import("./pages/PayrollPage"));
 const FingerprintPage = lazy(() => import("./pages/FingerprintPage"));
 const TelegramBotPage = lazy(() => import("./pages/TelegramBotPage"));
 const EmployeePortalPage = lazy(() => import("./pages/EmployeePortalPage"));
@@ -84,11 +88,24 @@ function App() {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("borribo-theme") === "dark");
   const [language, setLanguage] = useState(() => localStorage.getItem("borribo-language") || "ខ្មែរ");
   const [selectedBranch, setSelectedBranch] = useState(() => localStorage.getItem("borribo-selected-branch") || "");
   const topbarRef = useRef(null);
   useEnglishUi(language);
+  const [systemSettings] = useSettingsDoc(
+    "systemPublic",
+    DEFAULT_PUBLIC_SYSTEM_SETTINGS,
+    loggedIn,
+    (value) => ({ ...DEFAULT_PUBLIC_SYSTEM_SETTINGS, ...value }),
+  );
+  const { pushNotif, autoLock, darkMode, sessionTimeoutMinutes } = systemSettings;
+  const [companySettings] = useSettingsDoc(
+    "company",
+    { logoUrl: "" },
+    loggedIn,
+    (value) => ({ logoUrl: value.logoUrl || "" }),
+  );
+  const companyLogoUrl = companySettings.logoUrl || "/assets/borribo-logo.png";
 
   // A user can log out from any screen then sign in again without a full page
   // reload. Reset the workspace for each new signed-in account so the first
@@ -122,9 +139,10 @@ function App() {
   const [calendarEvents, setCalendarEvents] = useFirestoreCollection("calendarEvents", [], "id", managerAccess);
   const [users, setUsers] = useFirestoreCollection("users", initialUsers, "id", adminAccess);
   const [roles, setRoles] = useFirestoreCollection("roles", initialRoles, "id", adminAccess);
-  const [kpis, setKpis] = useFirestoreCollection("kpis", [], "kpiId", managerAccess);
-  const [assets, setAssets] = useFirestoreCollection("assets", [], "assetId", managerAccess);
-  const [staffLoans, setStaffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
+  const [kpis] = useFirestoreCollection("kpis", [], "kpiId", managerAccess);
+  const [assets] = useFirestoreCollection("assets", [], "assetId", managerAccess);
+  const [staffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
+  const [payrollRecords] = useFirestoreCollection("payrollRecords", [], "payrollId", managerAccess);
   const [telegramOutbox, setTelegramOutbox] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
   const [employmentActions] = useFirestoreCollection("employmentActions", [], "id", managerAccess);
   const [auditLogs] = useFirestoreCollection("auditLogs", [], "id", adminAccess);
@@ -199,12 +217,23 @@ function App() {
     setOpenSection((prev) => (prev === key ? null : key));
 
   const handleLogout = () => firebaseLogout();
-  useAutoSignOut(authUser, firebaseLogout);
+  useAutoSignOut(
+    authUser,
+    firebaseLogout,
+    autoLock ? sessionTimeoutMs(sessionTimeoutMinutes) : null,
+  );
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
-    localStorage.setItem("borribo-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
+
+  const toggleDarkMode = async () => {
+    try {
+      await updateSystemSettings({ darkMode: !darkMode });
+    } catch (error) {
+      console.error("Failed to save dark mode", error);
+    }
+  };
 
   const chooseLanguage = (value) => {
     setLanguage(value);
@@ -223,6 +252,7 @@ function App() {
     localStorage.setItem(notificationStorageKey, JSON.stringify([...next]));
   };
   const topbarNotifications = useMemo(() => {
+    if (!pushNotif) return [];
     const pendingLeaves = leaveRequests.filter((row) => row.status === "រង់ចាំពិនិត្យ");
     const pendingCorrections = corrections.filter((row) => row.status === "រង់ចាំពិនិត្យ");
     const lateToday = todaysAttendance.filter((row) => row.status === "យឺត");
@@ -231,7 +261,7 @@ function App() {
       ...(managerAccess && pendingCorrections.length ? [{ id: `correction-${pendingCorrections.map((row) => row.id).join("-")}`, text: `មានសំណើកែវត្តមាន ${pendingCorrections.length} កំពុងរង់ចាំពិនិត្យ`, detail: "ទៅកាន់ Attendance Correction", page: "កែតម្រូវវត្តមាន", section: "attendance" }] : []),
       ...(lateToday.length ? [{ id: `late-${lateToday.map((row) => row.recordId || row.id).join("-")}`, text: `បុគ្គលិក ${lateToday.length} នាក់មកយឺតថ្ងៃនេះ`, detail: "ទៅកាន់ Daily Attendance", page: "វត្តមានប្រចាំថ្ងៃ", section: "attendance" }] : []),
     ];
-  }, [leaveRequests, corrections, todaysAttendance, managerAccess]);
+  }, [leaveRequests, corrections, todaysAttendance, managerAccess, pushNotif]);
   const unreadNotifications = topbarNotifications.filter((note) => !readNotificationIds.has(note.id));
   const openNotification = (notification) => {
     const next = new Set(readNotificationIds); next.add(notification.id); saveReadNotifications(next);
@@ -295,7 +325,7 @@ function App() {
           lg:relative lg:inset-auto lg:translate-x-0 lg:z-auto`}
       >
         <div className="h-16 flex items-center px-5 border-b border-[#EBEDF3] shrink-0">
-          <img src="/assets/borribo-logo.png" alt="BORRIBO MFI" className="w-[185px] h-auto object-contain object-left" />
+          <img src={companyLogoUrl} alt="BORRIBO MFI" className="w-[185px] max-h-16 h-auto object-contain object-left" />
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-1">
@@ -378,11 +408,11 @@ function App() {
           </div>
 
           <div className="relative">
-            <button onClick={() => { setNotificationOpen((v) => !v); setBranchMenuOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={notificationOpen} aria-label={`ការជូនដំណឹង (${unreadNotifications.length} ថ្មី)`} className="relative w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0"><Bell size={18} />{unreadNotifications.length > 0 && <span className="absolute -top-0.5 -right-0.5 bg-[#D9614F] text-white text-[10px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center">{unreadNotifications.length}</span>}</button>
+            <button disabled={!pushNotif} onClick={() => { setNotificationOpen((v) => !v); setBranchMenuOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={notificationOpen} aria-label={pushNotif ? `ការជូនដំណឹង (${unreadNotifications.length} ថ្មី)` : "ការជូនដំណឹងត្រូវបានបិទ"} title={pushNotif ? "ការជូនដំណឹង" : "ការជូនដំណឹងក្នុងកម្មវិធីត្រូវបានបិទក្នុង System Settings"} className="relative w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"><Bell size={18} />{unreadNotifications.length > 0 && <span className="absolute -top-0.5 -right-0.5 bg-[#D9614F] text-white text-[10px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center">{unreadNotifications.length}</span>}</button>
             {notificationOpen && <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden"><div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#EBEDF3]"><div className="text-sm font-semibold text-[#1E2333]">ការជូនដំណឹងថ្មី</div>{unreadNotifications.length > 0 && <button onClick={() => saveReadNotifications(new Set(topbarNotifications.map((note) => note.id)))} className="text-xs font-medium text-[#2A3F8F] whitespace-nowrap">សម្គាល់ថាបានអានទាំងអស់</button>}</div>{topbarNotifications.length ? topbarNotifications.map((note) => <button key={note.id} onClick={() => openNotification(note)} className={`w-full px-4 py-3 text-right border-b border-[#EBEDF3] last:border-0 hover:bg-[#F7F8FB] ${readNotificationIds.has(note.id) ? "" : "bg-[#F7F8FB]"}`}><div className="text-sm text-[#1E2333]">{note.text}</div><div className="text-xs text-[#2A3F8F] mt-1">{note.detail}</div></button>) : <div className="px-4 py-5 text-sm text-[#8A8FA3] text-center">មិនមានការជូនដំណឹងថ្មីទេ</div>}</div>}
           </div>
 
-          <button onClick={() => setDarkMode((v) => !v)} aria-label="ប្តូររចនាប័ទ្មពន្លឺ/ងងឹត" className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0">{darkMode ? <Moon size={18} /> : <Sun size={18} />}</button>
+          <button onClick={toggleDarkMode} aria-label="ប្តូររចនាប័ទ្មពន្លឺ/ងងឹត" className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0">{darkMode ? <Moon size={18} /> : <Sun size={18} />}</button>
 
           <div className="relative flex items-center gap-2 sm:gap-2.5 pl-1.5 sm:pl-2 sm:border-l border-[#EBEDF3] shrink-0">
           <button onClick={() => { setProfileMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); setLanguageMenuOpen(false); }} aria-expanded={profileMenuOpen} className="flex items-center gap-2.5 text-right">
@@ -565,11 +595,13 @@ function App() {
             profile={profile}
           />
         ) : active === "KPI Dashboard" ? (
-          <KpiDashboardPage employees={employees} kpis={kpis} setKpis={setKpis} />
+          <KpiDashboardPage employees={employees} kpis={kpis} />
         ) : active === "គ្រប់គ្រងទ្រព្យសម្បត្តិ" ? (
-          <AssetManagementPage employees={employees} assets={assets} setAssets={setAssets} />
+          <AssetManagementPage employees={employees} assets={assets} />
         ) : active === "កម្ចីបុគ្គលិក" ? (
-          <StaffLoanPage employees={employees} loans={staffLoans} setLoans={setStaffLoans} />
+          <StaffLoanPage employees={employees} loans={staffLoans} />
+        ) : active === "ប្រាក់ខែ" ? (
+          <PayrollPage employees={employees} payrollRecords={payrollRecords} loans={staffLoans} />
         ) : active === "របាយការណ៍វត្តមាន" ? (
           <AttendanceReportPage historyData={scopedAttendanceHistory} />
         ) : active === "របាយការណ៍ច្បាប់" ? (

@@ -86,6 +86,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Backend-only operational aggregates and uniqueness reservations.
+    match /kpiWeightTotals/{bucketId} {
+      allow read, write: if false;
+    }
+
+    match /payrollUnique/{reservationId} {
+      allow read, write: if false;
+    }
+
     // Transactional counter used to reserve unique employee numbers even
     // when two HR users add staff at the same time.
     match /counters/employees {
@@ -197,6 +206,24 @@ service cloud.firestore {
       allow delete: if administrator();
     }
 
+    match /settings/company {
+      // Company name, address and logo are displayed throughout the signed-in
+      // app. Active accounts may read them; only Admin/HR may change them.
+      allow get: if activeAccount();
+      allow list: if false;
+      allow create, update: if manager();
+      allow delete: if administrator();
+    }
+
+    match /settings/systemPublic {
+      // Runtime-safe settings used by every active account. Sensitive email
+      // provider and backup metadata remain in manager-only settings/system.
+      allow get: if activeAccount();
+      allow list: if false;
+      allow create, update: if manager();
+      allow delete: if administrator();
+    }
+
     match /settings/{settingId} {
       // This wildcard deliberately grants non-managers access only to the
       // working-hours document. It must never make settings/gpsQr readable.
@@ -215,12 +242,14 @@ service cloud.firestore {
       allow get, list, create, update, delete: if administrator();
     }
 
-    // Operational data used by the MFI management modules. Only HR/Admin
-    // accounts can view or change these records; employee accounts never
-    // receive salary, loan, KPI, or asset data.
+    // Operational HR records contain approval, payment, assignment,
+    // maintenance and KPI audit histories. Managers may read them, but all
+    // writes go through the trusted Worker so browser users cannot forge,
+    // rewrite or hard-delete financial/asset history.
     match /{collectionName}/{documentId} {
-      allow get, list, create, update, delete: if manager()
-        && collectionName in ['kpis', 'assets', 'staffLoans'];
+      allow get, list: if manager()
+        && collectionName in ['kpis', 'assets', 'staffLoans', 'payrollRecords'];
+      allow create, update, delete: if false;
     }
 
     // The Cloudflare Telegram Worker writes delivery logs with a Firebase

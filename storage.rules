@@ -7,6 +7,24 @@ service firebase.storage {
       return signedIn() && request.auth.token.role in ['admin', 'hr'];
     }
 
+    match /company/{fileName} {
+      allow read: if signedIn();
+      allow create, update: if manager()
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if manager();
+    }
+
+    match /loanAttachments/{uploaderUid}/{uploadId}/{fileName} {
+      allow read: if manager();
+      allow create: if manager()
+        && request.auth.uid == uploaderUid
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('(application/pdf|image/jpeg|image/png|image/webp)');
+      allow update: if false;
+      allow delete: if manager();
+    }
+
     match /leaveAttachments/{employeeUid}/{requestId}/{fileName} {
       allow read: if manager() || (signedIn() && request.auth.uid == employeeUid);
       allow create: if signedIn()

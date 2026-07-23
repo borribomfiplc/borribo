@@ -40,7 +40,7 @@ export const navSections = [
     label: "ប្រតិបត្តិការ MFI",
     icon: Target,
     key: "mfiOperations",
-    items: ["KPI Dashboard", "គ្រប់គ្រងទ្រព្យសម្បត្តិ", "កម្ចីបុគ្គលិក"],
+    items: ["KPI Dashboard", "គ្រប់គ្រងទ្រព្យសម្បត្តិ", "កម្ចីបុគ្គលិក", "ប្រាក់ខែ"],
   },
   {
     label: "របាយការណ៍",

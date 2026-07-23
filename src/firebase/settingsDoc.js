@@ -1,5 +1,6 @@
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
 import { db } from "./config";
+import { normalizeSystemSettings, publicSystemSettings } from "../config/systemSettings";
 
 // Settings screens (Company, Working Hours, System) are one form each, not
 // a list — so instead of useFirestoreCollection (which is built for arrays
@@ -22,13 +23,51 @@ export async function loadSettingsDoc(docId, defaults) {
     await setDoc(ref, defaults);
     return defaults;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error(`[firestore] Failed to load settings/${docId}:`, err);
-    return defaults; // fall back to defaults so the form still renders
+    return defaults;
   }
 }
 
 /** Writes a settings document (merges with whatever is already stored). */
 export async function saveSettingsDoc(docId, data) {
   await setDoc(doc(db, "settings", docId), data, { merge: true });
+}
+
+/**
+ * Saves private manager-only system settings and a sanitised read-only copy
+ * used at runtime by every active account. This keeps email/backup metadata
+ * private while still allowing session timeout, theme and in-app notification
+ * preferences to take effect for employees and kiosks.
+ */
+export async function saveSystemSettings(data) {
+  const normalized = normalizeSystemSettings(data);
+  const batch = writeBatch(db);
+  batch.set(doc(db, "settings", "system"), {
+    ...normalized,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  batch.set(doc(db, "settings", "systemPublic"), {
+    ...publicSystemSettings(normalized),
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  await batch.commit();
+  return normalized;
+}
+
+/** Updates a small subset without replacing unrelated private settings. */
+export async function updateSystemSettings(patch) {
+  const privatePatch = { ...patch, updatedAt: serverTimestamp() };
+  const allowedPublicKeys = ["pushNotif", "autoLock", "darkMode", "sessionTimeoutMinutes"];
+  const publicPatch = Object.fromEntries(
+    Object.entries(patch).filter(([key]) => allowedPublicKeys.includes(key)),
+  );
+  const batch = writeBatch(db);
+  batch.set(doc(db, "settings", "system"), privatePatch, { merge: true });
+  if (Object.keys(publicPatch).length) {
+    batch.set(doc(db, "settings", "systemPublic"), {
+      ...publicPatch,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }
+  await batch.commit();
 }

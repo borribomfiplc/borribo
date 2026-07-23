@@ -1,8 +1,8 @@
 # MFI វត្តមានបុគ្គលិក — Attendance Dashboard
 
-> v57 adds a live Admin login-account audit for Firebase Auth, Profile, Role,
-> Employee link, Username, and Password Reset Directory. Deploy the Telegram
-> Worker after upgrading: `npm run deploy:telegram`.
+> v59 adds secure Staff Loan, Asset, KPI and Payroll workflows with approvals,
+> audit history, attachments, depreciation and atomic loan deductions. Deploy
+> Firestore/Storage rules and the Telegram Worker before the frontend.
 
 React + Vite + Tailwind CSS project for the MFI staff attendance dashboard,
 backed by **Firebase** (Firestore + Auth) and deployed on **Cloudflare
@@ -275,3 +275,100 @@ when you click into it.
 - Icons: [lucide-react](https://lucide.dev/). Charts: [recharts](https://recharts.org/).
 - Styling uses Tailwind CSS utility classes throughout — no separate CSS
   files per component.
+
+## Functional System Settings (v58)
+
+System settings are now enforced at runtime rather than only saved as form values.
+
+### Public runtime settings
+
+Admin/HR save the private `settings/system` document and a sanitised `settings/systemPublic` document. Active signed-in accounts read `systemPublic` in real time for:
+
+- inactivity auto-lock and the selected 15/30/60-minute timeout;
+- topbar in-app notifications;
+- global light/dark mode.
+
+Deploy the updated Firestore rules before using these settings:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+### Email notifications (optional)
+
+Leave requests are emailed to active Admin/HR profiles. Leave decisions are emailed to the employee account. Attendance email is deliberately excluded to avoid excessive messages; attendance continues through Telegram and the in-app notification centre.
+
+Configure the Worker:
+
+```bash
+cd telegram-worker
+npx wrangler secret put RESEND_API_KEY
+```
+
+Add this Worker variable in `telegram-worker/wrangler.toml` or the Cloudflare dashboard:
+
+```toml
+NOTIFICATION_FROM_EMAIL = "BORRIBO HRMS <hrms@your-verified-domain.com>"
+```
+
+The sender domain must be verified with the email provider. The System Settings page shows whether the provider is configured and includes a test-email button.
+
+### Automatic Firestore backup (optional)
+
+Create a Google Cloud Storage bucket, then configure its bucket name without `gs://`:
+
+```toml
+FIRESTORE_BACKUP_BUCKET = "your-backup-bucket-name"
+```
+
+The Worker Firebase service account must be able to start Firestore exports and write objects to that bucket. At minimum, grant the appropriate Firestore import/export role and Storage object creation permissions. The Worker checks every 30 minutes, starts a backup only when the selected daily/weekly/monthly interval is due, and polls the long-running export operation until it completes or fails.
+
+### Persistent company logo
+
+Company Settings uploads logos to Firebase Storage under `company/`. Deploy the updated Storage rules:
+
+```bash
+firebase deploy --only storage
+```
+
+Allowed formats are JPG, PNG and WebP, with a maximum size of 2 MB. The saved logo appears in the signed-in sidebar; the unauthenticated login page keeps the bundled fallback logo.
+
+## Operations and Payroll workflows (v59)
+
+The Staff Loan, Asset, KPI and Payroll modules now write through the authenticated
+Cloudflare Worker instead of writing operational records directly from the
+browser. `VITE_TELEGRAM_WORKER_URL` is therefore required for these modules.
+
+### Staff Loan attachments
+
+Managers can attach PDF, JPG, PNG or WebP files up to 5 MB each. Files are
+stored below `loanAttachments/` in Firebase Storage and are readable only by
+Admin/HR accounts under the supplied Storage rules.
+
+### Asset depreciation
+
+Asset depreciation uses the straight-line method when purchase date, useful
+life and salvage value are supplied. Book value is calculated in the UI from
+the saved acquisition fields. Changing material acquisition values on an
+approved asset automatically sends it back for approval.
+
+### Payroll and Staff Loan integration
+
+Each employee can have only one payroll record per month. When an approved
+payroll is marked paid, any selected Staff Loan deduction and the payroll status
+are committed atomically, so one cannot succeed without the other.
+
+### Required deployment order
+
+```bash
+# Back up Firestore first
+npx firebase-tools deploy --only firestore:rules,storage
+npm run deploy:telegram
+npm run build
+npm run deploy
+```
+
+Deploy the Worker before the frontend because all Loan, Asset, KPI and Payroll
+mutations depend on `/api/admin/operations/mutate`. No data migration is
+required; legacy assets are treated as approved and legacy records gain history
+fields on their first managed update.

@@ -14,3 +14,12 @@ crons = ["*/30 * * * *"]
 # npx wrangler secret put TELEGRAM_BOT_TOKEN
 # npx wrangler secret put FIREBASE_CLIENT_EMAIL
 # npx wrangler secret put FIREBASE_PRIVATE_KEY
+
+# Optional System Settings integrations:
+# FIRESTORE_BACKUP_BUCKET = "your-backup-bucket-name"
+# NOTIFICATION_FROM_EMAIL = "BORRIBO HRMS <hrms@your-verified-domain.com>"
+# Add the email API key as a secret:
+# npx wrangler secret put RESEND_API_KEY
+#
+# The Firebase service account also needs Firestore export permissions and
+# object write access to FIRESTORE_BACKUP_BUCKET.

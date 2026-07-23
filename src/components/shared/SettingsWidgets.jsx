@@ -25,7 +25,7 @@ export function ToggleRow({ label, desc, checked, onChange }) {
   );
 }
 
-export function SettingsSaveBar({ onSave, saved }) {
+export function SettingsSaveBar({ onSave, saved, disabled = false }) {
   return (
     <div className="flex items-center justify-between mb-5 sm:mb-6 flex-wrap gap-3">
       {saved ? (
@@ -35,7 +35,8 @@ export function SettingsSaveBar({ onSave, saved }) {
       )}
       <button
         onClick={onSave}
-        className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap ml-auto"
+        disabled={disabled}
+        className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap ml-auto disabled:cursor-not-allowed disabled:opacity-60"
         style={{ background: COLORS.primary }}
       >
         <Save size={16} />

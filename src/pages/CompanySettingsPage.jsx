@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
-import {
-  Building2, Settings, Camera, Mail, MapPin, Phone
-} from "lucide-react";
+import { Building2, Settings, Camera, Mail, MapPin, Phone } from "lucide-react";
+import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { FieldLabel, TextField, SelectField, SectionCard } from "../components/shared/FormFields";
 import { SettingsSaveBar } from "../components/shared/SettingsWidgets";
 import { loadSettingsDoc, saveSettingsDoc } from "../firebase/settingsDoc";
+import { storage } from "../firebase/config";
 
 const DEFAULT_COMPANY = {
   name: "MFI ហិរញ្ញវត្ថុ ភីអិលស៊ី",
@@ -16,34 +16,97 @@ const DEFAULT_COMPANY = {
   timezone: "ICT (UTC+7) ភ្នំពេញ",
   currency: "រៀល (KHR)",
   dateFormat: "dd/mm/yyyy",
+  logoUrl: "",
+  logoPath: "",
 };
+
+const MAX_LOGO_SIZE = 2 * 1024 * 1024;
+const ALLOWED_LOGO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function logoExtension(file) {
+  return { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[file.type] || "png";
+}
 
 export default function CompanySettingsPage() {
   const [form, setForm] = useState(DEFAULT_COMPANY);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     loadSettingsDoc("company", DEFAULT_COMPANY).then((data) => {
       if (!cancelled) {
         setForm(data);
+        setLogoPreview(data.logoUrl || "");
         setLoading(false);
       }
     });
     return () => { cancelled = true; };
   }, []);
 
-  const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  useEffect(() => () => {
+    if (logoPreview.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+  }, [logoPreview]);
+
+  const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+
   const handleSave = async () => {
-    await saveSettingsDoc("company", form);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaving(true);
+    setError("");
+    let uploadedPath = "";
+    let settingsSaved = false;
+    try {
+      let nextForm = { ...form };
+      const previousPath = form.logoPath;
+      if (logoFile) {
+        uploadedPath = `company/logo-${Date.now()}.${logoExtension(logoFile)}`;
+        const logoRef = ref(storage, uploadedPath);
+        await uploadBytes(logoRef, logoFile, { contentType: logoFile.type });
+        const logoUrl = await getDownloadURL(logoRef);
+        nextForm = { ...nextForm, logoUrl, logoPath: uploadedPath };
+      }
+      await saveSettingsDoc("company", nextForm);
+      settingsSaved = true;
+      setForm(nextForm);
+      setLogoFile(null);
+      if (logoPreview.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+      setLogoPreview(nextForm.logoUrl || "");
+      if (previousPath && uploadedPath && previousPath !== uploadedPath) {
+        deleteObject(ref(storage, previousPath)).catch((deleteError) => {
+          console.warn("Old company logo could not be deleted", deleteError);
+        });
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (saveError) {
+      if (uploadedPath && !settingsSaved) {
+        deleteObject(ref(storage, uploadedPath)).catch(() => {});
+      }
+      setError(saveError.message || "មិនអាចរក្សាទុកព័ត៌មានក្រុមហ៊ុនបានទេ");
+    } finally {
+      setSaving(false);
+    }
   };
+
   const chooseLogo = (event) => {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) return;
+    if (!ALLOWED_LOGO_TYPES.has(file.type)) {
+      setError("Logo ត្រូវតែជា JPG, PNG ឬ WebP");
+      return;
+    }
+    if (file.size > MAX_LOGO_SIZE) {
+      setError("Logo មិនអាចធំជាង 2 MB បានទេ");
+      return;
+    }
+    if (logoPreview.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+    setError("");
+    setLogoFile(file);
     setLogoPreview(URL.createObjectURL(file));
   };
 
@@ -57,19 +120,24 @@ export default function CompanySettingsPage() {
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ក្រុមហ៊ុន</h1>
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">គ្រប់គ្រងព័ត៌មានទូទៅរបស់ក្រុមហ៊ុន</p>
       </div>
-      <SettingsSaveBar onSave={handleSave} saved={saved} />
+      <SettingsSaveBar onSave={handleSave} saved={saved} disabled={saving} />
+      {saving && <div className="-mt-4 mb-4 text-xs text-[#8A8FA3]">កំពុងរក្សាទុក...</div>}
+      {error && <div className="mb-4 rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#B44335]">{error}</div>}
 
       <div className="flex flex-col gap-5">
         <div className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5 flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-[#EEF1FB] text-[#2A3F8F] text-xl font-bold flex items-center justify-center shrink-0 overflow-hidden">
-            {logoPreview ? <img src={logoPreview} alt="រូបសញ្ញាក្រុមហ៊ុន" className="w-full h-full object-cover" /> : form.name.slice(0, 1)}
+          <div className="w-20 h-20 rounded-2xl bg-[#EEF1FB] text-[#2A3F8F] text-xl font-bold flex items-center justify-center shrink-0 overflow-hidden">
+            {logoPreview
+              ? <img src={logoPreview} alt="រូបសញ្ញាក្រុមហ៊ុន" className="w-full h-full object-contain p-1" />
+              : form.name.slice(0, 1)}
           </div>
           <div>
             <div className="font-semibold text-[#1E2333] text-sm">{form.name}</div>
             <label className="cursor-pointer text-xs text-[#2A3F8F] font-medium mt-1 flex items-center gap-1.5">
               <Camera size={13} /> ប្តូររូបសញ្ញា
-              <input type="file" accept="image/*" onChange={chooseLogo} className="sr-only" />
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseLogo} className="sr-only" />
             </label>
+            <div className="mt-1 text-[11px] text-[#8A8FA3]">JPG, PNG ឬ WebP · អតិបរមា 2 MB</div>
           </div>
         </div>
 

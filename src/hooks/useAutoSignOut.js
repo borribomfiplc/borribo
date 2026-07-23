@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export const AUTO_SIGN_OUT_MS = 5 * 60 * 1000;
+export const AUTO_SIGN_OUT_MS = 30 * 60 * 1000;
 export const AUTO_SIGN_OUT_NOTICE_KEY = "borribo_hrms_auto_sign_out_notice";
 const LAST_ACTIVITY_KEY = "borribo_hrms_last_activity";
 const ACTIVITY_SYNC_INTERVAL_MS = 1000;
@@ -23,7 +23,7 @@ export function useAutoSignOut(authUser, signOut, timeoutMs = AUTO_SIGN_OUT_MS) 
   const signingOutRef = useRef(false);
 
   useEffect(() => {
-    if (!authUser) return undefined;
+    if (!authUser || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return undefined;
 
     signingOutRef.current = false;
     lastActivityRef.current = Date.now();

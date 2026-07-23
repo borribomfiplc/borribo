@@ -11,6 +11,26 @@ const DEFAULT_TELEGRAM_SETTINGS = {
   dailySummary: true,
   summaryTime: "17:30",
 };
+const DEFAULT_SYSTEM_SETTINGS = {
+  emailNotif: true,
+  pushNotif: true,
+  autoLock: true,
+  autoBackup: true,
+  darkMode: false,
+  sessionTimeoutMinutes: 30,
+  backupFreq: "daily",
+  lastBackupAt: "",
+  lastBackupCompletedAt: "",
+  lastBackupStatus: "never",
+  lastBackupError: "",
+  lastBackupOperation: "",
+};
+
+const BACKUP_FREQUENCY_MS = {
+  daily: 24 * 60 * 60 * 1000,
+  weekly: 7 * 24 * 60 * 60 * 1000,
+  monthly: 30 * 24 * 60 * 60 * 1000,
+};
 
 let accessTokenCache = null;
 
@@ -1300,6 +1320,244 @@ async function loadTelegramSettings(env) {
   return { ...DEFAULT_TELEGRAM_SETTINGS, ...(await getDocument(env, "settings/telegram") || {}) };
 }
 
+function normalizeBackupFrequency(value) {
+  return {
+    "ប្រចាំថ្ងៃ": "daily",
+    "ប្រចាំសប្តាហ៍": "weekly",
+    "ប្រចាំខែ": "monthly",
+  }[value] || (BACKUP_FREQUENCY_MS[value] ? value : DEFAULT_SYSTEM_SETTINGS.backupFreq);
+}
+
+async function loadSystemSettings(env) {
+  const document = await getDocument(env, "settings/system") || {};
+  const { id: _documentId, ...stored } = document;
+  return {
+    ...DEFAULT_SYSTEM_SETTINGS,
+    ...stored,
+    sessionTimeoutMinutes: [15, 30, 60].includes(Number(stored.sessionTimeoutMinutes))
+      ? Number(stored.sessionTimeoutMinutes)
+      : ({ "១៥ នាទី": 15, "៣០ នាទី": 30, "១ ម៉ោង": 60 }[stored.sessionTimeout] || 30),
+    backupFreq: normalizeBackupFrequency(stored.backupFreq),
+  };
+}
+
+async function updateSystemRuntimeSettings(env, patch) {
+  const current = await loadSystemSettings(env);
+  const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+  await putDocument(env, "settings/system", next);
+  return next;
+}
+
+function plainNotificationText(value) {
+  return String(value || "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function notificationEmailSubject(type, row) {
+  if (type === "leave_request") return `Borribo HRMS: សំណើសុំច្បាប់ថ្មី - ${row.name || row.employeeId || "បុគ្គលិក"}`;
+  if (type === "leave_decision") return `Borribo HRMS: ${row.status || "លទ្ធផលសំណើច្បាប់"}`;
+  if (type === "check_in") return `Borribo HRMS: Check-in - ${row.name || row.id || "បុគ្គលិក"}`;
+  return `Borribo HRMS: Check-out - ${row.name || row.id || "បុគ្គលិក"}`;
+}
+
+async function sendEmail(env, { to, subject, text }) {
+  if (!env.RESEND_API_KEY || !env.NOTIFICATION_FROM_EMAIL) {
+    throw new Error("Email provider is not configured (RESEND_API_KEY / NOTIFICATION_FROM_EMAIL)");
+  }
+  const recipients = [...new Set((Array.isArray(to) ? to : [to]).map((value) => String(value || "").trim().toLowerCase()).filter(Boolean))];
+  if (!recipients.length) throw new Error("No email recipients were found");
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from: env.NOTIFICATION_FROM_EMAIL,
+      to: recipients,
+      subject,
+      text,
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.id) throw new Error(result?.message || `Email provider failed (${response.status})`);
+  return result;
+}
+
+async function managerNotificationEmails(env) {
+  const profiles = await listDocuments(env, "profiles");
+  return [...new Set(profiles
+    .filter((profile) => profile.active !== false && ["admin", "hr"].includes(profile.role))
+    .map((profile) => String(profile.email || "").trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+async function employeeNotificationEmail(env, row) {
+  const employeeUid = row.employeeUid || row.uid || "";
+  if (employeeUid) {
+    const profile = await getDocument(env, `profiles/${employeeUid}`);
+    if (profile?.email) return String(profile.email).trim().toLowerCase();
+  }
+  const employeeId = row.employeeId || row.empId || row.id || "";
+  if (employeeId) {
+    const employee = await getDocument(env, `employees/${employeeId}`);
+    if (employee?.email) return String(employee.email).trim().toLowerCase();
+  }
+  return "";
+}
+
+async function deliverEventEmail(user, env, body, row, text, state) {
+  const settings = await loadSystemSettings(env);
+  if (!settings.emailNotif) return { ok: true, skipped: true, reason: "disabled" };
+  // Attendance can generate hundreds of events per day. Email is intentionally
+  // reserved for leave workflow events; attendance remains available through
+  // in-app and Telegram notifications.
+  if (!["leave_request", "leave_decision"].includes(body.type)) {
+    return { ok: true, skipped: true, reason: "email-event-disabled" };
+  }
+  if (!env.RESEND_API_KEY || !env.NOTIFICATION_FROM_EMAIL) {
+    return { ok: true, skipped: true, reason: "provider-not-configured" };
+  }
+  const recipients = body.type === "leave_decision"
+    ? [await employeeNotificationEmail(env, row)].filter(Boolean)
+    : await managerNotificationEmails(env);
+  if (!recipients.length) return { ok: true, skipped: true, reason: "no-recipients" };
+  const id = await hashKey(`email:${body.type}:${body.recordId}:${state}`);
+  if (await getDocument(env, `emailEvents/${id}`)) return { ok: true, skipped: true, reason: "duplicate" };
+  try {
+    const result = await sendEmail(env, {
+      to: recipients,
+      subject: notificationEmailSubject(body.type, row),
+      text: plainNotificationText(text),
+    });
+    const now = new Date().toISOString();
+    await putDocument(env, `emailEvents/${id}`, {
+      id,
+      type: body.type,
+      recordId: body.recordId,
+      recipients,
+      status: "sent",
+      sentAt: now,
+      providerMessageId: result.id,
+    });
+    await putDocument(env, `emailOutbox/${id}`, {
+      id,
+      type: body.type,
+      recordId: body.recordId,
+      recipients,
+      subject: notificationEmailSubject(body.type, row),
+      message: plainNotificationText(text),
+      status: "បានផ្ញើ",
+      providerMessageId: result.id,
+      actorUid: user.uid,
+      createdAt: now,
+    });
+    return { ok: true, messageId: result.id, recipients: recipients.length };
+  } catch (error) {
+    await putDocument(env, `emailOutbox/${id}`, {
+      id,
+      type: body.type,
+      recordId: body.recordId,
+      recipients,
+      subject: notificationEmailSubject(body.type, row),
+      message: plainNotificationText(text),
+      status: "ផ្ញើបរាជ័យ",
+      error: error.message,
+      actorUid: user.uid,
+      createdAt: new Date().toISOString(),
+    }).catch(() => {});
+    throw error;
+  }
+}
+
+function backupOutputPrefix(env, now = new Date()) {
+  const rawBucket = String(env.FIRESTORE_BACKUP_BUCKET || "").trim().replace(/^gs:\/\//, "").replace(/\/$/, "");
+  if (!rawBucket) throw new Error("FIRESTORE_BACKUP_BUCKET is missing");
+  const date = now.toISOString().slice(0, 10).replace(/-/g, "/");
+  return `gs://${rawBucket}/borribo-hrms/${date}/backup-${now.toISOString().replace(/[:.]/g, "-")}`;
+}
+
+async function checkFirestoreBackupOperation(env) {
+  const settings = await loadSystemSettings(env);
+  if (settings.lastBackupStatus !== "started" || !settings.lastBackupOperation) {
+    return { ok: true, skipped: true, reason: "no-running-backup" };
+  }
+  const token = await getGoogleAccessToken(env);
+  const response = await fetch(`https://firestore.googleapis.com/v1/${settings.lastBackupOperation}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result?.error?.message || `Backup operation lookup failed (${response.status})`);
+  if (!result.done) return { ok: true, running: true, operation: settings.lastBackupOperation };
+  if (result.error) {
+    await updateSystemRuntimeSettings(env, {
+      lastBackupStatus: "failed",
+      lastBackupError: result.error.message || "Firestore backup failed",
+      lastBackupCompletedAt: new Date().toISOString(),
+    });
+    return { ok: false, failed: true, error: result.error.message || "Firestore backup failed" };
+  }
+  const completedAt = new Date().toISOString();
+  await updateSystemRuntimeSettings(env, {
+    lastBackupStatus: "completed",
+    lastBackupError: "",
+    lastBackupCompletedAt: completedAt,
+  });
+  return { ok: true, completed: true, completedAt, operation: settings.lastBackupOperation };
+}
+
+async function startFirestoreBackup(env, force = false) {
+  let settings = await loadSystemSettings(env);
+  if (settings.lastBackupStatus === "started" && settings.lastBackupOperation) {
+    const operation = await checkFirestoreBackupOperation(env);
+    if (operation.running) return { ok: true, skipped: true, reason: "backup-in-progress", operation: settings.lastBackupOperation };
+    settings = await loadSystemSettings(env);
+  }
+  if (!force && !settings.autoBackup) return { ok: true, skipped: true, reason: "disabled" };
+  if (!env.FIRESTORE_BACKUP_BUCKET) return { ok: true, skipped: true, reason: "bucket-not-configured" };
+  const interval = BACKUP_FREQUENCY_MS[normalizeBackupFrequency(settings.backupFreq)];
+  const successfulBackupAt = settings.lastBackupStatus === "completed"
+    ? new Date(settings.lastBackupCompletedAt || settings.lastBackupAt || 0).getTime()
+    : 0;
+  if (!force && Number.isFinite(successfulBackupAt) && Date.now() - successfulBackupAt < interval) {
+    return { ok: true, skipped: true, reason: "not-due" };
+  }
+
+  const startedAt = new Date().toISOString();
+  try {
+    const token = await getGoogleAccessToken(env);
+    const outputUriPrefix = backupOutputPrefix(env, new Date(startedAt));
+    const response = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default):exportDocuments`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ outputUriPrefix }),
+      },
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.name) throw new Error(result?.error?.message || `Firestore export failed (${response.status})`);
+    await updateSystemRuntimeSettings(env, {
+      lastBackupAt: startedAt,
+      lastBackupStatus: "started",
+      lastBackupError: "",
+      lastBackupOperation: result.name,
+      lastBackupOutput: outputUriPrefix,
+    });
+    return { ok: true, operation: result.name, outputUriPrefix, startedAt };
+  } catch (error) {
+    await updateSystemRuntimeSettings(env, {
+      lastBackupAt: startedAt,
+      lastBackupStatus: "failed",
+      lastBackupError: error.message,
+    }).catch(() => {});
+    throw error;
+  }
+}
+
 async function logTelegramEvent(env, id, data) {
   await putDocument(env, `telegramOutbox/${id}`, { id, ...data, createdAt: new Date().toISOString() });
 }
@@ -1862,14 +2120,57 @@ async function handleTest(user, env) {
   return { ok: true, messageId: sent.message_id };
 }
 
-async function handleEvent(user, env, body) {
-  const config = eventConfig(body.type);
-  if (!config || !body.recordId) throw Object.assign(new Error("Invalid Telegram event"), { status: 400 });
-  if (body.type === "leave_decision" && !manager(user)) throw Object.assign(new Error("Only Admin/HR can send leave decisions"), { status: 403 });
-  const row = await getDocument(env, `${config.collection}/${body.recordId}`);
-  if (!row) throw Object.assign(new Error("Event record was not found"), { status: 404 });
-  const ownerUid = row.uid || row.employeeUid || "";
-  if (!manager(user) && user.role !== "kiosk" && ownerUid !== user.uid) throw Object.assign(new Error("You cannot notify for another employee"), { status: 403 });
+async function handleSystemStatus(user, env) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  await checkFirestoreBackupOperation(env).catch((error) => console.error("Backup status refresh failed", error.message));
+  const settings = await loadSystemSettings(env);
+  return {
+    ok: true,
+    emailConfigured: Boolean(env.RESEND_API_KEY && env.NOTIFICATION_FROM_EMAIL),
+    backupConfigured: Boolean(env.FIRESTORE_BACKUP_BUCKET),
+    settings: {
+      emailNotif: settings.emailNotif,
+      autoBackup: settings.autoBackup,
+      backupFreq: settings.backupFreq,
+      lastBackupAt: settings.lastBackupAt || "",
+      lastBackupCompletedAt: settings.lastBackupCompletedAt || "",
+      lastBackupStatus: settings.lastBackupStatus || "never",
+      lastBackupError: settings.lastBackupError || "",
+      lastBackupOperation: settings.lastBackupOperation || "",
+      lastBackupOutput: settings.lastBackupOutput || "",
+    },
+  };
+}
+
+async function handleSystemBackup(user, env) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  return startFirestoreBackup(env, true);
+}
+
+async function handleSystemTestEmail(user, env) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  if (!user.email) throw Object.assign(new Error("Your account does not have an email address"), { status: 400 });
+  const result = await sendEmail(env, {
+    to: [user.email],
+    subject: "Borribo HRMS: Email notification test",
+    text: `Borribo HRMS email notifications are working.\n\nSent at: ${new Date().toISOString()}`,
+  });
+  const id = `EMAIL-TEST-${Date.now()}`;
+  await putDocument(env, `emailOutbox/${id}`, {
+    id,
+    type: "test",
+    recipients: [String(user.email).toLowerCase()],
+    subject: "Borribo HRMS: Email notification test",
+    message: "Borribo HRMS email notifications are working.",
+    status: "បានផ្ញើ",
+    providerMessageId: result.id,
+    actorUid: user.uid,
+    createdAt: new Date().toISOString(),
+  });
+  return { ok: true, messageId: result.id };
+}
+
+async function deliverTelegramEvent(user, env, body, row, config, text, state) {
   const settings = await loadTelegramSettings(env);
   if (!settings.enabled || !settings.chatId) return { ok: true, skipped: true, reason: "disabled" };
   const lateCheckIn = body.type === "check_in" && Number(row.lateMinutes || 0) > 0;
@@ -1877,19 +2178,70 @@ async function handleEvent(user, env, body) {
     ? Boolean(settings.onCheckIn || settings.onLate)
     : Boolean(settings[config.option]);
   if (!eventEnabled) return { ok: true, skipped: true, reason: "event-disabled" };
-  const state = body.type === "leave_decision" ? row.status : body.type === "check_out" ? row.checkOut : body.type === "check_in" ? row.checkIn : row.requestedOn || row.startDate;
   const id = await hashKey(`${body.type}:${body.recordId}:${state}`);
   if (await getDocument(env, `telegramEvents/${id}`)) return { ok: true, skipped: true, reason: "duplicate" };
-  const text = eventMessage(body.type, row);
   try {
     const sent = await sendTelegram(env, settings.chatId, text);
-    await putDocument(env, `telegramEvents/${id}`, { id, type: body.type, recordId: body.recordId, status: "sent", sentAt: new Date().toISOString(), telegramMessageId: sent.message_id });
-    await logTelegramEvent(env, id, { chatId: settings.chatId, type: body.type, message: text.replace(/<[^>]+>/g, ""), status: "បានផ្ញើ", telegramMessageId: sent.message_id, actorUid: user.uid, recordId: body.recordId });
+    await putDocument(env, `telegramEvents/${id}`, {
+      id,
+      type: body.type,
+      recordId: body.recordId,
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      telegramMessageId: sent.message_id,
+    });
+    await logTelegramEvent(env, id, {
+      chatId: settings.chatId,
+      type: body.type,
+      message: plainNotificationText(text),
+      status: "បានផ្ញើ",
+      telegramMessageId: sent.message_id,
+      actorUid: user.uid,
+      recordId: body.recordId,
+    });
     return { ok: true, messageId: sent.message_id };
   } catch (error) {
-    await logTelegramEvent(env, id, { chatId: settings.chatId, type: body.type, message: text.replace(/<[^>]+>/g, ""), status: "ផ្ញើបរាជ័យ", error: error.message, actorUid: user.uid, recordId: body.recordId });
+    await logTelegramEvent(env, id, {
+      chatId: settings.chatId,
+      type: body.type,
+      message: plainNotificationText(text),
+      status: "ផ្ញើបរាជ័យ",
+      error: error.message,
+      actorUid: user.uid,
+      recordId: body.recordId,
+    }).catch(() => {});
     throw error;
   }
+}
+
+async function handleEvent(user, env, body) {
+  const config = eventConfig(body.type);
+  if (!config || !body.recordId) throw Object.assign(new Error("Invalid notification event"), { status: 400 });
+  if (body.type === "leave_decision" && !manager(user)) {
+    throw Object.assign(new Error("Only Admin/HR can send leave decisions"), { status: 403 });
+  }
+  const row = await getDocument(env, `${config.collection}/${body.recordId}`);
+  if (!row) throw Object.assign(new Error("Event record was not found"), { status: 404 });
+  const ownerUid = row.uid || row.employeeUid || "";
+  if (!manager(user) && user.role !== "kiosk" && ownerUid !== user.uid) {
+    throw Object.assign(new Error("You cannot notify for another employee"), { status: 403 });
+  }
+
+  const state = body.type === "leave_decision"
+    ? row.status
+    : body.type === "check_out"
+      ? row.checkOut
+      : body.type === "check_in"
+        ? row.checkIn
+        : row.requestedOn || row.startDate;
+  const text = eventMessage(body.type, row);
+  const [telegram, email] = await Promise.all([
+    deliverTelegramEvent(user, env, body, row, config, text, state)
+      .catch((error) => ({ ok: false, error: error.message })),
+    deliverEventEmail(user, env, body, row, text, state)
+      .catch((error) => ({ ok: false, error: error.message })),
+  ]);
+  return { ok: true, telegram, email };
 }
 
 function cambodiaParts(date = new Date()) {
@@ -1924,13 +2276,944 @@ async function sendDailySummary(env, force = false) {
   return { ok: true, messageId: sent.message_id };
 }
 
+const LOAN_STATUSES = new Set(["រង់ចាំអនុម័ត", "សកម្ម", "បានសងរួច", "បដិសេធ", "បានលុបចោល"]);
+const ASSET_STATUSES = new Set(["កំពុងប្រើ", "នៅស្តុក", "ជួសជុល", "បាត់/លុបចេញ"]);
+const ASSET_APPROVAL_STATUSES = new Set(["ព្រាង", "រង់ចាំអនុម័ត", "បានអនុម័ត", "ត្រូវកែប្រែ"]);
+const KPI_STATUSES = new Set(["ព្រាង", "រង់ចាំអនុម័ត", "បានអនុម័ត", "ត្រូវកែប្រែ"]);
+const KPI_CYCLES = new Set(["monthly", "quarterly", "yearly"]);
+
+function requireManager(user) {
+  if (!manager(user)) throw httpError("Admin or HR role is required", 403);
+}
+
+function cleanText(value, maxLength = 500) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function requiredText(value, label, maxLength = 200) {
+  const result = cleanText(value, maxLength);
+  if (!result) throw httpError(`${label} is required`, 400);
+  return result;
+}
+
+function finiteNumber(value, label, { min = 0, max = 1_000_000_000 } = {}) {
+  const result = Number(value);
+  if (!Number.isFinite(result) || result < min || result > max) throw httpError(`${label} is invalid`, 400);
+  return Math.round(result * 100) / 100;
+}
+
+function validIsoDate(value, label, allowMonth = false) {
+  const result = cleanText(value, 10);
+  const pattern = allowMonth ? /^\d{4}-\d{2}$/ : /^\d{4}-\d{2}-\d{2}$/;
+  if (!pattern.test(result)) throw httpError(`${label} is invalid`, 400);
+  return result;
+}
+
+function operationActor(user) {
+  return { uid: user.uid || "", email: user.email || "System" };
+}
+
+function operationHistory(user, type, label, detail = {}) {
+  return {
+    id: `HIS-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    type,
+    label,
+    at: new Date().toISOString(),
+    actorUid: user.uid || "",
+    actorEmail: user.email || "System",
+    detail,
+  };
+}
+
+function appendOperationHistory(current, entry, limit = 200) {
+  return [...(Array.isArray(current) ? current : []), entry].slice(-limit);
+}
+
+function sanitizeLoanAttachments(value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw httpError("Loan attachments are invalid", 400);
+  if (value.length > 10) throw httpError("A loan can contain at most 10 attachments", 400);
+  const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+  return value.map((item) => {
+    const path = requiredText(item?.path, "Attachment path", 500);
+    if (!path.startsWith("loanAttachments/")) throw httpError("Loan attachment path is invalid", 400);
+    const type = requiredText(item?.type, "Attachment type", 100);
+    if (!allowedTypes.has(type)) throw httpError("Loan attachment type is invalid", 400);
+    const size = finiteNumber(item?.size || 0, "Attachment size", { min: 1, max: 5 * 1024 * 1024 });
+    return {
+      path,
+      name: requiredText(item?.name, "Attachment name", 255),
+      type,
+      size,
+      uploadedAt: cleanText(item?.uploadedAt, 40) || new Date().toISOString(),
+      uploadedByUid: cleanText(item?.uploadedByUid, 128),
+      uploadedByEmail: cleanText(item?.uploadedByEmail, 255),
+    };
+  });
+}
+
+function assetFinancialFields(input = {}, fallback = {}) {
+  const value = input.value === undefined ? Number(fallback.value || 0) : finiteNumber(input.value || 0, "Asset value", { min: 0, max: 1_000_000_000 });
+  const usefulLifeYears = input.usefulLifeYears === undefined
+    ? Number(fallback.usefulLifeYears || 0)
+    : finiteNumber(input.usefulLifeYears || 0, "Useful life", { min: 0, max: 100 });
+  const salvageValue = input.salvageValue === undefined
+    ? Number(fallback.salvageValue || 0)
+    : finiteNumber(input.salvageValue || 0, "Salvage value", { min: 0, max: 1_000_000_000 });
+  if (salvageValue > value) throw httpError("Salvage value cannot exceed asset value", 400);
+  const annualDepreciation = usefulLifeYears > 0
+    ? Math.round(((value - salvageValue) / usefulLifeYears) * 100) / 100
+    : 0;
+  return { value, usefulLifeYears, salvageValue, depreciationMethod: usefulLifeYears > 0 ? "straight-line" : "none", annualDepreciation };
+}
+
+async function requiredEmployee(env, employeeId) {
+  const id = requiredText(employeeId, "Employee", 80);
+  const employee = await getDocument(env, `employees/${id}`);
+  if (!employee) throw httpError("Employee was not found", 404);
+  if (normalizeEmployeeStatus(employee.status, "សកម្ម") === "អសកម្ម") throw httpError("Employee is inactive", 409);
+  return employee;
+}
+
+async function requiredOperationalDocument(env, collectionName, id, label) {
+  const document = await getDocumentWithMetadata(env, `${collectionName}/${requiredText(id, label, 120)}`);
+  if (!document) throw httpError(`${label} was not found`, 404);
+  return withoutDocumentMetadata(document);
+}
+
+function operationalAuditWrite(type, user, record, extra = {}) {
+  return auditLogWrite(type, user, {
+    id: record.employeeId || record.assetId || record.kpiId || record.loanId || record.payrollId || record.id || "",
+    name: record.employeeName || record.name || record.metric || record.assetCode || "",
+    uid: "",
+    email: "",
+    accountRole: "",
+  }, {
+    module: extra.module || "operations",
+    recordId: record.loanId || record.assetId || record.kpiId || record.payrollId || record.id || "",
+    ...extra,
+  });
+}
+
+async function handleLoanOperation(user, env, action, payload) {
+  requireManager(user);
+  const now = new Date().toISOString();
+
+  if (action === "loan.create") {
+    const input = payload?.loan || {};
+    const employee = await requiredEmployee(env, input.employeeId);
+    const amount = finiteNumber(input.amount, "Loan amount", { min: 0.01, max: 100_000_000 });
+    const monthlyPayment = finiteNumber(input.monthlyPayment || 0, "Monthly payment", { min: 0, max: amount });
+    const loanId = `LOAN-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+    const attachments = sanitizeLoanAttachments(input.attachments) || [];
+    const history = operationHistory(user, "created", "បានបង្កើតសំណើកម្ចី", { amount, attachmentCount: attachments.length });
+    const loan = {
+      loanId,
+      employeeId: employee.id,
+      employeeName: employee.name || employee.id,
+      branch: employee.branch || "",
+      branchId: employee.branchId || "",
+      amount,
+      paidAmount: 0,
+      balance: amount,
+      monthlyPayment,
+      startDate: validIsoDate(input.startDate, "Start date"),
+      purpose: requiredText(input.purpose, "Purpose", 500),
+      status: "រង់ចាំអនុម័ត",
+      payments: [],
+      attachments,
+      history: [history],
+      createdAt: now,
+      createdByUid: user.uid || "",
+      createdByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    await commitWrites(env, [
+      { path: `staffLoans/${loanId}`, data: loan, exists: false },
+      operationalAuditWrite("staff_loan_created", user, loan, { module: "staffLoans", amount }),
+    ]);
+    return { ok: true, loan };
+  }
+
+  const { data: loan, updateTime } = await requiredOperationalDocument(env, "staffLoans", payload?.loanId, "Loan");
+  if (!LOAN_STATUSES.has(loan.status)) loan.status = Number(loan.paidAmount || 0) >= Number(loan.amount || 0) ? "បានសងរួច" : "សកម្ម";
+
+  if (action === "loan.update") {
+    if (["បានសងរួច", "បដិសេធ", "បានលុបចោល"].includes(loan.status)) throw httpError("Closed loans cannot be edited", 409);
+    const patch = payload?.patch || {};
+    const amount = patch.amount === undefined ? Number(loan.amount || 0) : finiteNumber(patch.amount, "Loan amount", { min: 0.01, max: 100_000_000 });
+    const paidAmount = Number(loan.paidAmount || 0);
+    if (amount < paidAmount) throw httpError("Loan amount cannot be below payments already recorded", 409);
+    const monthlyPayment = patch.monthlyPayment === undefined
+      ? Number(loan.monthlyPayment || 0)
+      : finiteNumber(patch.monthlyPayment, "Monthly payment", { min: 0, max: amount });
+    const attachments = patch.attachments === undefined
+      ? (Array.isArray(loan.attachments) ? loan.attachments : [])
+      : sanitizeLoanAttachments(patch.attachments);
+    const next = {
+      ...loan,
+      amount,
+      balance: Math.max(0, Math.round((amount - paidAmount) * 100) / 100),
+      monthlyPayment,
+      startDate: patch.startDate === undefined ? loan.startDate : validIsoDate(patch.startDate, "Start date"),
+      purpose: patch.purpose === undefined ? loan.purpose : requiredText(patch.purpose, "Purpose", 500),
+      attachments,
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(loan.history, operationHistory(user, "updated", "បានកែប្រែព័ត៌មានកម្ចី", { amount, monthlyPayment, attachmentCount: attachments.length }));
+    await commitWrites(env, [
+      { path: `staffLoans/${loan.loanId || payload.loanId}`, data: next, updateTime },
+      operationalAuditWrite("staff_loan_updated", user, next, { module: "staffLoans" }),
+    ]);
+    return { ok: true, loan: next };
+  }
+
+  if (action === "loan.decide") {
+    if (loan.status !== "រង់ចាំអនុម័ត") throw httpError("Only pending loans can be approved or rejected", 409);
+    const decision = cleanText(payload?.decision, 20);
+    if (!["approve", "reject"].includes(decision)) throw httpError("Decision is invalid", 400);
+    const note = cleanText(payload?.note, 500);
+    if (decision === "reject" && !note) throw httpError("A rejection reason is required", 400);
+    const approved = decision === "approve";
+    const next = {
+      ...loan,
+      status: approved ? "សកម្ម" : "បដិសេធ",
+      decisionNote: note,
+      decidedAt: now,
+      decidedByUid: user.uid || "",
+      decidedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(loan.history, operationHistory(
+      user,
+      approved ? "approved" : "rejected",
+      approved ? "បានអនុម័តកម្ចី" : "បានបដិសេធកម្ចី",
+      { note },
+    ));
+    await commitWrites(env, [
+      { path: `staffLoans/${loan.loanId || payload.loanId}`, data: next, updateTime },
+      operationalAuditWrite(approved ? "staff_loan_approved" : "staff_loan_rejected", user, next, { module: "staffLoans", note }),
+    ]);
+    return { ok: true, loan: next };
+  }
+
+  if (action === "loan.payment") {
+    if (loan.status !== "សកម្ម") throw httpError("Payments can only be recorded for active loans", 409);
+    const input = payload?.payment || {};
+    const balance = Math.max(0, Number(loan.amount || 0) - Number(loan.paidAmount || 0));
+    const amount = finiteNumber(input.amount, "Payment amount", { min: 0.01, max: balance });
+    const payment = {
+      paymentId: `PAY-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      date: validIsoDate(input.date, "Payment date"),
+      amount,
+      note: cleanText(input.note, 500),
+      recordedAt: now,
+      recordedByUid: user.uid || "",
+      recordedByEmail: user.email || "",
+    };
+    const paidAmount = Math.round((Number(loan.paidAmount || 0) + amount) * 100) / 100;
+    const nextBalance = Math.max(0, Math.round((Number(loan.amount || 0) - paidAmount) * 100) / 100);
+    const next = {
+      ...loan,
+      payments: [...(Array.isArray(loan.payments) ? loan.payments : []), payment].slice(-500),
+      paidAmount,
+      balance: nextBalance,
+      status: nextBalance === 0 ? "បានសងរួច" : "សកម្ម",
+      completedAt: nextBalance === 0 ? now : loan.completedAt || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(loan.history, operationHistory(user, "payment", "បានកត់ត្រាការសងប្រាក់", { amount, balance: nextBalance }));
+    await commitWrites(env, [
+      { path: `staffLoans/${loan.loanId || payload.loanId}`, data: next, updateTime },
+      operationalAuditWrite("staff_loan_payment_recorded", user, next, { module: "staffLoans", amount, balance: nextBalance }),
+    ]);
+    return { ok: true, loan: next, payment };
+  }
+
+  if (action === "loan.cancel") {
+    if (["បានសងរួច", "បដិសេធ", "បានលុបចោល"].includes(loan.status)) throw httpError("This loan is already closed", 409);
+    const reason = requiredText(payload?.reason, "Cancellation reason", 500);
+    const next = {
+      ...loan,
+      status: "បានលុបចោល",
+      cancellationReason: reason,
+      cancelledAt: now,
+      cancelledByUid: user.uid || "",
+      cancelledByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(loan.history, operationHistory(user, "cancelled", "បានលុបចោលកម្ចី", { reason }));
+    await commitWrites(env, [
+      { path: `staffLoans/${loan.loanId || payload.loanId}`, data: next, updateTime },
+      operationalAuditWrite("staff_loan_cancelled", user, next, { module: "staffLoans", reason }),
+    ]);
+    return { ok: true, loan: next };
+  }
+
+  throw httpError("Unsupported loan action", 404);
+}
+
+async function handleAssetOperation(user, env, action, payload) {
+  requireManager(user);
+  const now = new Date().toISOString();
+
+  if (action === "asset.create") {
+    const input = payload?.asset || {};
+    const assetCode = requiredText(input.assetCode, "Asset code", 80).toUpperCase();
+    const existingAssets = await listDocuments(env, "assets");
+    if (existingAssets.some((item) => String(item.assetCode || "").toUpperCase() === assetCode)) throw httpError("Asset code already exists", 409);
+    let employee = null;
+    if (input.assignedTo) employee = await requiredEmployee(env, input.assignedTo);
+    const assetId = `AST-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+    const status = employee ? "កំពុងប្រើ" : (ASSET_STATUSES.has(input.status) ? input.status : "នៅស្តុក");
+    const requestedApprovalStatus = ASSET_APPROVAL_STATUSES.has(input.approvalStatus) ? input.approvalStatus : "រង់ចាំអនុម័ត";
+    const approvalStatus = requestedApprovalStatus === "បានអនុម័ត" ? "រង់ចាំអនុម័ត" : requestedApprovalStatus;
+    const financials = assetFinancialFields(input);
+    const initialAssignment = employee ? [{
+      transferId: `TRF-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      fromEmployeeId: "",
+      fromEmployeeName: "",
+      toEmployeeId: employee.id,
+      toEmployeeName: employee.name || employee.id,
+      date: validIsoDate(input.assignmentDate || new Date().toISOString().slice(0, 10), "Assignment date"),
+      note: "Initial assignment",
+      recordedAt: now,
+      recordedByUid: user.uid || "",
+      recordedByEmail: user.email || "",
+    }] : [];
+    const asset = {
+      assetId,
+      assetCode,
+      name: requiredText(input.name, "Asset name", 200),
+      category: requiredText(input.category || "ផ្សេងៗ", "Category", 100),
+      assignedTo: employee?.id || "",
+      assignedToName: employee?.name || "",
+      assignedBranch: employee?.branch || "",
+      status,
+      purchaseDate: input.purchaseDate ? validIsoDate(input.purchaseDate, "Purchase date") : "",
+      ...financials,
+      serialNumber: cleanText(input.serialNumber, 160),
+      note: cleanText(input.note, 1000),
+      approvalStatus,
+      managerComment: "",
+      submittedAt: approvalStatus === "រង់ចាំអនុម័ត" ? now : "",
+      submittedByUid: approvalStatus === "រង់ចាំអនុម័ត" ? user.uid || "" : "",
+      submittedByEmail: approvalStatus === "រង់ចាំអនុម័ត" ? user.email || "" : "",
+      assignmentHistory: initialAssignment,
+      maintenanceHistory: [],
+      history: [operationHistory(user, "created", approvalStatus === "រង់ចាំអនុម័ត" ? "បានបង្កើត និងដាក់ស្នើទ្រព្យសម្បត្តិ" : "បានបង្កើតទ្រព្យសម្បត្តិ", { assetCode, approvalStatus })],
+      createdAt: now,
+      createdByUid: user.uid || "",
+      createdByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    await commitWrites(env, [
+      { path: `assets/${assetId}`, data: asset, exists: false },
+      operationalAuditWrite("asset_created", user, asset, { module: "assets", assetCode, approvalStatus }),
+    ]);
+    return { ok: true, asset };
+  }
+
+  const { data: asset, updateTime } = await requiredOperationalDocument(env, "assets", payload?.assetId, "Asset");
+  if (!ASSET_APPROVAL_STATUSES.has(asset.approvalStatus)) asset.approvalStatus = "បានអនុម័ត";
+
+  if (action === "asset.update") {
+    if (asset.approvalStatus === "រង់ចាំអនុម័ត") throw httpError("Return the asset for changes before editing", 409);
+    const patch = payload?.patch || {};
+    const assetCode = patch.assetCode === undefined ? asset.assetCode : requiredText(patch.assetCode, "Asset code", 80).toUpperCase();
+    if (assetCode !== String(asset.assetCode || "").toUpperCase()) {
+      const existingAssets = await listDocuments(env, "assets");
+      if (existingAssets.some((item) => item.id !== asset.assetId && String(item.assetCode || "").toUpperCase() === assetCode)) throw httpError("Asset code already exists", 409);
+    }
+    const status = patch.status === undefined ? asset.status : cleanText(patch.status, 40);
+    if (!ASSET_STATUSES.has(status)) throw httpError("Asset status is invalid", 400);
+    if (status === "នៅស្តុក" && asset.assignedTo) throw httpError("Transfer the asset back to stock before setting this status", 409);
+    const financials = assetFinancialFields(patch, asset);
+    const purchaseDate = patch.purchaseDate === undefined ? asset.purchaseDate : (patch.purchaseDate ? validIsoDate(patch.purchaseDate, "Purchase date") : "");
+    const acquisitionChanged = assetCode !== String(asset.assetCode || "").toUpperCase()
+      || (patch.name !== undefined && requiredText(patch.name, "Asset name", 200) !== asset.name)
+      || (patch.category !== undefined && requiredText(patch.category, "Category", 100) !== asset.category)
+      || purchaseDate !== (asset.purchaseDate || "")
+      || financials.value !== Number(asset.value || 0)
+      || financials.usefulLifeYears !== Number(asset.usefulLifeYears || 0)
+      || financials.salvageValue !== Number(asset.salvageValue || 0);
+    const approvalStatus = asset.approvalStatus === "បានអនុម័ត" && acquisitionChanged ? "រង់ចាំអនុម័ត" : (asset.approvalStatus === "ត្រូវកែប្រែ" ? "ព្រាង" : asset.approvalStatus);
+    const next = {
+      ...asset,
+      assetCode,
+      name: patch.name === undefined ? asset.name : requiredText(patch.name, "Asset name", 200),
+      category: patch.category === undefined ? asset.category : requiredText(patch.category, "Category", 100),
+      status,
+      purchaseDate,
+      ...financials,
+      serialNumber: patch.serialNumber === undefined ? asset.serialNumber : cleanText(patch.serialNumber, 160),
+      note: patch.note === undefined ? asset.note : cleanText(patch.note, 1000),
+      approvalStatus,
+      managerComment: approvalStatus === "រង់ចាំអនុម័ត" && asset.approvalStatus !== "រង់ចាំអនុម័ត" ? "" : asset.managerComment || "",
+      submittedAt: approvalStatus === "រង់ចាំអនុម័ត" && asset.approvalStatus !== "រង់ចាំអនុម័ត" ? now : asset.submittedAt || "",
+      submittedByUid: approvalStatus === "រង់ចាំអនុម័ត" && asset.approvalStatus !== "រង់ចាំអនុម័ត" ? user.uid || "" : asset.submittedByUid || "",
+      submittedByEmail: approvalStatus === "រង់ចាំអនុម័ត" && asset.approvalStatus !== "រង់ចាំអនុម័ត" ? user.email || "" : asset.submittedByEmail || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(asset.history, operationHistory(user, "updated", acquisitionChanged && asset.approvalStatus === "បានអនុម័ត" ? "បានកែប្រែទិន្នន័យហិរញ្ញវត្ថុ និងដាក់ស្នើអនុម័តឡើងវិញ" : "បានកែប្រែព័ត៌មានទ្រព្យសម្បត្តិ", { status, approvalStatus }));
+    await commitWrites(env, [
+      { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
+      operationalAuditWrite("asset_updated", user, next, { module: "assets", status, approvalStatus }),
+    ]);
+    return { ok: true, asset: next };
+  }
+
+  if (action === "asset.submit") {
+    if (!["ព្រាង", "ត្រូវកែប្រែ"].includes(asset.approvalStatus)) throw httpError("Only draft or returned assets can be submitted", 409);
+    const next = {
+      ...asset,
+      approvalStatus: "រង់ចាំអនុម័ត",
+      submittedAt: now,
+      submittedByUid: user.uid || "",
+      submittedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(asset.history, operationHistory(user, "submitted", "បានដាក់ទ្រព្យសម្បត្តិសម្រាប់អនុម័ត"));
+    await commitWrites(env, [
+      { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
+      operationalAuditWrite("asset_submitted", user, next, { module: "assets" }),
+    ]);
+    return { ok: true, asset: next };
+  }
+
+  if (action === "asset.review") {
+    if (asset.approvalStatus !== "រង់ចាំអនុម័ត") throw httpError("Only submitted assets can be reviewed", 409);
+    const decision = cleanText(payload?.decision, 20);
+    if (!["approve", "return"].includes(decision)) throw httpError("Asset review decision is invalid", 400);
+    const comment = cleanText(payload?.comment, 1000);
+    if (decision === "return" && !comment) throw httpError("A comment is required when returning an asset", 400);
+    const approved = decision === "approve";
+    const next = {
+      ...asset,
+      approvalStatus: approved ? "បានអនុម័ត" : "ត្រូវកែប្រែ",
+      managerComment: comment,
+      reviewedAt: now,
+      reviewedByUid: user.uid || "",
+      reviewedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(asset.history, operationHistory(user, approved ? "approved" : "returned", approved ? "បានអនុម័តទ្រព្យសម្បត្តិ" : "បានបញ្ជូនទ្រព្យសម្បត្តិឱ្យកែប្រែ", { comment }));
+    await commitWrites(env, [
+      { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
+      operationalAuditWrite(approved ? "asset_approved" : "asset_returned", user, next, { module: "assets", comment }),
+    ]);
+    return { ok: true, asset: next };
+  }
+
+  if (action === "asset.transfer") {
+    if (asset.approvalStatus !== "បានអនុម័ត") throw httpError("The asset must be approved before transfer", 409);
+    if (asset.status === "បាត់/លុបចេញ") throw httpError("Retired or lost assets cannot be transferred", 409);
+    const input = payload?.transfer || {};
+    const toEmployeeId = cleanText(input.toEmployeeId, 80);
+    const employee = toEmployeeId ? await requiredEmployee(env, toEmployeeId) : null;
+    if (String(asset.assignedTo || "") === String(employee?.id || "")) throw httpError("The asset is already assigned to this employee", 409);
+    const transfer = {
+      transferId: `TRF-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      fromEmployeeId: asset.assignedTo || "",
+      fromEmployeeName: asset.assignedToName || "",
+      toEmployeeId: employee?.id || "",
+      toEmployeeName: employee?.name || "",
+      date: validIsoDate(input.date, "Transfer date"),
+      note: cleanText(input.note, 500),
+      recordedAt: now,
+      recordedByUid: user.uid || "",
+      recordedByEmail: user.email || "",
+    };
+    const next = {
+      ...asset,
+      assignedTo: employee?.id || "",
+      assignedToName: employee?.name || "",
+      assignedBranch: employee?.branch || "",
+      status: employee ? "កំពុងប្រើ" : "នៅស្តុក",
+      assignmentHistory: [...(Array.isArray(asset.assignmentHistory) ? asset.assignmentHistory : []), transfer].slice(-300),
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(asset.history, operationHistory(user, "transferred", employee ? "បានផ្ទេរទ្រព្យសម្បត្តិ" : "បានប្រគល់ទ្រព្យសម្បត្តិចូលស្តុក", { from: transfer.fromEmployeeName, to: transfer.toEmployeeName }));
+    await commitWrites(env, [
+      { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
+      operationalAuditWrite("asset_transferred", user, next, { module: "assets", fromEmployeeId: transfer.fromEmployeeId, toEmployeeId: transfer.toEmployeeId }),
+    ]);
+    return { ok: true, asset: next, transfer };
+  }
+
+  if (action === "asset.maintenance") {
+    if (asset.approvalStatus !== "បានអនុម័ត") throw httpError("The asset must be approved before maintenance", 409);
+    if (asset.status === "បាត់/លុបចេញ") throw httpError("Retired or lost assets cannot receive maintenance entries", 409);
+    const input = payload?.maintenance || {};
+    const maintenanceStatus = cleanText(input.status || "កំពុងជួសជុល", 40);
+    if (!["កំពុងជួសជុល", "រួចរាល់"].includes(maintenanceStatus)) throw httpError("Maintenance status is invalid", 400);
+    const maintenance = {
+      maintenanceId: `MNT-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      date: validIsoDate(input.date, "Maintenance date"),
+      type: requiredText(input.type, "Maintenance type", 160),
+      cost: finiteNumber(input.cost || 0, "Maintenance cost", { min: 0, max: 1_000_000_000 }),
+      vendor: cleanText(input.vendor, 200),
+      note: cleanText(input.note, 1000),
+      status: maintenanceStatus,
+      recordedAt: now,
+      recordedByUid: user.uid || "",
+      recordedByEmail: user.email || "",
+    };
+    const nextStatus = maintenanceStatus === "កំពុងជួសជុល" ? "ជួសជុល" : (asset.assignedTo ? "កំពុងប្រើ" : "នៅស្តុក");
+    const next = {
+      ...asset,
+      status: nextStatus,
+      maintenanceHistory: [...(Array.isArray(asset.maintenanceHistory) ? asset.maintenanceHistory : []), maintenance].slice(-300),
+      totalMaintenanceCost: Math.round((Number(asset.totalMaintenanceCost || 0) + maintenance.cost) * 100) / 100,
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(asset.history, operationHistory(user, "maintenance", "បានកត់ត្រាការជួសជុល", { type: maintenance.type, cost: maintenance.cost, status: maintenanceStatus }));
+    await commitWrites(env, [
+      { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
+      operationalAuditWrite("asset_maintenance_recorded", user, next, { module: "assets", cost: maintenance.cost, maintenanceStatus }),
+    ]);
+    return { ok: true, asset: next, maintenance };
+  }
+
+  throw httpError("Unsupported asset action", 404);
+}
+
+async function kpiWeightBucketState(env, employeeId, period, cycle) {
+  const key = await hashKey(`kpi-weight:${employeeId}:${period}:${cycle}`);
+  const path = `kpiWeightTotals/${key}`;
+  const stored = await getDocumentWithMetadata(env, path);
+  if (stored) {
+    return {
+      path,
+      total: Number(stored.total || 0),
+      updateTime: stored.__updateTime || "",
+      exists: true,
+    };
+  }
+  const records = await listDocuments(env, "kpis");
+  const total = records
+    .filter((item) => String(item.employeeId || "") === String(employeeId || "")
+      && String(item.period || "") === String(period || "")
+      && String(item.cycle || "monthly") === String(cycle || "monthly"))
+    .reduce((sum, item) => sum + Number(item.weight || 100), 0);
+  return { path, total: Math.round(total * 100) / 100, updateTime: "", exists: false };
+}
+
+function kpiWeightBucketWrite(state, employeeId, period, cycle, total) {
+  const nextTotal = Math.round(total * 100) / 100;
+  if (nextTotal < 0 || nextTotal > 100) throw httpError("Total KPI weight for this employee, period, and cycle cannot exceed 100%", 409);
+  return {
+    path: state.path,
+    data: { employeeId, period, cycle, total: nextTotal, updatedAt: new Date().toISOString() },
+    ...(state.exists ? { updateTime: state.updateTime } : { exists: false }),
+  };
+}
+
+async function handleKpiOperation(user, env, action, payload) {
+  requireManager(user);
+  const now = new Date().toISOString();
+
+  if (action === "kpi.create") {
+    const input = payload?.kpi || {};
+    const employee = await requiredEmployee(env, input.employeeId);
+    const cycle = KPI_CYCLES.has(input.cycle) ? input.cycle : "monthly";
+    const requestedStatus = KPI_STATUSES.has(input.status) ? input.status : "ព្រាង";
+    const status = requestedStatus === "បានអនុម័ត" ? "រង់ចាំអនុម័ត" : requestedStatus;
+    const kpiId = `KPI-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+    const target = finiteNumber(input.target, "Target", { min: 0.01, max: 1_000_000_000 });
+    const actual = finiteNumber(input.actual || 0, "Actual", { min: 0, max: 1_000_000_000 });
+    const weight = finiteNumber(input.weight || 100, "Weight", { min: 1, max: 100 });
+    const period = validIsoDate(input.period, "KPI period", true);
+    const weightState = await kpiWeightBucketState(env, employee.id, period, cycle);
+    const weightWrite = kpiWeightBucketWrite(weightState, employee.id, period, cycle, weightState.total + weight);
+    const kpi = {
+      kpiId,
+      employeeId: employee.id,
+      employeeName: employee.name || employee.id,
+      branch: employee.branch || "",
+      branchId: employee.branchId || "",
+      metric: requiredText(input.metric, "KPI metric", 300),
+      target,
+      actual,
+      weight,
+      period,
+      cycle,
+      note: cleanText(input.note, 1000),
+      managerComment: "",
+      status,
+      submittedAt: status === "រង់ចាំអនុម័ត" ? now : "",
+      submittedByUid: status === "រង់ចាំអនុម័ត" ? user.uid || "" : "",
+      submittedByEmail: status === "រង់ចាំអនុម័ត" ? user.email || "" : "",
+      history: [operationHistory(user, "created", status === "រង់ចាំអនុម័ត" ? "បានបង្កើត និងដាក់ស្នើ KPI" : "បានបង្កើត KPI", { target, weight })],
+      createdAt: now,
+      createdByUid: user.uid || "",
+      createdByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    await commitWrites(env, [
+      { path: `kpis/${kpiId}`, data: kpi, exists: false },
+      weightWrite,
+      operationalAuditWrite("kpi_created", user, kpi, { module: "kpis", status, weight }),
+    ]);
+    return { ok: true, kpi };
+  }
+
+  const { data: kpi, updateTime } = await requiredOperationalDocument(env, "kpis", payload?.kpiId, "KPI");
+
+  if (action === "kpi.update") {
+    if (kpi.status === "បានអនុម័ត") throw httpError("Approved KPIs cannot be edited", 409);
+    if (kpi.status === "រង់ចាំអនុម័ត") throw httpError("Return the KPI for changes before editing", 409);
+    const patch = payload?.patch || {};
+    const cycle = patch.cycle === undefined ? (kpi.cycle || "monthly") : cleanText(patch.cycle, 20);
+    if (!KPI_CYCLES.has(cycle)) throw httpError("KPI cycle is invalid", 400);
+    const next = {
+      ...kpi,
+      metric: patch.metric === undefined ? kpi.metric : requiredText(patch.metric, "KPI metric", 300),
+      target: patch.target === undefined ? Number(kpi.target || 0) : finiteNumber(patch.target, "Target", { min: 0.01, max: 1_000_000_000 }),
+      actual: patch.actual === undefined ? Number(kpi.actual || 0) : finiteNumber(patch.actual, "Actual", { min: 0, max: 1_000_000_000 }),
+      weight: patch.weight === undefined ? Number(kpi.weight || 100) : finiteNumber(patch.weight, "Weight", { min: 1, max: 100 }),
+      period: patch.period === undefined ? kpi.period : validIsoDate(patch.period, "KPI period", true),
+      cycle,
+      note: patch.note === undefined ? kpi.note : cleanText(patch.note, 1000),
+      status: kpi.status === "ត្រូវកែប្រែ" ? "ព្រាង" : (kpi.status || "ព្រាង"),
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    const oldPeriod = kpi.period;
+    const oldCycle = kpi.cycle || "monthly";
+    const oldWeight = Number(kpi.weight || 100);
+    const oldState = await kpiWeightBucketState(env, kpi.employeeId, oldPeriod, oldCycle);
+    const sameBucket = oldPeriod === next.period && oldCycle === next.cycle;
+    const weightWrites = [];
+    if (sameBucket) {
+      weightWrites.push(kpiWeightBucketWrite(oldState, kpi.employeeId, next.period, next.cycle, oldState.total - oldWeight + next.weight));
+    } else {
+      const newState = await kpiWeightBucketState(env, kpi.employeeId, next.period, next.cycle);
+      weightWrites.push(
+        kpiWeightBucketWrite(oldState, kpi.employeeId, oldPeriod, oldCycle, oldState.total - oldWeight),
+        kpiWeightBucketWrite(newState, kpi.employeeId, next.period, next.cycle, newState.total + next.weight),
+      );
+    }
+    next.history = appendOperationHistory(kpi.history, operationHistory(user, "updated", "បានកែប្រែ KPI", { target: next.target, actual: next.actual, weight: next.weight }));
+    await commitWrites(env, [
+      { path: `kpis/${kpi.kpiId || payload.kpiId}`, data: next, updateTime },
+      ...weightWrites,
+      operationalAuditWrite("kpi_updated", user, next, { module: "kpis" }),
+    ]);
+    return { ok: true, kpi: next };
+  }
+
+  if (action === "kpi.submit") {
+    if (!["ព្រាង", "ត្រូវកែប្រែ", ""].includes(kpi.status || "")) throw httpError("Only draft KPIs can be submitted", 409);
+    const next = {
+      ...kpi,
+      status: "រង់ចាំអនុម័ត",
+      submittedAt: now,
+      submittedByUid: user.uid || "",
+      submittedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(kpi.history, operationHistory(user, "submitted", "បានដាក់ KPI សម្រាប់អនុម័ត"));
+    await commitWrites(env, [
+      { path: `kpis/${kpi.kpiId || payload.kpiId}`, data: next, updateTime },
+      operationalAuditWrite("kpi_submitted", user, next, { module: "kpis" }),
+    ]);
+    return { ok: true, kpi: next };
+  }
+
+  if (action === "kpi.review") {
+    if (kpi.status !== "រង់ចាំអនុម័ត") throw httpError("Only submitted KPIs can be reviewed", 409);
+    const decision = cleanText(payload?.decision, 20);
+    if (!["approve", "return"].includes(decision)) throw httpError("Review decision is invalid", 400);
+    const comment = cleanText(payload?.comment, 1000);
+    if (decision === "return" && !comment) throw httpError("A comment is required when returning a KPI", 400);
+    const approved = decision === "approve";
+    const next = {
+      ...kpi,
+      status: approved ? "បានអនុម័ត" : "ត្រូវកែប្រែ",
+      managerComment: comment,
+      reviewedAt: now,
+      reviewedByUid: user.uid || "",
+      reviewedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(kpi.history, operationHistory(user, approved ? "approved" : "returned", approved ? "បានអនុម័ត KPI" : "បានបញ្ជូន KPI ឱ្យកែប្រែ", { comment }));
+    await commitWrites(env, [
+      { path: `kpis/${kpi.kpiId || payload.kpiId}`, data: next, updateTime },
+      operationalAuditWrite(approved ? "kpi_approved" : "kpi_returned", user, next, { module: "kpis", comment }),
+    ]);
+    return { ok: true, kpi: next };
+  }
+
+  throw httpError("Unsupported KPI action", 404);
+}
+
+const PAYROLL_STATUSES = new Set(["ព្រាង", "រង់ចាំអនុម័ត", "បានអនុម័ត", "ត្រូវកែប្រែ", "បានបើកប្រាក់"]);
+
+function payrollAmounts(input = {}, fallback = {}) {
+  const baseSalary = input.baseSalary === undefined ? Number(fallback.baseSalary || 0) : finiteNumber(input.baseSalary, "Base salary", { min: 0.01, max: 1_000_000_000 });
+  const allowances = input.allowances === undefined ? Number(fallback.allowances || 0) : finiteNumber(input.allowances || 0, "Allowances", { min: 0, max: 1_000_000_000 });
+  const bonus = input.bonus === undefined ? Number(fallback.bonus || 0) : finiteNumber(input.bonus || 0, "Bonus", { min: 0, max: 1_000_000_000 });
+  const overtime = input.overtime === undefined ? Number(fallback.overtime || 0) : finiteNumber(input.overtime || 0, "Overtime", { min: 0, max: 1_000_000_000 });
+  const deductions = input.deductions === undefined ? Number(fallback.deductions || 0) : finiteNumber(input.deductions || 0, "Deductions", { min: 0, max: 1_000_000_000 });
+  const tax = input.tax === undefined ? Number(fallback.tax || 0) : finiteNumber(input.tax || 0, "Tax", { min: 0, max: 1_000_000_000 });
+  const loanDeduction = input.loanDeduction === undefined ? Number(fallback.loanDeduction || 0) : finiteNumber(input.loanDeduction || 0, "Loan deduction", { min: 0, max: 1_000_000_000 });
+  const grossPay = Math.round((baseSalary + allowances + bonus + overtime) * 100) / 100;
+  const netPay = Math.round((grossPay - deductions - tax - loanDeduction) * 100) / 100;
+  if (netPay < 0) throw httpError("Payroll deductions cannot exceed gross pay", 400);
+  return { baseSalary, allowances, bonus, overtime, deductions, tax, loanDeduction, grossPay, netPay };
+}
+
+async function validatePayrollLoan(env, employeeId, loanId, deduction, requireActive = true) {
+  const normalizedLoanId = cleanText(loanId, 120);
+  if (!deduction) return { loan: null, state: null };
+  if (!normalizedLoanId) throw httpError("Select an active staff loan for the loan deduction", 400);
+  const state = await requiredOperationalDocument(env, "staffLoans", normalizedLoanId, "Loan");
+  const loan = state.data;
+  if (String(loan.employeeId || "") !== String(employeeId || "")) throw httpError("The selected loan belongs to another employee", 409);
+  const balance = Math.max(0, Number(loan.balance ?? (Number(loan.amount || 0) - Number(loan.paidAmount || 0))));
+  const normalizedStatus = LOAN_STATUSES.has(loan.status) ? loan.status : (balance > 0 ? "សកម្ម" : "បានសងរួច");
+  loan.status = normalizedStatus;
+  if (requireActive && normalizedStatus !== "សកម្ម") throw httpError("The selected loan is not active", 409);
+  if (deduction > balance) throw httpError("Loan deduction exceeds the outstanding loan balance", 409);
+  return { loan, state };
+}
+
+async function handlePayrollOperation(user, env, action, payload) {
+  requireManager(user);
+  const now = new Date().toISOString();
+
+  if (action === "payroll.create") {
+    const input = payload?.payroll || {};
+    const employee = await requiredEmployee(env, input.employeeId);
+    const period = validIsoDate(input.period, "Payroll period", true);
+    const payrollReservationId = await hashKey(`payroll:${employee.id}:${period}`);
+    const payrollReservationPath = `payrollUnique/${payrollReservationId}`;
+    if (await getDocument(env, payrollReservationPath)) throw httpError("Payroll already exists for this employee and period", 409);
+    const existing = await listDocuments(env, "payrollRecords");
+    if (existing.some((item) => String(item.employeeId || "") === String(employee.id) && String(item.period || "") === period)) {
+      throw httpError("Payroll already exists for this employee and period", 409);
+    }
+    const amounts = payrollAmounts(input);
+    await validatePayrollLoan(env, employee.id, input.loanId, amounts.loanDeduction, true);
+    const requestedStatus = PAYROLL_STATUSES.has(input.status) ? input.status : "ព្រាង";
+    const status = requestedStatus === "រង់ចាំអនុម័ត" ? requestedStatus : "ព្រាង";
+    const payrollId = `PAY-${period.replace("-", "")}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
+    const payroll = {
+      payrollId,
+      employeeId: employee.id,
+      employeeName: employee.name || employee.id,
+      branch: employee.branch || "",
+      branchId: employee.branchId || "",
+      period,
+      ...amounts,
+      loanId: amounts.loanDeduction ? cleanText(input.loanId, 120) : "",
+      note: cleanText(input.note, 1000),
+      status,
+      managerComment: "",
+      submittedAt: status === "រង់ចាំអនុម័ត" ? now : "",
+      submittedByUid: status === "រង់ចាំអនុម័ត" ? user.uid || "" : "",
+      submittedByEmail: status === "រង់ចាំអនុម័ត" ? user.email || "" : "",
+      history: [operationHistory(user, "created", status === "រង់ចាំអនុម័ត" ? "បានបង្កើត និងដាក់ស្នើបញ្ជីប្រាក់ខែ" : "បានបង្កើតបញ្ជីប្រាក់ខែ", { netPay: amounts.netPay })],
+      createdAt: now,
+      createdByUid: user.uid || "",
+      createdByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    await commitWrites(env, [
+      { path: `payrollRecords/${payrollId}`, data: payroll, exists: false },
+      { path: payrollReservationPath, data: { payrollId, employeeId: employee.id, period, createdAt: now }, exists: false },
+      operationalAuditWrite("payroll_created", user, payroll, { module: "payrollRecords", period, netPay: amounts.netPay }),
+    ]);
+    return { ok: true, payroll };
+  }
+
+  const { data: payroll, updateTime } = await requiredOperationalDocument(env, "payrollRecords", payload?.payrollId, "Payroll");
+  if (!PAYROLL_STATUSES.has(payroll.status)) payroll.status = "ព្រាង";
+
+  if (action === "payroll.update") {
+    if (!["ព្រាង", "ត្រូវកែប្រែ"].includes(payroll.status)) throw httpError("Only draft or returned payroll can be edited", 409);
+    const patch = payload?.patch || {};
+    const amounts = payrollAmounts(patch, payroll);
+    const loanId = amounts.loanDeduction ? cleanText(patch.loanId === undefined ? payroll.loanId : patch.loanId, 120) : "";
+    await validatePayrollLoan(env, payroll.employeeId, loanId, amounts.loanDeduction, true);
+    const next = {
+      ...payroll,
+      ...amounts,
+      loanId,
+      note: patch.note === undefined ? payroll.note : cleanText(patch.note, 1000),
+      status: payroll.status === "ត្រូវកែប្រែ" ? "ព្រាង" : payroll.status,
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(payroll.history, operationHistory(user, "updated", "បានកែប្រែបញ្ជីប្រាក់ខែ", { netPay: next.netPay }));
+    await commitWrites(env, [
+      { path: `payrollRecords/${payroll.payrollId || payload.payrollId}`, data: next, updateTime },
+      operationalAuditWrite("payroll_updated", user, next, { module: "payrollRecords", netPay: next.netPay }),
+    ]);
+    return { ok: true, payroll: next };
+  }
+
+  if (action === "payroll.submit") {
+    if (!["ព្រាង", "ត្រូវកែប្រែ"].includes(payroll.status)) throw httpError("Only draft payroll can be submitted", 409);
+    const next = {
+      ...payroll,
+      status: "រង់ចាំអនុម័ត",
+      submittedAt: now,
+      submittedByUid: user.uid || "",
+      submittedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(payroll.history, operationHistory(user, "submitted", "បានដាក់បញ្ជីប្រាក់ខែសម្រាប់អនុម័ត"));
+    await commitWrites(env, [
+      { path: `payrollRecords/${payroll.payrollId || payload.payrollId}`, data: next, updateTime },
+      operationalAuditWrite("payroll_submitted", user, next, { module: "payrollRecords" }),
+    ]);
+    return { ok: true, payroll: next };
+  }
+
+  if (action === "payroll.review") {
+    if (payroll.status !== "រង់ចាំអនុម័ត") throw httpError("Only submitted payroll can be reviewed", 409);
+    const decision = cleanText(payload?.decision, 20);
+    if (!["approve", "return"].includes(decision)) throw httpError("Payroll review decision is invalid", 400);
+    const comment = cleanText(payload?.comment, 1000);
+    if (decision === "return" && !comment) throw httpError("A comment is required when returning payroll", 400);
+    const approved = decision === "approve";
+    const next = {
+      ...payroll,
+      status: approved ? "បានអនុម័ត" : "ត្រូវកែប្រែ",
+      managerComment: comment,
+      reviewedAt: now,
+      reviewedByUid: user.uid || "",
+      reviewedByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(payroll.history, operationHistory(user, approved ? "approved" : "returned", approved ? "បានអនុម័តបញ្ជីប្រាក់ខែ" : "បានបញ្ជូនបញ្ជីប្រាក់ខែឱ្យកែប្រែ", { comment }));
+    await commitWrites(env, [
+      { path: `payrollRecords/${payroll.payrollId || payload.payrollId}`, data: next, updateTime },
+      operationalAuditWrite(approved ? "payroll_approved" : "payroll_returned", user, next, { module: "payrollRecords", comment }),
+    ]);
+    return { ok: true, payroll: next };
+  }
+
+  if (action === "payroll.pay") {
+    if (payroll.status !== "បានអនុម័ត") throw httpError("Only approved payroll can be marked paid", 409);
+    const payment = payload?.payment || {};
+    const paymentDate = validIsoDate(payment.date, "Payment date");
+    const paymentReference = cleanText(payment.reference, 200);
+    const loanResult = await validatePayrollLoan(env, payroll.employeeId, payroll.loanId, Number(payroll.loanDeduction || 0), true);
+    const next = {
+      ...payroll,
+      status: "បានបើកប្រាក់",
+      paymentDate,
+      paymentReference,
+      paidAt: now,
+      paidByUid: user.uid || "",
+      paidByEmail: user.email || "",
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(payroll.history, operationHistory(user, "paid", "បានកត់សម្គាល់ថាបើកប្រាក់រួច", { paymentDate, paymentReference, netPay: payroll.netPay }));
+    const writes = [
+      { path: `payrollRecords/${payroll.payrollId || payload.payrollId}`, data: next, updateTime },
+      operationalAuditWrite("payroll_paid", user, next, { module: "payrollRecords", paymentDate, netPay: payroll.netPay }),
+    ];
+    if (loanResult.loan && Number(payroll.loanDeduction || 0) > 0) {
+      const loan = loanResult.loan;
+      const deduction = Number(payroll.loanDeduction || 0);
+      const paidAmount = Math.round((Number(loan.paidAmount || 0) + deduction) * 100) / 100;
+      const balance = Math.max(0, Math.round((Number(loan.amount || 0) - paidAmount) * 100) / 100);
+      const loanPayment = {
+        paymentId: `PAY-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+        date: paymentDate,
+        amount: deduction,
+        note: `Payroll deduction ${payroll.period}`,
+        source: "payroll",
+        payrollId: payroll.payrollId || payload.payrollId,
+        recordedAt: now,
+        recordedByUid: user.uid || "",
+        recordedByEmail: user.email || "",
+      };
+      const nextLoan = {
+        ...loan,
+        payments: [...(Array.isArray(loan.payments) ? loan.payments : []), loanPayment].slice(-500),
+        paidAmount,
+        balance,
+        status: balance === 0 ? "បានសងរួច" : "សកម្ម",
+        completedAt: balance === 0 ? now : loan.completedAt || "",
+        updatedAt: now,
+        updatedByUid: user.uid || "",
+        updatedByEmail: user.email || "",
+      };
+      nextLoan.history = appendOperationHistory(loan.history, operationHistory(user, "payment", "បានកាត់ប្រាក់កម្ចីតាម Payroll", { amount: deduction, payrollId: payroll.payrollId || payload.payrollId, balance }));
+      writes.push(
+        { path: `staffLoans/${loan.loanId || payroll.loanId}`, data: nextLoan, updateTime: loanResult.state.updateTime },
+        operationalAuditWrite("staff_loan_payroll_deduction", user, nextLoan, { module: "staffLoans", payrollId: payroll.payrollId || payload.payrollId, amount: deduction, balance }),
+      );
+    }
+    await commitWrites(env, writes);
+    return { ok: true, payroll: next };
+  }
+
+  throw httpError("Unsupported payroll action", 404);
+}
+
+
+async function handleOperationsMutation(user, env, body) {
+  const action = cleanText(body?.action, 80);
+  const payload = body?.payload || {};
+  if (action.startsWith("loan.")) return handleLoanOperation(user, env, action, payload);
+  if (action.startsWith("asset.")) return handleAssetOperation(user, env, action, payload);
+  if (action.startsWith("kpi.")) return handleKpiOperation(user, env, action, payload);
+  if (action.startsWith("payroll.")) return handlePayrollOperation(user, env, action, payload);
+  throw httpError("Unsupported operations action", 404);
+}
+
+
 async function handleRequest(request, env) {
   const origin = allowedOrigin(request, env);
   if (request.method === "OPTIONS") return origin ? preflight(origin) : json({ error: "Origin not allowed" }, 403);
   const url = new URL(request.url);
   if (url.pathname === "/health" && request.method === "GET") {
     const adminConfigured = Boolean(env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY && env.FIREBASE_PROJECT_ID && env.FIREBASE_WEB_API_KEY);
-    return json({ ok: true, configured: adminConfigured, adminConfigured, telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN) }, 200, origin);
+    return json({ ok: true, configured: adminConfigured, adminConfigured, telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN), emailConfigured: Boolean(env.RESEND_API_KEY && env.NOTIFICATION_FROM_EMAIL), backupConfigured: Boolean(env.FIRESTORE_BACKUP_BUCKET) }, 200, origin);
   }
   try {
     const user = await verifyFirebaseUser(request, env);
@@ -1950,6 +3233,10 @@ async function handleRequest(request, env) {
     else if (url.pathname === "/api/admin/login-accounts/audit" && request.method === "POST") result = await handleAuditLoginAccounts(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/create" && request.method === "POST") result = await handleCreateEmploymentAction(user, env, await request.json());
     else if (url.pathname === "/api/admin/employment-actions/cancel" && request.method === "POST") result = await handleCancelEmploymentAction(user, env, await request.json());
+    else if (url.pathname === "/api/admin/system/status" && request.method === "POST") result = await handleSystemStatus(user, env);
+    else if (url.pathname === "/api/admin/system/backup" && request.method === "POST") result = await handleSystemBackup(user, env);
+    else if (url.pathname === "/api/admin/system/test-email" && request.method === "POST") result = await handleSystemTestEmail(user, env);
+    else if (url.pathname === "/api/admin/operations/mutate" && request.method === "POST") result = await handleOperationsMutation(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {
       if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
       result = await sendDailySummary(env, true);
@@ -1967,6 +3254,9 @@ export default {
     ctx.waitUntil(Promise.all([
       sendDailySummary(env).catch((error) => console.error("Daily Telegram summary failed", error.message)),
       processScheduledEmploymentActions(env).catch((error) => console.error("Scheduled employment actions failed", error.message)),
+      checkFirestoreBackupOperation(env)
+        .then(() => startFirestoreBackup(env))
+        .catch((error) => console.error("Scheduled Firestore backup failed", error.message)),
     ]));
   },
 };

@@ -68,7 +68,7 @@ export default function LeaveReportPage({ leaveRequests = [] }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <div className="bg-white rounded-2xl border border-[#EBEDF3] p-5 lg:col-span-1">
           <h3 className="font-semibold text-[#1E2333] text-[15px] mb-4">តាមប្រភេទច្បាប់</h3>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-col items-center gap-4 min-[420px]:flex-row min-[420px]:gap-6">
             <div className="relative w-[130px] h-[130px] shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -102,7 +102,7 @@ export default function LeaveReportPage({ leaveRequests = [] }) {
           <div className="px-5 py-4 border-b border-[#EBEDF3]">
             <h3 className="font-semibold text-[#1E2333] text-[15px]">សំណើច្បាប់ទាំងអស់</h3>
           </div>
-          <div className="overflow-x-auto">
+          <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-sm">
             <thead>
               <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
@@ -142,6 +142,33 @@ export default function LeaveReportPage({ leaveRequests = [] }) {
             </tbody>
           </table>
         </div>
+          <div className="divide-y divide-[#EBEDF3] md:hidden">
+            {filteredRequests.map((request) => (
+              <article key={request.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-[#1E2333]">{request.name}</div>
+                    <div className="mt-0.5 text-xs text-[#8A8FA3]">{request.branch || "មិនបានកំណត់សាខា"}</div>
+                  </div>
+                  <span
+                    className="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium"
+                    style={{
+                      background: request.status === "បានអនុម័ត" ? COLORS.greenLight : request.status === "បានបដិសេធ" ? COLORS.redLight : COLORS.amberLight,
+                      color: request.status === "បានអនុម័ត" ? COLORS.green : request.status === "បានបដិសេធ" ? COLORS.red : COLORS.accent,
+                    }}
+                  >
+                    {request.status}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full px-2.5 py-1 text-xs font-medium" style={{ background: leaveTypeStyle[request.leaveType]?.bg, color: leaveTypeStyle[request.leaveType]?.fg }}>{request.leaveType}</span>
+                  <span className="text-xs text-[#5B5F73]">{request.startDate} – {request.endDate}</span>
+                  <span className="text-xs font-semibold text-[#2A3F8F]">{request.days} ថ្ងៃ</span>
+                </div>
+              </article>
+            ))}
+            {!filteredRequests.length && <div className="py-10 text-center text-sm text-[#8A8FA3]">មិនមានសំណើក្នុងរយៈពេលនេះទេ</div>}
+          </div>
         </div>
       </div>
 

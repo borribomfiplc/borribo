@@ -154,3 +154,43 @@ main table > thead > tr > th.text-center {
 main table > tbody > tr > td {
   vertical-align: middle;
 }
+
+/* v61 mobile hardening */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  main {
+    overscroll-behavior-y: contain;
+  }
+
+  main .overflow-x-auto {
+    margin-inline: -0.25rem;
+    padding-inline: 0.25rem;
+    scroll-snap-type: x proximity;
+  }
+
+  main .overflow-x-auto::after {
+    content: "";
+    display: block;
+    width: 0.25rem;
+    flex: 0 0 0.25rem;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+}
+
+@supports (padding: max(0px)) {
+  .mobile-safe-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+}

@@ -121,7 +121,7 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
             {latestDates.length ? `${latestDates.length} ថ្ងៃ` : "មិនទាន់មានទិន្នន័យ"}
           </span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[760px] text-sm">
             <thead><tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
               <th className="text-right font-medium px-5 py-3">សាខា</th><th className="text-center font-medium px-4 py-3">បុគ្គលិក</th><th className="text-center font-medium px-4 py-3">មានវត្តមាន</th><th className="text-center font-medium px-4 py-3">យឺត</th><th className="text-center font-medium px-4 py-3">អវត្តមាន</th><th className="text-center font-medium px-4 py-3">ច្បាប់</th><th className="text-left font-medium px-5 py-3">អត្រាវត្តមាន</th>
@@ -135,6 +135,31 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
               </tr>
             ))}</tbody>
           </table>
+        </div>
+        <div className="divide-y divide-[#EBEDF3] md:hidden">
+          {branchSummaries.map(({ branch, staff, records, counts, rate }) => (
+            <article key={branch.id} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-[#1E2333]">{branch.name}</div>
+                  <div className="mt-0.5 text-xs text-[#8A8FA3]">{branch.type} · {staff} បុគ្គលិក</div>
+                </div>
+                <span className="shrink-0 rounded-full bg-[#EEF1FB] px-2.5 py-1 text-xs font-semibold text-[#2A3F8F]">{records ? `${rate}%` : "—"}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                {["មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"].map((status) => (
+                  <div key={status} className="rounded-xl bg-[#F7F8FB] px-1.5 py-2.5">
+                    <div className="text-base font-bold" style={{ color: statusConfig[status].color }}>{counts[status]}</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-[#8A8FA3]">{status}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#EEF1FB]">
+                <div className="h-full rounded-full" style={{ width: `${rate}%`, background: rate >= 90 ? COLORS.green : rate >= 75 ? COLORS.accent : COLORS.red }} />
+              </div>
+            </article>
+          ))}
+          {!branchSummaries.length && <div className="py-10 text-center text-sm text-[#8A8FA3]">មិនមានសាខាទេ</div>}
         </div>
       </div>
 

@@ -37,7 +37,7 @@ export default function HolidaysSettingsPage({ holidays, setHolidays }) {
       <OrgHeader title="ថ្ងៃឈប់សម្រាក" sub={`សរុប ${holidays.length} ថ្ងៃឈប់សម្រាកសាធារណៈ${years ? ` · ឆ្នាំ ${years}` : ""}`} onAdd={() => { setEditingId(null); setForm({ date: "", name: "" }); setShowNew(true); }} addLabel="បន្ថែមថ្ងៃឈប់សម្រាក" />
 
       <div className="bg-white rounded-2xl border border-[#EBEDF3] overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-[#F7F8FB] text-[#8A8FA3] text-xs">
@@ -65,6 +65,25 @@ export default function HolidaysSettingsPage({ holidays, setHolidays }) {
             ))}
           </tbody>
         </table>
+        </div>
+        <div className="divide-y divide-[#EBEDF3] md:hidden">
+          {holidays.map((holiday) => (
+            <article key={holiday.id} className="flex items-start gap-3 p-4">
+              <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl bg-[#EEF1FB] text-[#2A3F8F]">
+                <span className="text-sm font-bold leading-none">{holiday.dateISO?.slice(8, 10) || "—"}</span>
+                <span className="mt-1 text-[9px] leading-none">{holiday.dateISO?.slice(5, 7) || ""}/{holiday.dateISO?.slice(0, 4) || ""}</span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-[#1E2333]">{holiday.name}</div>
+                <div className="mt-1 text-xs text-[#8A8FA3]" dir="ltr">{holiday.dateISO}</div>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <button onClick={() => edit(holiday)} aria-label={`កែ ${holiday.name}`} className="flex h-11 w-11 items-center justify-center rounded-xl text-[#2A3F8F] hover:bg-[#EEF1FB]"><Pencil size={16} /></button>
+                <button onClick={() => remove(holiday.id)} aria-label={`លុប ${holiday.name}`} className="flex h-11 w-11 items-center justify-center rounded-xl text-[#D9614F] hover:bg-[#FBEBE8]"><X size={17} /></button>
+              </div>
+            </article>
+          ))}
+          {!holidays.length && <div className="py-10 text-center text-sm text-[#8A8FA3]">មិនមានថ្ងៃឈប់សម្រាកទេ</div>}
         </div>
       </div>
 

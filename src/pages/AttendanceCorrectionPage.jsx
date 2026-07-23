@@ -388,7 +388,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
 
       {/* New correction modal */}
       {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-bold text-[#1E2333] text-lg">សុំកែតម្រូវវត្តមាន</h3>

@@ -486,7 +486,7 @@ export default function DailyAttendancePage({
 
       {/* Manual entry modal */}
       {showManual && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-bold text-[#1E2333] text-lg">{editingRecord ? "កែតម្រូវវត្តមាន" : "កត់ត្រាវត្តមានដោយដៃ"}</h3>

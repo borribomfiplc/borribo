@@ -319,7 +319,9 @@ async function handleCreateEmployee(user, env, body) {
   const username = String(account.username || "").trim().toLowerCase();
   const email = normalizeEmail(account.email || employee.email);
   const role = String(account.role || "employee");
-  if (!employee.id || !employee.name || !employee.branch || !employee.dept || !employee.role) throw Object.assign(new Error("Employee data is incomplete"), { status: 400 });
+  if (!employee.id || !employee.name || !employee.englishName || !employee.branch || !employee.dept || !employee.role) throw Object.assign(new Error("Employee data is incomplete"), { status: 400 });
+  employee.englishName = String(employee.englishName).trim().replace(/\s+/g, " ").toUpperCase();
+  if (!/^[A-Z][A-Z .'-]*$/.test(employee.englishName)) throw Object.assign(new Error("Invalid English employee name"), { status: 400 });
   if (await getDocument(env, `employees/${employee.id}`)) throw Object.assign(new Error("EMPLOYEE_ID_EXISTS"), { status: 409 });
   if (accountEnabled) {
     if (!validUsername(username)) throw Object.assign(new Error("Invalid username"), { status: 400 });
@@ -354,10 +356,10 @@ async function handleCreateEmployee(user, env, body) {
     const employeeRecord = { ...baseEmployee, uid, email, username, accountRole: role };
     await commitWrites(env, [
       { path: `employees/${employee.id}`, data: employeeRecord, exists: false },
-      { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
+      { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
       { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
       { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
-      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }, exists: false },
+      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }, exists: false },
       ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
@@ -514,6 +516,9 @@ async function handleUpdateEmployee(user, env, body) {
   if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
   const employee = body?.employee || {};
   if (!employee.id) throw Object.assign(new Error("Employee identifier is missing"), { status: 400 });
+  if (!employee.name || !employee.englishName) throw Object.assign(new Error("Khmer and English employee names are required"), { status: 400 });
+  employee.englishName = String(employee.englishName).trim().replace(/\s+/g, " ").toUpperCase();
+  if (!/^[A-Z][A-Z .'-]*$/.test(employee.englishName)) throw Object.assign(new Error("Invalid English employee name"), { status: 400 });
   const previous = await getDocument(env, `employees/${employee.id}`);
   if (!previous) throw Object.assign(new Error("Employee record was not found"), { status: 404 });
   const previousStatus = requireEmployeeStatus(previous.status, "សកម្ម");
@@ -537,11 +542,11 @@ async function handleUpdateEmployee(user, env, body) {
     await commitWrites(env, [
       { path: `employees/${employee.id}`, data: employeeRecord },
       ...(profile ? [
-        { path: `profiles/${employee.uid}`, data: { ...profile, name: employee.name, email, branch: employee.branch, active: !disabled, status: employee.status, updatedAt: now } },
+        { path: `profiles/${employee.uid}`, data: { ...profile, name: employee.name, englishName: employee.englishName, email, branch: employee.branch, active: !disabled, status: employee.status, updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email, uid: employee.uid, active: !disabled } }] : []),
         ...(profile.email && profile.email !== email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid: employee.uid, active: false } }] : []),
         { path: `passwordResetEmails/${email}`, data: { email, uid: employee.uid, active: !disabled } },
-        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: employee.id, name: employee.name, email, username: profile.username, role: profile.role, branch: employee.branch, status: employee.status, active: !disabled, updatedAt: now } },
+        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username: profile.username, role: profile.role, branch: employee.branch, status: employee.status, active: !disabled, updatedAt: now } },
       ] : []),
       ...reservationWrites,
     ]);

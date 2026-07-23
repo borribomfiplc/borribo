@@ -8,7 +8,7 @@ import { imageFileToDataUrl } from "../utils/employeePhoto";
 import { isEmployeeInactive, normalizeEmployeeStatus } from "../utils/employeeStatus";
 
 const emptyForm = (branches, departments, jobRoles) => ({
-  name: "", gender: "ប្រុស", dob: "", phone: "", email: "", address: "",
+  name: "", englishName: "", gender: "ប្រុស", dob: "", phone: "", email: "", address: "",
   department: departments.find((item) => item.status !== "អសកម្ម")?.name || "",
   position: jobRoles.find((item) => item.status !== "អសកម្ម")?.name || "",
   branch: branches.find((item) => item.status !== "អសកម្ម")?.name || "", employmentType: "ពេញម៉ោង", startDate: "",
@@ -34,6 +34,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
   const [saving, setSaving] = useState(false);
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+  const updateEnglishName = (event) => setForm((current) => ({ ...current, englishName: event.target.value.toUpperCase() }));
   const activeBranches = useMemo(() => branches.filter((item) => item.status !== "អសកម្ម"), [branches]);
   const activeDepartments = useMemo(() => departments.filter((item) => item.status !== "អសកម្ម"), [departments]);
   const activeJobRoles = useMemo(() => jobRoles.filter((item) => item.status !== "អសកម្ម"), [jobRoles]);
@@ -67,9 +68,12 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
 
   const handleSave = async () => {
     if (saving) return;
-    if (!form.name.trim() || !form.phone.trim() || !form.position || !form.department || !form.branch) {
-      setError("សូមបំពេញឈ្មោះ លេខទូរស័ព្ទ សាខា នាយកដ្ឋាន និងតួនាទីឲ្យបានគ្រប់");
+    if (!form.name.trim() || !form.englishName.trim() || !form.phone.trim() || !form.position || !form.department || !form.branch) {
+      setError("សូមបំពេញឈ្មោះខ្មែរ ឈ្មោះឡាតាំង លេខទូរស័ព្ទ សាខា នាយកដ្ឋាន និងតួនាទីឲ្យបានគ្រប់");
       return;
+    }
+    if (!/^[A-Z][A-Z .'-]*$/.test(form.englishName.trim())) {
+      setError("ឈ្មោះឡាតាំងត្រូវប្រើតែអក្សរអង់គ្លេស ដូចជា HUN RINA"); return;
     }
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       setError("អ៊ីមែលមិនត្រឹមត្រូវ"); return;
@@ -89,7 +93,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
     }
 
     const employeeData = {
-      ...(editingEmployee || {}), name: form.name.trim(), role: form.position, dept: form.department,
+      ...(editingEmployee || {}), name: form.name.trim(), englishName: form.englishName.trim().replace(/\s+/g, " ").toUpperCase(), role: form.position, dept: form.department,
       branch: form.branch, phone: form.phone.trim(), status: form.status, gender: form.gender,
       dob: form.dob, email: form.email.trim().toLowerCase(), address: form.address.trim(), photo: form.photo || "",
       employmentType: form.employmentType, startDate: form.startDate, shift: "ពេញមួយថ្ងៃ",
@@ -170,7 +174,8 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
         </div>
 
         <SectionCard title="ព័ត៌មានផ្ទាល់ខ្លួន" icon={User}>
-          <div><FieldLabel required>ឈ្មោះពេញ</FieldLabel><TextField value={form.name} onChange={update("name")} placeholder="ឧ. សុខ ស្រីលក្ខណ៍" /></div>
+          <div><FieldLabel required>ឈ្មោះពេញជាភាសាខ្មែរ</FieldLabel><TextField value={form.name} onChange={update("name")} placeholder="ឧ. ហ៊ុន រីណា" /></div>
+          <div><FieldLabel required>ឈ្មោះឡាតាំង (English Name)</FieldLabel><TextField dir="ltr" value={form.englishName} onChange={updateEnglishName} placeholder="ឧ. HUN RINA" /></div>
           <div><FieldLabel>ភេទ</FieldLabel><SelectField options={["ប្រុស", "ស្រី"]} value={form.gender} onChange={update("gender")} /></div>
           <div><FieldLabel>ថ្ងៃខែឆ្នាំកំណើត</FieldLabel><TextField type="date" value={form.dob} onChange={update("dob")} /></div>
           <div><FieldLabel required>លេខទូរស័ព្ទ</FieldLabel><TextField dir="ltr" icon={Phone} value={form.phone} onChange={update("phone")} placeholder="012 345 678" /></div>

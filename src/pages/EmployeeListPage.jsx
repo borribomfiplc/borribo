@@ -25,6 +25,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
     const search = String(query || "").trim();
     const matchesQuery =
       String(e.name || "").includes(search) ||
+      String(e.englishName || "").toLowerCase().includes(search.toLowerCase()) ||
       String(e.role || "").includes(search) ||
       String(e.id || "").toLowerCase().includes(search.toLowerCase());
     const matchesBranch = branchFilter === "ទាំងអស់" || e.branch === branchFilter;
@@ -95,7 +96,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ស្វែងរកតាមឈ្មោះ ឬលេខសម្គាល់..."
+            placeholder="ស្វែងរកឈ្មោះខ្មែរ ឡាតាំង ឬលេខសម្គាល់..."
             className="w-full bg-[#F7F8FB] border border-transparent rounded-xl pl-4 pr-10 py-2.5 text-sm text-[#1E2333] placeholder:text-[#B4B7C6] outline-none transition focus:bg-white focus:border-[#2A3F8F]/25 focus:ring-4 focus:ring-[#2A3F8F]/10"
           />
         </div>
@@ -145,6 +146,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
                     {e.photo ? <img src={e.photo} alt={e.name} className="w-11 h-11 rounded-xl object-cover shrink-0 ring-2 ring-white shadow-sm" /> : <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#EEF1FB] to-[#E3E8F8] text-[#2A3F8F] text-sm font-bold flex items-center justify-center shrink-0 ring-2 ring-white shadow-sm">{e.name.slice(0, 1)}</div>}
                     <div className="min-w-0">
                       <div className="font-semibold text-[#1E2333] truncate">{e.name}</div>
+                      {e.englishName && <div className="text-[11px] text-[#69708A] mt-0.5 truncate" dir="ltr">{e.englishName}</div>}
                       <div className="text-[11px] text-[#A2A6B7] mt-0.5 tracking-wide">{e.id}</div>
                     </div>
                   </div>
@@ -200,6 +202,7 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
               {e.photo ? <img src={e.photo} alt={e.name} className="w-10 h-10 rounded-full object-cover shrink-0" /> : <div className="w-10 h-10 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-sm font-bold flex items-center justify-center shrink-0">{e.name.slice(0, 1)}</div>}
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[#1E2333] text-sm truncate">{e.name}</div>
+                {e.englishName && <div className="text-[11px] text-[#69708A] truncate" dir="ltr">{e.englishName}</div>}
                 <div className="text-xs text-[#8A8FA3] truncate">{e.role}</div>
               </div>
               <span

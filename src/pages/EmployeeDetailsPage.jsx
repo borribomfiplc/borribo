@@ -74,7 +74,7 @@ export default function EmployeeDetailsPage({ employee, employees = [], onBack, 
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
       <aside className="bg-white rounded-2xl border border-[#EBEDF3] p-5 text-center h-fit">
         {employee.photo ? <img src={employee.photo} alt={employee.name} className="w-28 h-28 rounded-full object-cover mx-auto border-4 border-[#EEF1FB]" /> : <div className="w-28 h-28 rounded-full bg-[#EEF1FB] text-[#2A3F8F] text-4xl font-bold flex items-center justify-center mx-auto">{employee.name?.slice(0, 1)}</div>}
-        <h2 className="font-bold text-[#1E2333] mt-4">{employee.name}</h2><p className="text-sm text-[#8A8FA3] mt-1">{employee.role}</p>
+        <h2 className="font-bold text-[#1E2333] mt-4">{employee.name}</h2>{employee.englishName && <p className="text-xs font-medium text-[#69708A] mt-1" dir="ltr">{employee.englishName}</p>}<p className="text-sm text-[#8A8FA3] mt-1">{employee.role}</p>
         <span className={`inline-block mt-3 text-xs font-medium rounded-full px-3 py-1 ${isEmployeeInactive(employee.status) ? "bg-[#F1F2F6] text-[#8A8FA3]" : employeeStatus === "ឈប់សម្រាក" ? "bg-[#FDF3E3] text-[#B97913]" : "bg-[#E9F7EF] text-[#3FA66B]"}`}>{employeeStatus}</span>
         <div className="border-t border-[#EBEDF3] mt-5 pt-4 text-xs text-[#8A8FA3]">លេខសម្គាល់<div className="text-base font-bold text-[#2A3F8F] mt-1" dir="ltr">{employee.id}</div></div>
       </aside>

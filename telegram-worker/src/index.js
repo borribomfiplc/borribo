@@ -352,14 +352,14 @@ async function handleCreateEmployee(user, env, body) {
   try {
     const created = await authAdminRequest(env, "create", { email, password: account.password, displayName: employee.name, emailVerified: false, disabled: false });
     uid = created.localId;
-    await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId: employee.id }), disableUser: false });
+    await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId: employee.id, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: false });
     const employeeRecord = { ...baseEmployee, uid, email, username, accountRole: role };
     await commitWrites(env, [
       { path: `employees/${employee.id}`, data: employeeRecord, exists: false },
-      { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
+      { path: `profiles/${uid}`, data: { uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, branchId: employee.branchId || "", active: true, createdAt: now, updatedAt: now }, exists: false },
       { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
       { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
-      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, status: "សកម្ម", active: true, createdAt: now }, exists: false },
+      { path: `users/${uid}`, data: { id: uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username, role, branch: employee.branch, branchId: employee.branchId || "", status: "សកម្ម", active: true, createdAt: now }, exists: false },
       ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
@@ -396,16 +396,16 @@ async function handleProvisionEmployeeAccount(user, env, body) {
   try {
     const created = await authAdminRequest(env, "create", { email, password: account.password, displayName: employee.name, emailVerified: false, disabled: false });
     uid = created.localId;
-    await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId }), disableUser: false });
+    await authAdminRequest(env, "update", { localId: uid, displayName: employee.name, customAttributes: JSON.stringify({ role, employeeId, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: false });
     const now = new Date().toISOString();
     const employeeRecord = { ...employee, uid, email, username, accountRole: role, updatedAt: now };
     const reservationWrites = await uniqueReservationWrites(env, employeeRecord, employee);
     await commitWrites(env, [
       { path: `employees/${employeeId}`, data: employeeRecord },
-      { path: `profiles/${uid}`, data: { uid, employeeId, name: employee.name, email, username, role, branch: employee.branch, active: true, createdAt: now, updatedAt: now }, exists: false },
+      { path: `profiles/${uid}`, data: { uid, employeeId, name: employee.name, englishName: employee.englishName || "", email, username, role, branch: employee.branch, branchId: employee.branchId || "", active: true, createdAt: now, updatedAt: now }, exists: false },
       { path: `usernames/${username}`, data: { username, email, uid, active: true }, exists: false },
       { path: `passwordResetEmails/${email}`, data: { email, uid, active: true } },
-      { path: `users/${uid}`, data: { id: uid, employeeId, name: employee.name, email, username, role, branch: employee.branch, status: employee.status, active: true, createdAt: now }, exists: false },
+      { path: `users/${uid}`, data: { id: uid, employeeId, name: employee.name, englishName: employee.englishName || "", email, username, role, branch: employee.branch, branchId: employee.branchId || "", status: employee.status, active: true, createdAt: now }, exists: false },
       ...reservationWrites,
     ]);
     return { ok: true, employee: employeeRecord, uid };
@@ -447,7 +447,7 @@ async function handleDeactivateEmployee(user, env, body) {
         { path: `profiles/${uid}`, data: { ...profile, active: false, status: "អសកម្ម", updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: profile.email, uid, active: false } }] : []),
         ...(profile.email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid, active: false } }] : []),
-        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, status: "អសកម្ម", active: false, updatedAt: now } },
+        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, englishName: profile.englishName || employee.englishName || "", email: profile.email, username: profile.username, role: profile.role, branch: profile.branch, branchId: profile.branchId || employee.branchId || "", status: "អសកម្ម", active: false, updatedAt: now } },
       ] : []),
     ]);
   } catch (error) {
@@ -495,10 +495,10 @@ async function handleReactivateEmployee(user, env, body) {
     await commitWrites(env, [
       { path: `employees/${employeeId}`, data: employeeRecord },
       ...(profile ? [
-        { path: `profiles/${uid}`, data: { ...profile, active: true, status: "សកម្ម", updatedAt: now } },
+        { path: `profiles/${uid}`, data: { ...profile, branch: employee.branch, branchId: employee.branchId || profile.branchId || "", active: true, status: "សកម្ម", updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: profile.email, uid, active: true } }] : []),
         ...(profile.email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid, active: true } }] : []),
-        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, email: profile.email, username: profile.username, role: profile.role, branch: employee.branch, status: "សកម្ម", active: true, updatedAt: now } },
+        { path: `users/${uid}`, data: { id: uid, employeeId, name: profile.name, englishName: profile.englishName || employee.englishName || "", email: profile.email, username: profile.username, role: profile.role, branch: employee.branch, branchId: employee.branchId || profile.branchId || "", status: "សកម្ម", active: true, updatedAt: now } },
       ] : []),
     ]);
   } catch (error) {
@@ -534,7 +534,7 @@ async function handleUpdateEmployee(user, env, body) {
   if (profile && !email.endsWith("@borribo.com.kh")) throw Object.assign(new Error("Account email must use @borribo.com.kh"), { status: 400 });
   const unique = await assertEmployeeUnique(env, { ...employee, email }, employee.id);
   const disabled = previousStatus === "អសកម្ម";
-  if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: disabled });
+  if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: disabled });
   const now = new Date().toISOString();
   const employeeRecord = { ...employee, email: unique.email, phoneNormalized: unique.phone, ...(profile ? { username: profile.username || employee.username || "", accountRole: profile.role } : {}), updatedAt: now };
   const reservationWrites = await uniqueReservationWrites(env, employeeRecord, previous);
@@ -542,18 +542,18 @@ async function handleUpdateEmployee(user, env, body) {
     await commitWrites(env, [
       { path: `employees/${employee.id}`, data: employeeRecord },
       ...(profile ? [
-        { path: `profiles/${employee.uid}`, data: { ...profile, name: employee.name, englishName: employee.englishName, email, branch: employee.branch, active: !disabled, status: employee.status, updatedAt: now } },
+        { path: `profiles/${employee.uid}`, data: { ...profile, name: employee.name, englishName: employee.englishName, email, branch: employee.branch, branchId: employee.branchId || "", active: !disabled, status: employee.status, updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email, uid: employee.uid, active: !disabled } }] : []),
         ...(profile.email && profile.email !== email ? [{ path: `passwordResetEmails/${profile.email}`, data: { email: profile.email, uid: employee.uid, active: false } }] : []),
         { path: `passwordResetEmails/${email}`, data: { email, uid: employee.uid, active: !disabled } },
-        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username: profile.username, role: profile.role, branch: employee.branch, status: employee.status, active: !disabled, updatedAt: now } },
+        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: employee.id, name: employee.name, englishName: employee.englishName, email, username: profile.username, role: profile.role, branch: employee.branch, branchId: employee.branchId || "", status: employee.status, active: !disabled, updatedAt: now } },
       ] : []),
       ...reservationWrites,
     ]);
   } catch (error) {
     const committed = await getDocument(env, `employees/${employee.id}`).catch(() => null);
     if (committed?.updatedAt === now) return { ok: true, employee: committed, recovered: true };
-    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: profile.email, displayName: previous.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: previous.id }), disableUser: normalizeEmployeeStatus(previous.status) === "អសកម្ម" }).catch(() => {});
+    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: profile.email, displayName: previous.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: previous.id, branch: previous.branch, branchId: previous.branchId || "" }), disableUser: normalizeEmployeeStatus(previous.status) === "អសកម្ម" }).catch(() => {});
     throw error;
   }
   return { ok: true, employee: employeeRecord };
@@ -629,7 +629,7 @@ async function applyEmploymentActionRecord(env, record) {
     localId: employee.uid,
     email: updated.email || profile.email,
     displayName: updated.name,
-    customAttributes: JSON.stringify({ role: profile.role, employeeId: updated.id }),
+    customAttributes: JSON.stringify({ role: profile.role, employeeId: updated.id, branch: updated.branch, branchId: updated.branchId || "" }),
     disableUser: disabled,
   });
   try {
@@ -637,16 +637,16 @@ async function applyEmploymentActionRecord(env, record) {
       { path: `employees/${updated.id}`, data: updated },
       { path: `employmentActions/${record.id}`, data: applied },
       ...(profile ? [
-        { path: `profiles/${employee.uid}`, data: { ...profile, name: updated.name, branch: updated.branch, active: !disabled, status: updated.status, updatedAt: now } },
+        { path: `profiles/${employee.uid}`, data: { ...profile, name: updated.name, branch: updated.branch, branchId: updated.branchId || "", active: !disabled, status: updated.status, updatedAt: now } },
         ...(profile.username ? [{ path: `usernames/${profile.username}`, data: { username: profile.username, email: updated.email || profile.email, uid: employee.uid, active: !disabled } }] : []),
         ...((updated.email || profile.email) ? [{ path: `passwordResetEmails/${updated.email || profile.email}`, data: { email: updated.email || profile.email, uid: employee.uid, active: !disabled } }] : []),
-        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: updated.id, name: updated.name, email: updated.email || profile.email, username: profile.username || updated.username || "", role: profile.role, branch: updated.branch, status: updated.status, active: !disabled, updatedAt: now } },
+        { path: `users/${employee.uid}`, data: { id: employee.uid, employeeId: updated.id, name: updated.name, englishName: updated.englishName || profile.englishName || "", email: updated.email || profile.email, username: profile.username || updated.username || "", role: profile.role, branch: updated.branch, branchId: updated.branchId || "", status: updated.status, active: !disabled, updatedAt: now } },
       ] : []),
     ]);
   } catch (error) {
     const committed = await getDocument(env, `employmentActions/${record.id}`).catch(() => null);
     if (committed?.status === "បានអនុវត្ត") return { employee: updated, action: committed, recovered: true };
-    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: employee.email || profile.email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id }), disableUser: normalizeEmployeeStatus(employee.status) === "អសកម្ម" }).catch(() => {});
+    if (employee.uid) await authAdminRequest(env, "update", { localId: employee.uid, email: employee.email || profile.email, displayName: employee.name, customAttributes: JSON.stringify({ role: profile.role, employeeId: employee.id, branch: employee.branch, branchId: employee.branchId || "" }), disableUser: normalizeEmployeeStatus(employee.status) === "អសកម្ម" }).catch(() => {});
     throw error;
   }
   return { employee: updated, action: applied };

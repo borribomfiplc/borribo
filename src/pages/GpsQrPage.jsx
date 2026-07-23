@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ScanLine, MapPin, ShieldCheck } from "lucide-react";
-import { doc, writeBatch } from "firebase/firestore";
+import { doc, serverTimestamp, writeBatch } from "firebase/firestore";
 import { QRCodeSVG } from "qrcode.react";
 import { FieldLabel, SelectField } from "../components/shared/FormFields";
 import { ToggleRow, SettingsSaveBar } from "../components/shared/SettingsWidgets";
@@ -10,10 +10,14 @@ import {
   createQrPayload, newQrCredential, publicQrCredential, qrCredentialExpired,
 } from "../utils/qrSecurity";
 
-const defaultRadii = (branches) => Object.fromEntries(branches.map((branch) => [branch.id, "150"]));
+const defaultRadii = (branches) => Object.fromEntries(branches.map((branch) => [
+  branch.id, String(branch.gpsRadiusMeters || 100),
+]));
 const defaultLocations = (branches) => Object.fromEntries(branches.map((branch) => [branch.id, {
-  latitude: branch.latitude || "", longitude: branch.longitude || "",
+  latitude: branch.latitude ?? "", longitude: branch.longitude ?? "",
 }]));
+const coordinateValue = (value) => String(value ?? "").trim() === "" ? "" : Number(value);
+const configuredValue = (primary, fallback = "") => String(primary ?? "").trim() === "" ? fallback : primary;
 
 export default function GpsQrPage({ branches = [] }) {
   const [radii, setRadii] = useState(() => defaultRadii(branches));
@@ -30,24 +34,48 @@ export default function GpsQrPage({ branches = [] }) {
   const [qrTokens, setQrTokens] = useState({});
   const [locations, setLocations] = useState(() => defaultLocations(branches));
   const [qrBranchId, setQrBranchId] = useState("");
-  const branchKey = branches.map((branch) => branch.id).join("|");
+  const activeBranches = useMemo(
+    () => branches.filter((branch) => branch.status !== "អសកម្ម"),
+    [branches],
+  );
+  const branchKey = branches.map((branch) => [
+    branch.id, branch.status, branch.latitude, branch.longitude, branch.gpsRadiusMeters,
+  ].join(":")).join("|");
 
   const persistConfiguration = useCallback(async ({ tokens, interval = qrInterval }) => {
     const publicCredentials = await Promise.all(
-      branches.map(async (branch) => [branch.id, await publicQrCredential(tokens[branch.id], interval)]),
+      activeBranches.map(async (branch) => [branch.id, await publicQrCredential(tokens[branch.id], interval)]),
     );
+    const branchGeofences = Object.fromEntries(activeBranches.map((branch) => [branch.id, {
+      branchId: branch.id,
+      name: branch.name,
+      latitude: coordinateValue(locations[branch.id]?.latitude),
+      longitude: coordinateValue(locations[branch.id]?.longitude),
+      radiusMeters: Number(radii[branch.id]),
+      active: true,
+    }]));
     const batch = writeBatch(db);
     batch.set(doc(db, "settings", "gpsQr"), {
       radii, requireQr, requireGps, maxGpsAccuracy, qrInterval: interval, qrTokens: tokens, locations,
+      branchGeofences, updatedAt: serverTimestamp(),
     }, { merge: true });
     batch.set(doc(db, "settings", "gpsQrPublic"), {
       radii, requireQr, requireGps, maxGpsAccuracy, qrInterval: interval, locations,
+      branchGeofences, updatedAt: serverTimestamp(),
     }, { merge: true });
+    activeBranches.forEach((branch) => {
+      batch.set(doc(db, "branches", branch.id), {
+        latitude: coordinateValue(locations[branch.id]?.latitude),
+        longitude: coordinateValue(locations[branch.id]?.longitude),
+        gpsRadiusMeters: Number(radii[branch.id]),
+        gpsUpdatedAt: serverTimestamp(),
+      }, { merge: true });
+    });
     publicCredentials.forEach(([branchId, credential]) => {
       batch.set(doc(db, "qrTokens", branchId), credential);
     });
     await batch.commit();
-  }, [branches, locations, maxGpsAccuracy, qrInterval, radii, requireGps, requireQr]);
+  }, [activeBranches, locations, maxGpsAccuracy, qrInterval, radii, requireGps, requireQr]);
 
   useEffect(() => {
     let active = true;
@@ -63,7 +91,7 @@ export default function GpsQrPage({ branches = [] }) {
       const interval = data.qrInterval || defaults.qrInterval;
       const tokens = {};
       let needsSync = false;
-      branches.forEach((branch) => {
+      activeBranches.forEach((branch) => {
         const stored = data.qrTokens?.[branch.id];
         if (stored && !qrCredentialExpired(stored)) tokens[branch.id] = stored;
         else {
@@ -71,16 +99,22 @@ export default function GpsQrPage({ branches = [] }) {
           needsSync = true;
         }
       });
-      const nextRadii = { ...defaults.radii, ...(data.radii || {}) };
-      const nextLocations = { ...defaults.locations, ...(data.locations || {}) };
+      const nextRadii = Object.fromEntries(branches.map((branch) => [
+        branch.id,
+        String(branch.gpsRadiusMeters || data.radii?.[branch.id] || defaults.radii[branch.id] || 100),
+      ]));
+      const nextLocations = Object.fromEntries(branches.map((branch) => [branch.id, {
+        latitude: configuredValue(branch.latitude, data.locations?.[branch.id]?.latitude ?? ""),
+        longitude: configuredValue(branch.longitude, data.locations?.[branch.id]?.longitude ?? ""),
+      }]));
       setRadii(nextRadii); setRequireQr(Boolean(data.requireQr)); setRequireGps(Boolean(data.requireGps));
       setMaxGpsAccuracy(String(data.maxGpsAccuracy || defaults.maxGpsAccuracy));
       setQrInterval(interval); setLoadedInterval(interval); setQrTokens(tokens); setLocations(nextLocations);
-      setQrBranchId((current) => branches.some((branch) => branch.id === current) ? current : branches[0]?.id || "");
+      setQrBranchId((current) => activeBranches.some((branch) => branch.id === current) ? current : activeBranches[0]?.id || "");
       setLoading(false);
       if (needsSync) {
         try {
-          const publicCredentials = await Promise.all(branches.map(async (branch) => [branch.id, await publicQrCredential(tokens[branch.id], interval)]));
+          const publicCredentials = await Promise.all(activeBranches.map(async (branch) => [branch.id, await publicQrCredential(tokens[branch.id], interval)]));
           const batch = writeBatch(db);
           batch.set(doc(db, "settings", "gpsQr"), { qrTokens: tokens, qrInterval: interval }, { merge: true });
           batch.set(doc(db, "settings", "gpsQrPublic"), {
@@ -101,15 +135,25 @@ export default function GpsQrPage({ branches = [] }) {
   const handleSave = async () => {
     setSaving(true); setError("");
     try {
-      const radiusIsValid = branches.every((branch) => Number(radii[branch.id]) > 0);
-      const locationsAreValid = !requireGps || branches.every((branch) => (
-        Number.isFinite(Number(locations[branch.id]?.latitude)) && Number.isFinite(Number(locations[branch.id]?.longitude))
+      if (!activeBranches.length) throw new Error("មិនមានសាខាសកម្មសម្រាប់កំណត់ GPS/QR ទេ");
+      const radiusIsValid = activeBranches.every((branch) => (
+        Number(radii[branch.id]) >= 20 && Number(radii[branch.id]) <= 5000
       ));
-      if (!radiusIsValid) throw new Error("កាំ GPS ត្រូវធំជាង 0 ម៉ែត្រ");
-      if (!locationsAreValid) throw new Error("សូមបំពេញ Latitude និង Longitude គ្រប់សាខា");
+      const locationsAreValid = !requireGps || activeBranches.every((branch) => (
+        String(locations[branch.id]?.latitude ?? "").trim() !== ""
+        && String(locations[branch.id]?.longitude ?? "").trim() !== ""
+        && Number.isFinite(Number(locations[branch.id]?.latitude))
+        && Number(locations[branch.id]?.latitude) >= -90
+        && Number(locations[branch.id]?.latitude) <= 90
+        && Number.isFinite(Number(locations[branch.id]?.longitude))
+        && Number(locations[branch.id]?.longitude) >= -180
+        && Number(locations[branch.id]?.longitude) <= 180
+      ));
+      if (!radiusIsValid) throw new Error("កាំ GPS ត្រូវនៅចន្លោះ 20 ដល់ 5,000 ម៉ែត្រ");
+      if (!locationsAreValid) throw new Error("សូមបំពេញ Latitude និង Longitude ត្រឹមត្រូវគ្រប់សាខាសកម្ម");
       if (Number(maxGpsAccuracy) < 10 || Number(maxGpsAccuracy) > 500) throw new Error("GPS Accuracy ត្រូវនៅចន្លោះ 10 ដល់ 500 ម៉ែត្រ");
       const tokens = qrInterval === loadedInterval ? qrTokens : Object.fromEntries(
-        branches.map((branch) => [branch.id, newQrCredential(branch.id, qrInterval)]),
+        activeBranches.map((branch) => [branch.id, newQrCredential(branch.id, qrInterval)]),
       );
       await persistConfiguration({ tokens });
       setQrTokens(tokens); setLoadedInterval(qrInterval); setSaved(true);
@@ -132,9 +176,9 @@ export default function GpsQrPage({ branches = [] }) {
   };
 
   useEffect(() => {
-    if (loading || !branches.length) return undefined;
+    if (loading || !activeBranches.length) return undefined;
     const timer = window.setInterval(async () => {
-      const expired = branches.filter((branch) => qrCredentialExpired(qrTokens[branch.id]));
+      const expired = activeBranches.filter((branch) => qrCredentialExpired(qrTokens[branch.id]));
       if (!expired.length) return;
       const tokens = { ...qrTokens };
       expired.forEach((branch) => { tokens[branch.id] = newQrCredential(branch.id, qrInterval); });
@@ -144,7 +188,7 @@ export default function GpsQrPage({ branches = [] }) {
       } catch { setError("QR បានផុតកំណត់ ប៉ុន្តែមិនអាចបង្កើតថ្មីបានទេ។ សូមពិនិត្យ Internet"); }
     }, 30000);
     return () => window.clearInterval(timer);
-  }, [branches, loading, persistConfiguration, qrInterval, qrTokens]);
+  }, [activeBranches, loading, persistConfiguration, qrInterval, qrTokens]);
 
   const currentCredential = qrTokens[qrBranchId];
   const qrPayload = useMemo(() => currentCredential ? createQrPayload(currentCredential) : "", [currentCredential]);
@@ -166,9 +210,22 @@ export default function GpsQrPage({ branches = [] }) {
           <h3 className="font-semibold text-[#1E2333] text-[15px] mb-1 flex items-center gap-2"><MapPin size={16} className="text-[#2A3F8F]" /> តំបន់ GPS តាមសាខា</h3>
           <p className="text-xs text-[#8A8FA3] mb-4">កំណត់កាំ និងទីតាំងពិតដែលបុគ្គលិកអាច Check-in/out បាន</p>
           <div className="flex flex-col divide-y divide-[#EBEDF3]">
-            {branches.map((branch) => (
+            {activeBranches.map((branch) => (
               <div key={branch.id} className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-[minmax(140px,1fr)_112px] xl:grid-cols-[minmax(150px,1fr)_112px_220px] xl:items-center">
-                <div className="min-w-0"><div className="text-sm font-medium text-[#1E2333]">{branch.name}</div><div className="truncate text-xs text-[#8A8FA3]">{branch.address}</div></div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-[#1E2333]">{branch.name}</div>
+                  <div className="truncate text-xs text-[#8A8FA3]">{branch.address}</div>
+                  {locations[branch.id]?.latitude && locations[branch.id]?.longitude && (
+                    <a
+                      href={`https://www.google.com/maps?q=${locations[branch.id].latitude},${locations[branch.id].longitude}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-[11px] text-[#2A3F8F] hover:underline"
+                    >
+                      បើកទីតាំងក្នុង Google Maps
+                    </a>
+                  )}
+                </div>
                 <label className="relative"><span className="sr-only">កាំ GPS</span><input type="number" min="1" dir="ltr" value={radii[branch.id] || ""} onChange={(event) => setRadii((value) => ({ ...value, [branch.id]: event.target.value }))} className="w-full bg-[#F5F6FA] rounded-xl px-3 pr-9 py-2 text-sm text-[#1E2333] outline-none focus:ring-2 focus:ring-[#2A3F8F]/20" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#B4B7C6]">m</span></label>
                 <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2 sm:col-span-2 xl:col-span-1">
                   <input aria-label={`Latitude ${branch.name}`} type="number" step="any" value={locations[branch.id]?.latitude || ""} onChange={(event) => setLocations((value) => ({ ...value, [branch.id]: { ...value[branch.id], latitude: event.target.value } }))} placeholder="Latitude" className="min-w-0 bg-[#F5F6FA] rounded-xl px-3 py-2 text-xs outline-none" />
@@ -183,7 +240,7 @@ export default function GpsQrPage({ branches = [] }) {
 
         <div className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5 flex flex-col">
           <h3 className="font-semibold text-[#1E2333] text-[15px] mb-4 flex items-center gap-2"><ScanLine size={16} className="text-[#E8A33D]" /> កូដ QR</h3>
-          <select value={qrBranchId} onChange={(event) => setQrBranchId(event.target.value)} className="w-full mb-3 rounded-xl bg-[#F5F6FA] px-3 py-2 text-xs outline-none">{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
+          <select value={qrBranchId} onChange={(event) => setQrBranchId(event.target.value)} className="w-full mb-3 rounded-xl bg-[#F5F6FA] px-3 py-2 text-xs outline-none">{activeBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
           <div className="w-full aspect-square max-w-[220px] mx-auto rounded-2xl bg-white border border-[#EBEDF3] flex items-center justify-center mb-3 p-3">{qrPayload && <QRCodeSVG value={qrPayload} size={196} level="M" includeMargin />}</div>
           <p className="mb-3 text-center text-[11px] text-[#8A8FA3]">ផុតកំណត់៖ {currentCredential?.expiresAt ? new Date(currentCredential.expiresAt).toLocaleString("km-KH") : "—"}</p>
           <ToggleRow label="តម្រូវឲ្យស្កេន QR" desc="QR ត្រូវនឹងសាខា និងមិនទាន់ផុតកំណត់" checked={requireQr} onChange={setRequireQr} />

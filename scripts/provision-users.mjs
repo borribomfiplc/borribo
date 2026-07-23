@@ -50,6 +50,15 @@ const accounts = [
     employeeId: process.env.EMPLOYEE_ID || "EMP-001",
     branch: "ការិយាល័យកណ្តាល",
   },
+  ...(process.env.KIOSK_PASSWORD ? [{
+    email: process.env.KIOSK_EMAIL || "kiosk@borribo.com.kh",
+    username: process.env.KIOSK_USERNAME || "kiosk",
+    password: process.env.KIOSK_PASSWORD,
+    name: process.env.KIOSK_NAME || "Borribo Attendance Kiosk",
+    role: "kiosk",
+    branch: process.env.KIOSK_BRANCH || "ការិយាល័យកណ្តាល",
+    branchId: process.env.KIOSK_BRANCH_ID || "BR-001",
+  }] : []),
 ];
 
 for (const account of accounts) {
@@ -66,7 +75,12 @@ for (const account of accounts) {
     user = await admin.auth().createUser({ email: account.email, password: account.password, displayName: account.name });
   }
 
-  const claims = { role: account.role, branch: account.branch, employeeId: account.employeeId || null };
+  const claims = {
+    role: account.role,
+    branch: account.branch,
+    branchId: account.branchId || null,
+    employeeId: account.employeeId || null,
+  };
   await admin.auth().setCustomUserClaims(user.uid, claims);
   await db.collection("profiles").doc(user.uid).set({
     uid: user.uid,
@@ -75,6 +89,7 @@ for (const account of accounts) {
     name: account.name,
     role: account.role,
     branch: account.branch,
+    branchId: account.branchId || null,
     employeeId: account.employeeId || null,
     active: true,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -86,6 +101,7 @@ for (const account of accounts) {
     name: account.name,
     role: account.role,
     branch: account.branch,
+    branchId: account.branchId || null,
     status: "សកម្ម",
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });

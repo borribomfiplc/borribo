@@ -1,6 +1,6 @@
 // One-time migration for installations created before v49. It backfills stable
-// branch/department/role IDs on employee and job-role documents while keeping
-// all legacy name fields for backwards compatibility.
+// branch/department/role IDs on employee, profile, user and job-role documents
+// while keeping all legacy name fields for backwards compatibility.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -15,11 +15,13 @@ catch { throw new Error("Missing serviceAccountKey.json in the project root."); 
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
-const [branchSnap, departmentSnap, roleSnap, employeeSnap] = await Promise.all([
+const [branchSnap, departmentSnap, roleSnap, employeeSnap, profileSnap, userSnap] = await Promise.all([
   db.collection("branches").get(),
   db.collection("departments").get(),
   db.collection("jobRoles").get(),
   db.collection("employees").get(),
+  db.collection("profiles").get(),
+  db.collection("users").get(),
 ]);
 
 const byName = (snapshot) => new Map(snapshot.docs.map((item) => [String(item.data().name || "").trim().toLowerCase(), item.id]));
@@ -51,6 +53,37 @@ for (const employeeDoc of employeeSnap.docs) {
     branchId: branchIds.get(normalized(employee.branch)) || employee.branchId || "",
     departmentId: departmentIds.get(normalized(employee.dept)) || employee.departmentId || "",
     roleId: roleIds.get(normalized(employee.role)) || employee.roleId || "",
+  }, { merge: true });
+  writes += 1;
+  pending += 1;
+  await commitIfNeeded();
+}
+
+for (const profileDoc of profileSnap.docs) {
+  const profile = profileDoc.data();
+  const branchId = branchIds.get(normalized(profile.branch)) || profile.branchId || "";
+  batch.set(profileDoc.ref, { branchId }, { merge: true });
+  writes += 1;
+  pending += 1;
+  await commitIfNeeded();
+  try {
+    const authUser = await admin.auth().getUser(profileDoc.id);
+    await admin.auth().setCustomUserClaims(profileDoc.id, {
+      ...(authUser.customClaims || {}),
+      role: profile.role || authUser.customClaims?.role || "",
+      branch: profile.branch || authUser.customClaims?.branch || "",
+      branchId,
+      employeeId: profile.employeeId || authUser.customClaims?.employeeId || null,
+    });
+  } catch (error) {
+    if (error.code !== "auth/user-not-found") throw error;
+  }
+}
+
+for (const userDoc of userSnap.docs) {
+  const user = userDoc.data();
+  batch.set(userDoc.ref, {
+    branchId: branchIds.get(normalized(user.branch)) || user.branchId || "",
   }, { merge: true });
   writes += 1;
   pending += 1;

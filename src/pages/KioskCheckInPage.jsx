@@ -1,19 +1,45 @@
 import React, { useState } from "react";
 import {
-  ScanLine, LogIn, LogOut, X, CheckCircle2
+  ScanLine, LogIn, LogOut, X, CheckCircle2, MapPin
 } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
+import { calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, distanceInMeters, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
 import { isEmployeeInactive } from "../utils/employeeStatus";
 import { notifyTelegram } from "../services/telegram";
 
-export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, onExit }) {
+const configuredValue = (primary, fallback = "") => String(primary ?? "").trim() === "" ? fallback : primary;
+
+function readLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve({ gpsStatus: "not-supported" });
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({
+        gpsStatus: "recorded",
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: Math.round(position.coords.accuracy),
+        capturedAt: new Date(position.timestamp).toISOString(),
+      }),
+      (locationError) => resolve({ gpsStatus: locationError.code === 1 ? "permission-denied" : "not-available" }),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
+  });
+}
+
+export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, branches = [], profile, onExit }) {
   const [pin, setPin] = useState("");
   const [matchedEmployee, setMatchedEmployee] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState(null); // { type: "in" | "out", time }
+  const [checking, setChecking] = useState(false);
+  const kioskBranch = branches.find((branch) => (
+    (profile?.branchId && branch.id === profile.branchId) || branch.name === profile?.branch
+  ));
+  const employeeBelongsToKioskBranch = (employee) => Boolean(kioskBranch && (
+    (employee.branchId && employee.branchId === kioskBranch.id) || employee.branch === kioskBranch.name
+  ));
 
   const todayRecord = matchedEmployee ? attendanceToday.find((a) => a.id === matchedEmployee.id && a.dateISO === todayISO()) : null;
 
@@ -22,6 +48,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
     setMatchedEmployee(null);
     setError("");
     setMessage(null);
+    setChecking(false);
   };
 
   const pressDigit = (d) => {
@@ -30,11 +57,18 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
     setPin(next);
     setError("");
     if (next.length === 4) {
-      const emp = employees.find((e) => e.pin === next && !isEmployeeInactive(e.status));
+      if (!kioskBranch) {
+        setError("Kiosk នេះមិនទាន់ភ្ជាប់សាខា។ សូមឲ្យ Admin កំណត់សាខាសម្រាប់គណនី Kiosk");
+        setTimeout(() => setPin(""), 700);
+        return;
+      }
+      const emp = employees.find((e) => (
+        e.pin === next && !isEmployeeInactive(e.status) && employeeBelongsToKioskBranch(e)
+      ));
       if (emp) {
         setMatchedEmployee(emp);
       } else {
-        setError("លេខកូដសម្ងាត់មិនត្រឹមត្រូវ សូមព្យាយាមម្តងទៀត");
+        setError(`លេខកូដមិនត្រឹមត្រូវ ឬបុគ្គលិកមិនស្ថិតក្នុង ${kioskBranch.name}`);
         setTimeout(() => setPin(""), 700);
       }
     }
@@ -47,81 +81,143 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
     return snap.exists() ? snap.data() : DEFAULT_WORKING_HOURS;
   };
 
+  const validateKioskLocation = async () => {
+    if (!kioskBranch || kioskBranch.status === "អសកម្ម") {
+      throw new Error("សាខារបស់ Kiosk មិនត្រឹមត្រូវ ឬត្រូវបានដាក់អសកម្ម");
+    }
+    const settingsSnap = await getDoc(doc(db, "settings", "gpsQrPublic"));
+    if (!settingsSnap.exists()) throw new Error("GPS មិនទាន់បានកំណត់។ សូមឲ្យ HR រក្សាទុកការកំណត់ GPS និង QR");
+    const settings = settingsSnap.data();
+    if (!settings.requireGps) return { gpsStatus: "not-required", verifiedBranchId: kioskBranch.id, verifiedBranchName: kioskBranch.name };
+    const location = await readLocation();
+    if (location.gpsStatus !== "recorded") throw new Error("សូមអនុញ្ញាត GPS សម្រាប់ Kiosk មុនកត់ត្រាវត្តមាន");
+    const savedGeofence = settings.branchGeofences?.[kioskBranch.id] || {};
+    const branchLocation = {
+      latitude: configuredValue(kioskBranch.latitude, configuredValue(savedGeofence.latitude, settings.locations?.[kioskBranch.id]?.latitude ?? "")),
+      longitude: configuredValue(kioskBranch.longitude, configuredValue(savedGeofence.longitude, settings.locations?.[kioskBranch.id]?.longitude ?? "")),
+    };
+    if (String(branchLocation.latitude ?? "").trim() === ""
+      || String(branchLocation.longitude ?? "").trim() === ""
+      || !Number.isFinite(Number(branchLocation.latitude))
+      || !Number.isFinite(Number(branchLocation.longitude))) {
+      throw new Error("សាខា Kiosk មិនទាន់កំណត់ Latitude/Longitude");
+    }
+    const maxAccuracy = Number(settings.maxGpsAccuracy || 100);
+    if (!Number.isFinite(location.accuracy) || location.accuracy > maxAccuracy) {
+      throw new Error(`GPS Kiosk មិនទាន់ច្បាស់ (${location.accuracy ?? "—"}m)`);
+    }
+    const radius = Number(kioskBranch.gpsRadiusMeters || savedGeofence.radiusMeters || settings.radii?.[kioskBranch.id] || 100);
+    const meters = distanceInMeters(location, branchLocation);
+    if (meters === null || meters > radius) throw new Error(`Kiosk នៅក្រៅតំបន់ ${kioskBranch.name} (${meters ?? "—"}m / ${radius}m)`);
+    return {
+      ...location,
+      distanceMeters: meters,
+      allowedRadiusMeters: radius,
+      verifiedBranchId: kioskBranch.id,
+      verifiedBranchName: kioskBranch.name,
+    };
+  };
+
   const handleCheckIn = async () => {
-    setError("");
+    setChecking(true); setError("");
     const capturedAt = new Date();
     const time = timeNow(capturedAt);
     let metrics;
+    let location;
     try {
-      metrics = calculateAttendanceMetrics({ shift: matchedEmployee.shift, workingHours: await loadWorkingHours(), checkInAt: capturedAt });
-    } catch {
-      setError("មិនអាចទាញយកការកំណត់ម៉ោងធ្វើការបានទេ");
+      const [workingHours, verifiedLocation] = await Promise.all([loadWorkingHours(), validateKioskLocation()]);
+      metrics = calculateAttendanceMetrics({ shift: matchedEmployee.shift, workingHours, checkInAt: capturedAt });
+      location = verifiedLocation;
+    } catch (checkInError) {
+      setError(checkInError.message || "មិនអាចផ្ទៀងផ្ទាត់ GPS/ម៉ោងធ្វើការបានទេ");
+      setChecking(false);
       return;
     }
-    await setAttendanceToday((list) => {
-      const existing = list.find((a) => a.id === matchedEmployee.id && a.dateISO === todayISO());
-      const dateISO = todayISO();
+    try {
+      await setAttendanceToday((list) => {
+        const existing = list.find((a) => a.id === matchedEmployee.id && a.dateISO === todayISO());
+        const dateISO = todayISO();
+        const record = {
+          ...existing,
+          id: matchedEmployee.id,
+          recordId: `${matchedEmployee.id}_${dateISO}`,
+          dateISO,
+          date: formatKhmerDate(dateISO),
+          name: matchedEmployee.name,
+          role: matchedEmployee.role,
+          branch: kioskBranch.name,
+          branchId: kioskBranch.id,
+          shift: metrics.shift,
+          checkIn: time,
+          checkInClientAt: capturedAt.toISOString(),
+          checkInLocation: location,
+          gpsStatus: location.gpsStatus,
+          gpsVerified: location.gpsStatus === "recorded",
+          checkOut: "—",
+          ...metrics,
+          source: "kiosk",
+        };
+        return existing ? list.map((a) => (a.id === matchedEmployee.id && a.dateISO === dateISO ? record : a)) : [record, ...list];
+      });
       const record = {
-        ...existing,
-        id: matchedEmployee.id,
-        recordId: `${matchedEmployee.id}_${dateISO}`,
-        dateISO,
-        date: formatKhmerDate(dateISO),
-        name: matchedEmployee.name,
-        role: matchedEmployee.role,
-        branch: matchedEmployee.branch,
-        shift: metrics.shift,
-        checkIn: time,
-        checkInClientAt: capturedAt.toISOString(),
-        checkOut: "—",
-        ...metrics,
-        source: "kiosk",
+        id: matchedEmployee.id, recordId: `${matchedEmployee.id}_${todayISO()}`, docId: `${matchedEmployee.id}_${todayISO()}`,
+        dateISO: todayISO(), date: formatKhmerDate(todayISO()), name: matchedEmployee.name, role: matchedEmployee.role,
+        branch: kioskBranch.name, branchId: kioskBranch.id, shift: metrics.shift, checkIn: time,
+        checkInClientAt: capturedAt.toISOString(), checkInLocation: location, gpsStatus: location.gpsStatus,
+        gpsVerified: location.gpsStatus === "recorded", checkOut: "—", ...metrics, source: "kiosk",
       };
-      return existing ? list.map((a) => (a.id === matchedEmployee.id ? record : a)) : [record, ...list];
-    });
-    const record = {
-      id: matchedEmployee.id, recordId: `${matchedEmployee.id}_${todayISO()}`, docId: `${matchedEmployee.id}_${todayISO()}`,
-      dateISO: todayISO(), date: formatKhmerDate(todayISO()), name: matchedEmployee.name, role: matchedEmployee.role,
-      branch: matchedEmployee.branch, shift: metrics.shift, checkIn: time, checkInClientAt: capturedAt.toISOString(), checkOut: "—",
-      ...metrics, source: "kiosk",
-    };
-    await setAttendanceHistory((list) => {
-      const exists = list.some((item) => item.docId === record.docId);
-      return exists ? list.map((item) => item.docId === record.docId ? record : item) : [record, ...list];
-    });
-    await notifyTelegram("check_in", record.recordId);
-    setMessage({ type: "in", time, note: metrics.isLate ? `មកយឺត ${metrics.lateMinutes} នាទី` : "" });
-    setTimeout(reset, 2500);
+      await setAttendanceHistory((list) => {
+        const exists = list.some((item) => item.docId === record.docId);
+        return exists ? list.map((item) => item.docId === record.docId ? record : item) : [record, ...list];
+      });
+      await notifyTelegram("check_in", record.recordId);
+      setMessage({ type: "in", time, note: metrics.isLate ? `មកយឺត ${metrics.lateMinutes} នាទី` : "" });
+      setTimeout(reset, 2500);
+    } catch (saveError) {
+      setError(saveError.message || "មិនអាចរក្សាទុក Check-in បានទេ");
+    } finally {
+      setChecking(false);
+    }
   };
 
   const handleCheckOut = async () => {
-    setError("");
+    setChecking(true); setError("");
     const capturedAt = new Date();
     const time = timeNow(capturedAt);
     let metrics;
+    let location;
     try {
+      const [workingHours, verifiedLocation] = await Promise.all([loadWorkingHours(), validateKioskLocation()]);
+      location = verifiedLocation;
       metrics = calculateAttendanceMetrics({
         shift: todayRecord?.shift || matchedEmployee.shift,
-        workingHours: await loadWorkingHours(),
+        workingHours,
         checkInAt: todayRecord?.checkInClientAt || `${todayISO()}T${todayRecord?.checkIn || "08:00"}:00`,
         checkOutAt: capturedAt,
       });
-    } catch {
-      setError("មិនអាចទាញយកការកំណត់ម៉ោងធ្វើការបានទេ");
+    } catch (checkOutError) {
+      setError(checkOutError.message || "មិនអាចផ្ទៀងផ្ទាត់ GPS/ម៉ោងធ្វើការបានទេ");
+      setChecking(false);
       return;
     }
-    await Promise.all([
-      setAttendanceToday((list) =>
-        list.map((a) => (a.id === matchedEmployee.id && a.dateISO === todayISO()
-          ? { ...a, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics } : a))
-      ),
-      setAttendanceHistory((list) => list.map((item) => item.docId === `${matchedEmployee.id}_${todayISO()}`
-        ? { ...item, checkOut: time, checkOutClientAt: capturedAt.toISOString(), ...metrics }
-        : item)),
-    ]);
-    await notifyTelegram("check_out", `${matchedEmployee.id}_${todayISO()}`);
-    setMessage({ type: "out", time, note: metrics.isEarlyLeave ? `ចេញមុន ${metrics.earlyLeaveMinutes} នាទី` : "" });
-    setTimeout(reset, 2500);
+    try {
+      await Promise.all([
+        setAttendanceToday((list) =>
+          list.map((a) => (a.id === matchedEmployee.id && a.dateISO === todayISO()
+            ? { ...a, checkOut: time, checkOutClientAt: capturedAt.toISOString(), checkOutLocation: location, gpsStatus: location.gpsStatus, ...metrics } : a))
+        ),
+        setAttendanceHistory((list) => list.map((item) => item.docId === `${matchedEmployee.id}_${todayISO()}`
+          ? { ...item, checkOut: time, checkOutClientAt: capturedAt.toISOString(), checkOutLocation: location, gpsStatus: location.gpsStatus, ...metrics }
+          : item)),
+      ]);
+      await notifyTelegram("check_out", `${matchedEmployee.id}_${todayISO()}`);
+      setMessage({ type: "out", time, note: metrics.isEarlyLeave ? `ចេញមុន ${metrics.earlyLeaveMinutes} នាទី` : "" });
+      setTimeout(reset, 2500);
+    } catch (saveError) {
+      setError(saveError.message || "មិនអាចរក្សាទុក Check-out បានទេ");
+    } finally {
+      setChecking(false);
+    }
   };
 
   return (
@@ -146,6 +242,9 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
           </div>
           <h1 className="text-lg font-bold text-[#1E2333]">ស្កេនវត្តមានបុគ្គលិក</h1>
           <p className="text-xs text-[#8A8FA3] mt-1">បញ្ចូលលេខកូដសម្ងាត់ ៤ខ្ទង់របស់អ្នក</p>
+          <p className={`mt-2 flex items-center justify-center gap-1 text-xs ${kioskBranch ? "text-[#2A3F8F]" : "text-[#D9614F]"}`}>
+            <MapPin size={13} /> {kioskBranch?.name || "Kiosk មិនទាន់ភ្ជាប់សាខា"}
+          </p>
         </div>
 
         {!matchedEmployee ? (
@@ -217,22 +316,25 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
             <div className="text-xs text-[#8A8FA3] mb-6">
               {matchedEmployee.role} · {matchedEmployee.branch}
             </div>
+            {error && <div className="mb-3 rounded-lg bg-[#FBEBE8] px-3 py-2 text-xs text-[#D9614F]">{error}</div>}
 
             {!todayRecord || todayRecord.checkIn === "—" ? (
               <button
+                disabled={checking}
                 onClick={handleCheckIn}
-                className="w-full text-white text-sm font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2"
+                className="w-full text-white text-sm font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: COLORS.green }}
               >
-                <LogIn size={16} /> ចូលធ្វើការ
+                <LogIn size={16} /> {checking ? "កំពុងផ្ទៀងផ្ទាត់ GPS..." : "ចូលធ្វើការ"}
               </button>
             ) : !todayRecord.checkOut || todayRecord.checkOut === "—" ? (
               <button
+                disabled={checking}
                 onClick={handleCheckOut}
-                className="w-full text-white text-sm font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2"
+                className="w-full text-white text-sm font-semibold rounded-xl py-3.5 flex items-center justify-center gap-2 disabled:opacity-50"
                 style={{ background: COLORS.red }}
               >
-                <LogOut size={16} /> ចេញពីការងារ
+                <LogOut size={16} /> {checking ? "កំពុងផ្ទៀងផ្ទាត់ GPS..." : "ចេញពីការងារ"}
               </button>
             ) : (
               <div className="text-sm text-[#8A8FA3] bg-[#F5F6FA] rounded-xl py-3.5">

@@ -260,7 +260,7 @@ function App() {
   }
 
   if (profile.role === ROLES.KIOSK) {
-    return <KioskCheckInPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} onExit={handleLogout} />;
+    return <KioskCheckInPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} branches={branches} profile={profile} onExit={handleLogout} />;
   }
 
   if (profile.role === ROLES.EMPLOYEE) {
@@ -310,7 +310,7 @@ function App() {
         </nav>
 
         <div className="px-5 py-4 border-t border-[#EBEDF3] text-[11px] text-[#B4B7C6] shrink-0">
-          © 2026 BORRIBO MFI · v34
+          © 2026 BORRIBO MFI · v52
         </div>
       </aside>
 

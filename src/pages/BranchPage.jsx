@@ -4,6 +4,24 @@ import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
 
+const emptyBranchForm = {
+  name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម",
+  latitude: "", longitude: "", gpsRadiusMeters: "100",
+};
+
+const branchForm = (branch = {}) => ({
+  ...emptyBranchForm,
+  name: branch.name || "",
+  type: branch.type || "សាខា",
+  address: branch.address || "",
+  manager: branch.manager || "",
+  phone: branch.phone || "",
+  status: branch.status || "សកម្ម",
+  latitude: branch.latitude ?? "",
+  longitude: branch.longitude ?? "",
+  gpsRadiusMeters: String(branch.gpsRadiusMeters || 100),
+});
+
 const statusConfig = {
   "មានវត្តមាន": { label: "មានវត្តមាន", color: COLORS.green, icon: CheckCircle2 },
   "យឺត": { label: "យឺត", color: COLORS.accent, icon: AlertCircle },
@@ -13,7 +31,7 @@ const statusConfig = {
 
 export default function BranchPage({ employees, setEmployees, branches, setBranches, attendanceHistory }) {
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" });
+  const [form, setForm] = useState(emptyBranchForm);
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState(null);
 
@@ -42,22 +60,50 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
     }
     const duplicate = branches.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase());
     if (duplicate) { setError("ឈ្មោះសាខានេះមានរួចហើយ"); return; }
+    const hasLatitude = String(form.latitude).trim() !== "";
+    const hasLongitude = String(form.longitude).trim() !== "";
+    if (hasLatitude !== hasLongitude) {
+      setError("សូមបំពេញ Latitude និង Longitude ទាំងពីរ");
+      return;
+    }
+    const latitude = hasLatitude ? Number(form.latitude) : "";
+    const longitude = hasLongitude ? Number(form.longitude) : "";
+    const gpsRadiusMeters = Number(form.gpsRadiusMeters);
+    if ((hasLatitude && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90))
+      || (hasLongitude && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))) {
+      setError("Latitude ឬ Longitude មិនត្រឹមត្រូវ");
+      return;
+    }
+    if (!Number.isFinite(gpsRadiusMeters) || gpsRadiusMeters < 20 || gpsRadiusMeters > 5000) {
+      setError("កាំ GPS ត្រូវនៅចន្លោះ 20 ដល់ 5,000 ម៉ែត្រ");
+      return;
+    }
     const existing = branches.find((item) => item.id === editingId);
+    const nextBranch = {
+      ...form,
+      name: form.name.trim(),
+      address: form.address.trim(),
+      manager: form.manager.trim(),
+      phone: form.phone.trim(),
+      latitude,
+      longitude,
+      gpsRadiusMeters,
+    };
     await setBranches((list) => editingId
-      ? list.map((item) => item.id === editingId ? { ...item, ...form, name: form.name.trim() } : item)
-      : [{ id: `BR-${String(list.length + 1).padStart(3, "0")}`, ...form, name: form.name.trim() }, ...list]);
+      ? list.map((item) => item.id === editingId ? { ...item, ...nextBranch } : item)
+      : [{ id: `BR-${String(list.length + 1).padStart(3, "0")}`, ...nextBranch }, ...list]);
     if (existing && existing.name !== form.name.trim()) {
       await setEmployees((list) => list.map((employee) => (employee.branchId === existing.id || employee.branch === existing.name)
         ? { ...employee, branchId: existing.id, branch: form.name.trim() } : employee));
     }
     setError("");
-    setForm({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" });
+    setForm(emptyBranchForm);
     setEditingId(null);
     setShowNew(false);
   };
 
-  const openAdd = () => { setEditingId(null); setForm({ name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម" }); setError(""); setShowNew(true); };
-  const editBranch = (branch) => { setEditingId(branch.id); setForm({ name: branch.name || "", type: branch.type || "សាខា", address: branch.address || "", manager: branch.manager || "", phone: branch.phone || "", status: branch.status || "សកម្ម" }); setError(""); setShowNew(true); };
+  const openAdd = () => { setEditingId(null); setForm(emptyBranchForm); setError(""); setShowNew(true); };
+  const editBranch = (branch) => { setEditingId(branch.id); setForm(branchForm(branch)); setError(""); setShowNew(true); };
 
   const toggleStatus = (id) => setBranches((list) => list.map((branch) => branch.id === id ? { ...branch, status: branch.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : branch));
 
@@ -97,6 +143,19 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
           <div key={branch.id} className={`bg-white rounded-2xl border border-[#EBEDF3] p-5 flex flex-col gap-3 ${branch.status === "អសកម្ម" ? "opacity-65" : ""}`}>
             <div className="flex items-start justify-between"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: COLORS.primaryLight }}><Building2 size={20} color={COLORS.primary} /></div><div><div className="font-semibold text-[#1E2333] text-sm">{branch.name}</div><div className="text-xs text-[#8A8FA3]">{branch.type} · {branch.status || "សកម្ម"}</div></div></div><div className="flex gap-1"><button onClick={() => editBranch(branch)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#2A3F8F] hover:bg-[#EEF1FB]" aria-label={`កែ ${branch.name}`}><Pencil size={14} /></button><button onClick={() => toggleStatus(branch.id)} aria-label={`${branch.status === "អសកម្ម" ? "បើក" : "បិទ"} ${branch.name}`} className={`w-8 h-8 rounded-lg flex items-center justify-center ${branch.status === "អសកម្ម" ? "bg-[#E9F7EF] text-[#3FA66B]" : "text-[#8A8FA3] hover:bg-[#FBEBE8] hover:text-[#D9614F]"}`}><Power size={15} /></button></div></div>
             {branch.address && <div className="flex items-start gap-2 text-xs text-[#5B5F73]"><MapPin size={13} className="text-[#B4B7C6] mt-0.5 shrink-0" /><span>{branch.address}</span></div>}
+            <div className="flex items-start gap-2 text-xs">
+              <MapPin size={13} className={`mt-0.5 shrink-0 ${branch.latitude && branch.longitude ? "text-[#3FA66B]" : "text-[#E8A33D]"}`} />
+              {branch.latitude && branch.longitude ? (
+                <a
+                  href={`https://www.google.com/maps?q=${branch.latitude},${branch.longitude}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#2A3F8F] hover:underline"
+                >
+                  GPS {branch.latitude}, {branch.longitude} · កាំ {branch.gpsRadiusMeters || 100}m
+                </a>
+              ) : <span className="text-[#B97913]">មិនទាន់កំណត់ GPS</span>}
+            </div>
             <div className="flex items-center justify-between border-t border-[#EBEDF3] pt-3 mt-1"><div className="text-xs text-[#8A8FA3]">អ្នកគ្រប់គ្រង៖ <span className="text-[#1E2333] font-medium">{branch.manager}</span></div><span className="text-[11px] font-medium rounded-full px-2.5 py-1" style={{ background: COLORS.primaryLight, color: COLORS.primary }}>{staff} បុគ្គលិក</span></div>
             <div className="flex justify-between text-xs"><span className="text-[#8A8FA3]">អត្រាវត្តមាន ៥ថ្ងៃ</span><span className="font-semibold" style={{ color: rate >= 90 ? COLORS.green : COLORS.accent }}>{rate}%</span></div>
           </div>
@@ -109,6 +168,15 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
         <div><FieldLabel>អាសយដ្ឋាន</FieldLabel><TextField icon={MapPin} value={form.address} onChange={update("address")} placeholder="ផ្លូវ, សង្កាត់, ខណ្ឌ, ក្រុង" /></div>
         <div><FieldLabel required>អ្នកគ្រប់គ្រងសាខា</FieldLabel><TextField value={form.manager} onChange={update("manager")} placeholder="ឈ្មោះអ្នកគ្រប់គ្រង" /></div>
         <div><FieldLabel>លេខទូរស័ព្ទ</FieldLabel><TextField icon={Phone} dir="ltr" value={form.phone} onChange={update("phone")} placeholder="0XX XXX XXX" /></div>
+        <div className="rounded-xl border border-[#EBEDF3] bg-[#F7F8FB] p-3 sm:col-span-2">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#1E2333]"><MapPin size={15} className="text-[#2A3F8F]" /> តំបន់ GPS សាខា</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div><FieldLabel>Latitude</FieldLabel><TextField dir="ltr" type="number" step="any" value={form.latitude} onChange={update("latitude")} placeholder="11.519935" /></div>
+            <div><FieldLabel>Longitude</FieldLabel><TextField dir="ltr" type="number" step="any" value={form.longitude} onChange={update("longitude")} placeholder="104.9092321" /></div>
+            <div><FieldLabel>កាំ GPS (ម៉ែត្រ)</FieldLabel><TextField dir="ltr" type="number" min="20" max="5000" value={form.gpsRadiusMeters} onChange={update("gpsRadiusMeters")} placeholder="100" /></div>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-[#8A8FA3]">អាចកំណត់ទីតាំងនៅទីនេះ ឬក្នុងម៉ឺនុយ GPS និង QR។ បុគ្គលិកត្រូវ Check-in/out នៅក្នុងកាំរបស់សាខាខ្លួន។</p>
+        </div>
       </OrgModal>}
     </>
   );

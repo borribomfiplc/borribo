@@ -10,6 +10,7 @@ import { correctionStatusStyle, leaveQuotas, leaveTypes } from "../data/mockData
 import { notifyTelegram } from "../services/telegram";
 import { calculateLeaveDays, LEAVE_PORTIONS, leaveRequestsConflict, remainingLeaveDays } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
+const configuredValue = (primary, fallback = "") => String(primary ?? "").trim() === "" ? fallback : primary;
 function readLocation() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({ gpsStatus: "not-supported" });
@@ -49,19 +50,38 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
     const settingsSnap = await getDoc(doc(db, "settings", "gpsQrPublic"));
     if (!settingsSnap.exists()) throw new Error("GPS/QR មិនទាន់បានកំណត់សុវត្ថិភាព។ សូមឲ្យ HR បើកទំព័រ GPS និង QR ហើយចុចរក្សាទុក");
     const settings = settingsSnap.data();
-    const branch = branches.find((item) => item.name === profile.branch);
+    const branch = branches.find((item) => (
+      (profile.branchId && item.id === profile.branchId) || item.name === profile.branch
+    ));
     if (!branch) throw new Error("រកមិនឃើញសាខារបស់អ្នក។ សូមទាក់ទង HR");
-    const radius = Number(settings.radii?.[branch?.id] || 150);
+    if (branch.status === "អសកម្ម") throw new Error("សាខារបស់អ្នកត្រូវបានដាក់អសកម្ម។ សូមទាក់ទង HR");
+    const savedGeofence = settings.branchGeofences?.[branch.id] || {};
+    const radius = Number(
+      branch.gpsRadiusMeters
+      || savedGeofence.radiusMeters
+      || settings.radii?.[branch.id]
+      || 100,
+    );
     if (settings.requireGps) {
       if (location.gpsStatus !== "recorded") throw new Error("សូមអនុញ្ញាត GPS មុនពេលកត់ត្រាវត្តមាន");
-      const branchLocation = settings.locations?.[branch?.id];
-      if (!branchLocation?.latitude || !branchLocation?.longitude) throw new Error("សាខារបស់អ្នកមិនទាន់កំណត់ទីតាំង GPS ទេ។ សូមទាក់ទង HR");
+      const branchLocation = {
+        latitude: configuredValue(branch.latitude, configuredValue(savedGeofence.latitude, settings.locations?.[branch.id]?.latitude ?? "")),
+        longitude: configuredValue(branch.longitude, configuredValue(savedGeofence.longitude, settings.locations?.[branch.id]?.longitude ?? "")),
+      };
+      if (String(branchLocation.latitude ?? "").trim() === ""
+        || String(branchLocation.longitude ?? "").trim() === ""
+        || !Number.isFinite(Number(branchLocation.latitude))
+        || !Number.isFinite(Number(branchLocation.longitude))) {
+        throw new Error("សាខារបស់អ្នកមិនទាន់កំណត់ទីតាំង GPS ទេ។ សូមទាក់ទង HR");
+      }
       const maxAccuracy = Number(settings.maxGpsAccuracy || 100);
       if (!Number.isFinite(location.accuracy) || location.accuracy > maxAccuracy) throw new Error(`GPS មិនទាន់ច្បាស់ (${location.accuracy ?? "—"}m)។ សូមចេញទៅកន្លែងបើកចំហ ហើយសាកម្ដងទៀត`);
       const meters = distanceInMeters(location, branchLocation);
       if (meters === null || meters > radius) throw new Error(`អ្នកស្ថិតនៅក្រៅតំបន់សាខា (${meters ?? "—"}m / ${radius}m)`);
       location.distanceMeters = meters;
       location.allowedRadiusMeters = radius;
+      location.verifiedBranchId = branch.id;
+      location.verifiedBranchName = branch.name;
     }
     if (settings.requireQr) {
       if (!qrValue.trim()) throw new Error("សូមស្កេន ឬបញ្ចូល QR code របស់សាខា");
@@ -74,6 +94,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
       if (await sha256(payload.token) !== token.tokenHash) throw new Error("QR code មិនត្រឹមត្រូវ ឬត្រូវបានប្ដូររួចហើយ");
       settings.verifiedQr = { branchId: branch.id, expiresAt: token.expiresAt, version: token.version || 1 };
     }
+    settings.verifiedBranch = { id: branch.id, name: branch.name, radiusMeters: radius };
     return settings;
   };
 
@@ -156,7 +177,8 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
       }
       const base = {
         id: employeeId, recordId: attendanceId, uid: authUser.uid, dateISO, name: profile.name || authUser.email,
-        role: profile.jobRole || "បុគ្គលិក", branch: profile.branch || "", shift: employeeShift,
+        role: profile.jobRole || "បុគ្គលិក", branch: settings.verifiedBranch?.name || profile.branch || "",
+        branchId: settings.verifiedBranch?.id || profile.branchId || "", shift: employeeShift,
         updatedAt: serverTimestamp(),
       };
       let nextRecord;

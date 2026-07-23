@@ -295,10 +295,10 @@ export const initialLeaveRequests = [
 ];
 
 export const initialBranches = [
-  { id: "BR-001", name: "ការិយាល័យកណ្តាល", type: "ការិយាល័យកណ្តាល", address: "ផ្លូវ ២៧១, សង្កាត់ទឹកល្អក់, ខណ្ឌទួលគោក, ភ្នំពេញ", manager: "អេក សុគន្ធ", phone: "023 456 001" },
-  { id: "BR-002", name: "សាខាទួលគោក", type: "សាខា", address: "ផ្លូវ ១៩៩, សង្កាត់បឹងកក់ទី១, ខណ្ឌទួលគោក, ភ្នំពេញ", manager: "ង៉ែត សុភ័ណ្ណា", phone: "023 456 002" },
-  { id: "BR-003", name: "សាខាសែនសុខ", type: "សាខា", address: "ផ្លូវ ២០០២, សង្កាត់ភ្នំពេញថ្មី, ខណ្ឌសែនសុខ, ភ្នំពេញ", manager: "មាន ដាវិត", phone: "023 456 003" },
-  { id: "BR-004", name: "សាខាព្រែកលៀប", type: "សាខា", address: "ផ្លូវជាតិលេខ៦, សង្កាត់ព្រែកលៀប, ខណ្ឌជ្រោយចង្វារ, ភ្នំពេញ", manager: "ជា សុវណ្ណារ៉ា", phone: "023 456 004" },
+  { id: "BR-001", name: "ការិយាល័យកណ្តាល", type: "ការិយាល័យកណ្តាល", address: "ផ្លូវ ២៧១, សង្កាត់ទឹកល្អក់, ខណ្ឌទួលគោក, ភ្នំពេញ", manager: "អេក សុគន្ធ", phone: "023 456 001", latitude: 11.519935, longitude: 104.9092321, gpsRadiusMeters: 100 },
+  { id: "BR-002", name: "សាខាទួលគោក", type: "សាខា", address: "ផ្លូវ ១៩៩, សង្កាត់បឹងកក់ទី១, ខណ្ឌទួលគោក, ភ្នំពេញ", manager: "ង៉ែត សុភ័ណ្ណា", phone: "023 456 002", latitude: "", longitude: "", gpsRadiusMeters: 100 },
+  { id: "BR-003", name: "សាខាសែនសុខ", type: "សាខា", address: "ផ្លូវ ២០០២, សង្កាត់ភ្នំពេញថ្មី, ខណ្ឌសែនសុខ, ភ្នំពេញ", manager: "មាន ដាវិត", phone: "023 456 003", latitude: "", longitude: "", gpsRadiusMeters: 100 },
+  { id: "BR-004", name: "សាខាព្រែកលៀប", type: "សាខា", address: "ផ្លូវជាតិលេខ៦, សង្កាត់ព្រែកលៀប, ខណ្ឌជ្រោយចង្វារ, ភ្នំពេញ", manager: "ជា សុវណ្ណារ៉ា", phone: "023 456 004", latitude: "", longitude: "", gpsRadiusMeters: 100 },
 ];
 
 export const initialDepartments = [

@@ -13,6 +13,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, scheduleTextForRecord, todayISO } from "../utils/attendance";
 import { approvedLeaveOnDate } from "../utils/leave";
+import { isEmployeeInactive } from "../utils/employeeStatus";
 
 const sourceMeta = {
   mobile: { label: "ទូរស័ព្ទ GPS/QR", icon: Smartphone, color: "#2A3F8F", bg: "#EEF1FB" },
@@ -42,7 +43,7 @@ export default function DailyAttendancePage({
   const [finalizeMessage, setFinalizeMessage] = useState("");
 
   const dailyRows = useMemo(() => {
-    const activeEmployees = employees.filter((employee) => employee.status !== "អសកម្ម");
+    const activeEmployees = employees.filter((employee) => !isEmployeeInactive(employee.status));
     const recordsByEmployee = new Map(attendanceToday.map((record) => [record.id, record]));
     const roster = activeEmployees.map((employee) => {
       const existing = recordsByEmployee.get(employee.id);

@@ -74,3 +74,7 @@ export async function cancelEmploymentAction(actionId) {
 export async function removeEmployee(employee) {
   return adminRequest("/api/admin/employees/deactivate", { employeeId: employee.id, uid: employee.uid || "" });
 }
+
+export async function reactivateEmployee(employee) {
+  return adminRequest("/api/admin/employees/reactivate", { employeeId: employee.id, uid: employee.uid || "" });
+}

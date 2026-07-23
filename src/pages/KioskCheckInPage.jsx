@@ -6,6 +6,7 @@ import { COLORS } from "../data/theme";
 import { getDoc, doc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, formatKhmerDate, timeNow, todayISO } from "../utils/attendance";
+import { isEmployeeInactive } from "../utils/employeeStatus";
 import { notifyTelegram } from "../services/telegram";
 
 export default function KioskCheckInPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, onExit }) {
@@ -29,7 +30,7 @@ export default function KioskCheckInPage({ employees, attendanceToday, setAttend
     setPin(next);
     setError("");
     if (next.length === 4) {
-      const emp = employees.find((e) => e.pin === next);
+      const emp = employees.find((e) => e.pin === next && !isEmployeeInactive(e.status));
       if (emp) {
         setMatchedEmployee(emp);
       } else {

@@ -6,6 +6,7 @@ import {
 import { dayLabelsKh, monthNamesKh } from "../data/mockData";
 import { todayISO } from "../utils/attendance";
 import { approvedLeaveOnDate, workingLeaveDates } from "../utils/leave";
+import { isEmployeeInactive } from "../utils/employeeStatus";
 
 const ITEM_STYLE = {
   holiday: { label: "ថ្ងៃឈប់សម្រាក", color: "#E8A33D", bg: "#FDF3E3" },
@@ -156,7 +157,7 @@ export default function CalendarPage({
     attendanceHistory.forEach((row) => byKey.set(`${row.id}_${row.dateISO}`, row));
     attendanceToday.forEach((row) => byKey.set(`${row.id}_${row.dateISO}`, row));
     const currentDate = todayISO();
-    employees.filter((employee) => employee.status !== "អសកម្ម").forEach((employee) => {
+    employees.filter((employee) => !isEmployeeInactive(employee.status)).forEach((employee) => {
       const key = `${employee.id}_${currentDate}`;
       if (byKey.has(key)) return;
       const approvedLeave = approvedLeaveOnDate(leaveRequests, employee.id, currentDate, holidays);
@@ -195,7 +196,7 @@ export default function CalendarPage({
       eachDate(start, end, (date) => add(date, { ...event, itemType: "event", title: event.title || event.name, startDate: start, endDate: end }));
     });
 
-    employees.filter((employee) => employee.status !== "អសកម្ម" && matchesScope(employee, branch, department, employees) && employee.dob).forEach((employee) => {
+    employees.filter((employee) => !isEmployeeInactive(employee.status) && matchesScope(employee, branch, department, employees) && employee.dob).forEach((employee) => {
       const birthday = `${year}-${String(employee.dob).slice(5, 10)}`;
       if (/^\d{4}-\d{2}-\d{2}$/.test(birthday)) add(birthday, { ...employee, id: `birthday-${employee.id}-${year}`, itemType: "birthday", title: `ថ្ងៃកំណើត ${employee.name}` });
     });

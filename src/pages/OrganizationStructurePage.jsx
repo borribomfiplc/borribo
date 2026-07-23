@@ -5,6 +5,7 @@ import { FieldLabel, SelectField, TextField } from "../components/shared/FormFie
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
 import { createEmploymentAction } from "../services/employees";
 import { todayISO } from "../utils/attendance";
+import { isEmployeeInactive } from "../utils/employeeStatus";
 
 const today = () => todayISO();
 
@@ -12,9 +13,9 @@ export default function OrganizationStructurePage({ employees = [], branches = [
   const [showTransfer, setShowTransfer] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ employeeId: employees[0]?.id || "", branch: "", dept: "", role: "", effectiveDate: today(), decisionNo: "", reason: "" });
+  const [form, setForm] = useState({ employeeId: employees.find((employee) => !isEmployeeInactive(employee.status))?.id || "", branch: "", dept: "", role: "", effectiveDate: today(), decisionNo: "", reason: "" });
 
-  const activeEmployees = useMemo(() => employees.filter((employee) => employee.status !== "អសកម្ម"), [employees]);
+  const activeEmployees = useMemo(() => employees.filter((employee) => !isEmployeeInactive(employee.status)), [employees]);
   const activeBranches = branches.filter((item) => item.status !== "អសកម្ម");
   const activeDepartments = departments.filter((item) => item.status !== "អសកម្ម");
   const activeRoles = jobRoles.filter((item) => item.status !== "អសកម្ម");
@@ -22,7 +23,7 @@ export default function OrganizationStructurePage({ employees = [], branches = [
   const roleOptions = activeRoles.filter((role) => !form.dept || role.dept === form.dept);
 
   const openTransfer = () => {
-    const employee = employees[0];
+    const employee = activeEmployees[0];
     setForm({ employeeId: employee?.id || "", branch: employee?.branch || activeBranches[0]?.name || "", dept: employee?.dept || activeDepartments[0]?.name || "", role: employee?.role || activeRoles[0]?.name || "", effectiveDate: today(), decisionNo: "", reason: "" });
     setError(""); setShowTransfer(true);
   };

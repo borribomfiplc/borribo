@@ -23,7 +23,7 @@ import { filterNavigation, isManager, ROLE_LABELS, ROLES } from "./auth/permissi
 import AccessDeniedPage from "./pages/AccessDeniedPage";
 import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { useEnglishUi } from "./i18n/useEnglishUi";
-import { removeEmployee } from "./services/employees";
+import { reactivateEmployee, removeEmployee } from "./services/employees";
 import { useAutoSignOut } from "./hooks/useAutoSignOut";
 
 // Every other page is code-split with React.lazy so the initial bundle only
@@ -141,6 +141,7 @@ function App() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
 
   const deleteEmployee = (employee) => removeEmployee(employee);
+  const restoreEmployee = (employee) => reactivateEmployee(employee);
   const [headerQuery, setHeaderQuery] = useState(""); // topbar quick-search text
 
   useEffect(() => {
@@ -458,6 +459,7 @@ function App() {
             onEditClick={(emp) => { setEditingEmployee(emp); setActive("បន្ថែមបុគ្គលិក"); }}
             onViewClick={(emp) => { setSelectedEmployee(emp); setActive("ព័ត៌មានបុគ្គលិក"); }}
             onDeleteEmployee={deleteEmployee}
+            onReactivateEmployee={restoreEmployee}
             employees={employees}
             query={employeeQuery}
             setQuery={setEmployeeQuery}

@@ -5,6 +5,7 @@ import { FieldLabel, SectionCard, SelectField, TextField } from "../components/s
 import EmploymentActionModal from "../components/EmploymentActionModal";
 import { createEmployee, updateEmployee } from "../services/employees";
 import { imageFileToDataUrl } from "../utils/employeePhoto";
+import { isEmployeeInactive, normalizeEmployeeStatus } from "../utils/employeeStatus";
 
 const emptyForm = (branches, departments, jobRoles) => ({
   name: "", gender: "ប្រុស", dob: "", phone: "", email: "", address: "",
@@ -21,6 +22,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
   const [form, setForm] = useState(() => isEditing ? {
     ...emptyForm(branches, departments, jobRoles), ...editingEmployee,
     department: editingEmployee.dept || "", position: editingEmployee.role || "",
+    status: normalizeEmployeeStatus(editingEmployee.status),
   } : emptyForm(branches, departments, jobRoles));
   const [createLogin, setCreateLogin] = useState(false);
   const [account, setAccount] = useState({ username: "", password: "", role: "employee" });
@@ -184,7 +186,7 @@ export default function AddEmployeePage({ onCancel, onSave, editingEmployee, emp
           <div><FieldLabel required>នាយកដ្ឋាន</FieldLabel><SelectField options={activeDepartments.map((item) => item.name)} value={form.department} onChange={handleDepartment} disabled={isEditing} /></div>
           <div><FieldLabel required>តួនាទី</FieldLabel><SelectField options={availableRoles.map((item) => item.name)} value={form.position} onChange={update("position")} disabled={isEditing} /></div>
           <div><FieldLabel required>សាខា</FieldLabel><SelectField options={activeBranches.map((item) => item.name)} value={form.branch} onChange={update("branch")} disabled={isEditing} /></div>
-          <div><FieldLabel>អ្នកគ្រប់គ្រងផ្ទាល់</FieldLabel><SelectField options={[{ value: "", label: "មិនទាន់កំណត់" }, ...employees.filter((item) => item.status !== "អសកម្ម" && item.id !== editingEmployee?.id).map((item) => ({ value: item.id, label: `${item.id} · ${item.name}` }))]} value={form.managerId} onChange={update("managerId")} /></div>
+          <div><FieldLabel>អ្នកគ្រប់គ្រងផ្ទាល់</FieldLabel><SelectField options={[{ value: "", label: "មិនទាន់កំណត់" }, ...employees.filter((item) => !isEmployeeInactive(item.status) && item.id !== editingEmployee?.id).map((item) => ({ value: item.id, label: `${item.id} · ${item.name}` }))]} value={form.managerId} onChange={update("managerId")} /></div>
           <div><FieldLabel>ប្រភេទការងារ</FieldLabel><SelectField options={["ពេញម៉ោង", "ក្រៅម៉ោង", "កិច្ចសន្យា"]} value={form.employmentType} onChange={update("employmentType")} /></div>
           <div><FieldLabel>ថ្ងៃចូលបម្រើការងារ</FieldLabel><TextField type="date" value={form.startDate} onChange={update("startDate")} /></div>
           <div><FieldLabel>កាលវិភាគធ្វើការ</FieldLabel><TextField value="ចន្ទ–សុក្រ 08:00–17:00 · សៅរ៍ 08:00–12:00" disabled /></div>

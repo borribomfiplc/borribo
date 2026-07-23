@@ -5,8 +5,9 @@ import { statusStyle } from "../data/mockData";
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import { getEmployeeBackendStatus } from "../services/employees";
+import { isEmployeeInactive, normalizeEmployeeStatus } from "../utils/employeeStatus";
 
-export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick, onDeleteEmployee, employees, query, setQuery }) {
+export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick, onDeleteEmployee, onReactivateEmployee, employees, query, setQuery }) {
   const [branchFilter, setBranchFilter] = useState("ទាំងអស់");
   const [deleteError, setDeleteError] = useState("");
   const [deletingId, setDeletingId] = useState("");
@@ -18,24 +19,35 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
     return () => { active = false; };
   }, []);
 
-  const branches = ["ទាំងអស់", ...Array.from(new Set(employees.map((e) => e.branch)))];
+  const branches = ["ទាំងអស់", ...Array.from(new Set(employees.map((e) => String(e.branch || "").trim()).filter(Boolean)))];
 
   const filtered = employees.filter((e) => {
+    const search = String(query || "").trim();
     const matchesQuery =
-      e.name.includes(query) || e.role.includes(query) || e.id.toLowerCase().includes(query.toLowerCase());
+      String(e.name || "").includes(search) ||
+      String(e.role || "").includes(search) ||
+      String(e.id || "").toLowerCase().includes(search.toLowerCase());
     const matchesBranch = branchFilter === "ទាំងអស់" || e.branch === branchFilter;
     return matchesQuery && matchesBranch;
   });
 
   const { page, setPage, totalPages, totalItems, pageSize, pageItems: paged } = usePagination(filtered);
-  const activeEmployees = employees.filter((e) => e.status === "សកម្ម").length;
-  const inactiveEmployees = employees.length - activeEmployees;
+  const activeEmployees = employees.filter((e) => normalizeEmployeeStatus(e.status) === "សកម្ម").length;
+  const inactiveEmployees = employees.filter((e) => isEmployeeInactive(e.status)).length;
 
   const handleDelete = async (emp) => {
     if (!window.confirm(`តើអ្នកចង់ប្តូរ "${emp.name}" ទៅអសកម្ម និងរក្សាទុកទិន្នន័យចាស់មែនទេ?`)) return;
     setDeletingId(emp.id); setDeleteError("");
     try { await onDeleteEmployee(emp); }
     catch (error) { setDeleteError(error?.message || "មិនអាចដាក់បុគ្គលិកជាអសកម្មបានទេ"); }
+    finally { setDeletingId(""); }
+  };
+
+  const handleReactivate = async (emp) => {
+    if (!window.confirm(`តើអ្នកចង់ដាក់ "${emp.name}" ឲ្យសកម្ម និងបើក Login Account វិញមែនទេ?`)) return;
+    setDeletingId(emp.id); setDeleteError("");
+    try { await onReactivateEmployee(emp); }
+    catch (error) { setDeleteError(error?.message || "មិនអាចដាក់បុគ្គលិកឲ្យសកម្មវិញបានទេ"); }
     finally { setDeletingId(""); }
   };
 
@@ -146,19 +158,23 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
                   <span
                     className="inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2.5 py-1.5 whitespace-nowrap"
                     style={{
-  background: statusStyle[e.status]?.bg || "#F1F2F6",
-  color: statusStyle[e.status]?.fg || "#8A8FA3",
-}}
+                      background: statusStyle[normalizeEmployeeStatus(e.status)]?.bg || "#F1F2F6",
+                      color: statusStyle[normalizeEmployeeStatus(e.status)]?.fg || "#8A8FA3",
+                    }}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80" />
-                    {e.status}
+                    {normalizeEmployeeStatus(e.status)}
                   </span>
                 </td>
                 <td className="px-3 py-3.5 text-center">
                   <div className="flex items-center justify-center gap-1.5">
                     <button onClick={() => onViewClick(e)} title="មើលព័ត៌មានលម្អិត" aria-label={`មើលព័ត៌មានលម្អិតរបស់ ${e.name}`} className="w-9 h-9 rounded-xl border border-[#E5E8F0] bg-white flex items-center justify-center text-[#69708A] transition hover:border-[#C9D1F1] hover:bg-[#EEF1FB] hover:text-[#2A3F8F] hover:-translate-y-0.5"><Eye size={15} /></button>
                     <button onClick={() => onEditClick(e)} title="កែសម្រួលព័ត៌មាន" aria-label={`កែសម្រួលព័ត៌មានរបស់ ${e.name}`} className="w-9 h-9 rounded-xl border border-[#E5E8F0] bg-white flex items-center justify-center text-[#69708A] transition hover:border-[#C9D1F1] hover:bg-[#EEF1FB] hover:text-[#2A3F8F] hover:-translate-y-0.5"><Pencil size={15} /></button>
-                    <button onClick={() => handleDelete(e)} disabled={deletingId === e.id} title="ដាក់បុគ្គលិកអសកម្ម" aria-label={`ដាក់ ${e.name} ជាអសកម្ម`} className="w-9 h-9 rounded-xl border border-[#E5E8F0] bg-white flex items-center justify-center text-[#69708A] transition hover:border-[#F2C9C2] hover:bg-[#FFF2EE] hover:text-[#D9614F] hover:-translate-y-0.5 disabled:opacity-50 disabled:pointer-events-none"><Archive size={15} /></button>
+                    {isEmployeeInactive(e.status) ? (
+                      <button onClick={() => handleReactivate(e)} disabled={deletingId === e.id} title="ដាក់បុគ្គលិកឲ្យសកម្មវិញ" aria-label={`ដាក់ ${e.name} ឲ្យសកម្មវិញ`} className="w-9 h-9 rounded-xl border border-[#D7EBDD] bg-white flex items-center justify-center text-[#2F9D62] transition hover:bg-[#EAF8F0] hover:-translate-y-0.5 disabled:opacity-50 disabled:pointer-events-none"><UserCheck size={15} /></button>
+                    ) : (
+                      <button onClick={() => handleDelete(e)} disabled={deletingId === e.id} title="ដាក់បុគ្គលិកអសកម្ម" aria-label={`ដាក់ ${e.name} ជាអសកម្ម`} className="w-9 h-9 rounded-xl border border-[#E5E8F0] bg-white flex items-center justify-center text-[#69708A] transition hover:border-[#F2C9C2] hover:bg-[#FFF2EE] hover:text-[#D9614F] hover:-translate-y-0.5 disabled:opacity-50 disabled:pointer-events-none"><Archive size={15} /></button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -189,11 +205,11 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
               <span
                 className="text-[11px] font-medium rounded-full px-2.5 py-1 shrink-0"
                 style={{
-  background: statusStyle[e.status]?.bg || "#F1F2F6",
-  color: statusStyle[e.status]?.fg || "#8A8FA3",
-}}
+                  background: statusStyle[normalizeEmployeeStatus(e.status)]?.bg || "#F1F2F6",
+                  color: statusStyle[normalizeEmployeeStatus(e.status)]?.fg || "#8A8FA3",
+                }}
               >
-                {e.status}
+                {normalizeEmployeeStatus(e.status)}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs text-[#8A8FA3] border-t border-[#EBEDF3] pt-3 mb-3">
@@ -208,13 +224,15 @@ export default function EmployeeListPage({ onAddClick, onEditClick, onViewClick,
               >
                 <Pencil size={14} /> កែ
               </button>
-              <button
-                onClick={() => handleDelete(e)}
-                disabled={deletingId === e.id}
-                className="flex-1 flex items-center justify-center gap-1.5 border border-[#F0D8D3] bg-[#FFF8F6] rounded-xl py-2.5 text-xs font-medium text-[#D9614F] disabled:opacity-50"
-              >
-                <Archive size={14} /> អសកម្ម
-              </button>
+              {isEmployeeInactive(e.status) ? (
+                <button onClick={() => handleReactivate(e)} disabled={deletingId === e.id} className="flex-1 flex items-center justify-center gap-1.5 border border-[#D7EBDD] bg-[#F3FBF6] rounded-xl py-2.5 text-xs font-medium text-[#2F9D62] disabled:opacity-50">
+                  <UserCheck size={14} /> សកម្មវិញ
+                </button>
+              ) : (
+                <button onClick={() => handleDelete(e)} disabled={deletingId === e.id} className="flex-1 flex items-center justify-center gap-1.5 border border-[#F0D8D3] bg-[#FFF8F6] rounded-xl py-2.5 text-xs font-medium text-[#D9614F] disabled:opacity-50">
+                  <Archive size={14} /> អសកម្ម
+                </button>
+              )}
             </div>
           </div>
         ))}

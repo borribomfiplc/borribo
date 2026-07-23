@@ -36,21 +36,19 @@ service cloud.firestore {
       allow create, update, delete: if administrator();
     }
 
-    // A login screen is not authenticated yet, so it can read one known
-    // username document but can never list this directory. These documents
-    // contain only the email needed by Firebase Email/Password Auth.
+    // Username resolution is handled only by the trusted Worker. Browser
+    // access is denied to prevent username-to-email account enumeration.
     match /usernames/{username} {
-      allow get: if true;
-      allow list: if false;
+      // Login resolution is server-side only to prevent account enumeration.
+      allow read: if false;
       allow create, update, delete: if administrator();
     }
 
-    // This minimal directory is used only before a password-reset email is
-    // requested. It contains no passwords, profiles, roles, or employee data.
-    // The Admin scripts keep it in sync with Firebase Authentication users.
+    // The Worker uses this minimal directory for password reset eligibility.
+    // Browser access is denied so email membership cannot be enumerated.
     match /passwordResetEmails/{email} {
-      allow get: if true;
-      allow list: if false;
+      // Password-reset lookup and email dispatch are server-side only.
+      allow read: if false;
       allow create, update, delete: if administrator();
     }
 
@@ -136,24 +134,25 @@ service cloud.firestore {
     // Attendance writes from employee and kiosk browsers are forbidden.
     // The trusted Worker verifies identity, branch, PIN, GPS and QR, derives
     // Cambodia server time, and atomically writes today + history documents.
-    // Manager writes remain temporarily enabled for the existing manual-entry
-    // workflow; they should be migrated to the Worker in the next hardening pass.
+    // Manual entry, fingerprint import and correction workflows also use the
+    // trusted Worker. Browser rules permit reads only.
     match /attendanceToday/{recordId} {
       allow get: if manager()
         || (activeAccount() && resource.data.uid == request.auth.uid);
       allow list: if manager();
-      allow create, update, delete: if manager();
+      allow create, update, delete: if false;
     }
 
     match /attendanceHistory/{recordId} {
       allow get: if manager()
         || (activeAccount() && resource.data.uid == request.auth.uid);
       allow list: if manager();
-      allow create, update, delete: if manager();
+      allow create, update, delete: if false;
     }
 
     match /corrections/{recordId} {
-      allow get, list, create, update, delete: if manager();
+      allow get, list: if manager();
+      allow create, update, delete: if false;
     }
 
     match /branches/{branchId} {

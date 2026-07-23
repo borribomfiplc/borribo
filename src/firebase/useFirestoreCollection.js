@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { collection, doc, onSnapshot, writeBatch } from "firebase/firestore";
 import { db } from "./config";
+import { secureCollectionMutation } from "../services/secureWrites";
 
 /**
  * Drop-in replacement for `useState(initialArray)` that is backed by a
@@ -74,7 +75,10 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
       const prevIds = new Set(prev.map((item) => String(item[idField])));
       const nextIds = new Set(next.map((item) => String(item[idField])));
 
-      const batch = writeBatch(db);
+      const protectedCollection = ["attendanceToday", "attendanceHistory", "corrections"].includes(collectionName);
+      const upserts = [];
+      const deletes = [];
+      const batch = protectedCollection ? null : writeBatch(db);
       // Only write records that were added or actually changed. The previous
       // implementation re-wrote the entire collection for every small edit,
       // which was slow and could hit Firestore's 500-write batch limit.
@@ -83,18 +87,23 @@ export function useFirestoreCollection(collectionName, seedData = [], idField = 
         const id = String(item[idField]);
         const previous = previousById.get(id);
         if (!previous || JSON.stringify(previous) !== JSON.stringify(item)) {
-          batch.set(doc(db, collectionName, id), item);
+          if (protectedCollection) upserts.push({ id, data: item });
+          else batch.set(doc(db, collectionName, id), item);
         }
       });
       prevIds.forEach((id) => {
-        if (!nextIds.has(id)) batch.delete(doc(db, collectionName, id));
+        if (!nextIds.has(id)) {
+          if (protectedCollection) deletes.push(id);
+          else batch.delete(doc(db, collectionName, id));
+        }
       });
 
       // Optimistic local update so the UI feels instant; onSnapshot will
       // reconcile with the server value shortly after.
       setDataState(next);
       try {
-        await batch.commit();
+        if (protectedCollection) await secureCollectionMutation(collectionName, upserts, deletes);
+        else await batch.commit();
         return next;
       } catch (err) {
         // eslint-disable-next-line no-console

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import {
   ChevronDown, CheckCircle2, XCircle, AlertCircle, Download, X, FileCheck2, FileWarning
 } from "lucide-react";
-import { doc, serverTimestamp, updateDoc, writeBatch } from "firebase/firestore";
+import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { COLORS } from "../data/theme";
 import { correctionStatusStyle, leaveQuotas, leaveTypeStyle, leaveTypes } from "../data/mockData";
 import StatCard from "../components/shared/StatCard";
@@ -11,6 +11,7 @@ import { db } from "../firebase/config";
 import { leaveAttendanceRecord, remainingLeaveDays, requestLeaveDaysForYear, workingLeaveDates } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
 import { todayISO } from "../utils/attendance";
+import { secureCollectionMutation } from "../services/secureWrites";
 
 export default function LeaveApprovalPage({ requests, employees, profile, holidays = [] }) {
   const [branchFilter, setBranchFilter] = useState("គ្រប់សាខា");
@@ -81,23 +82,23 @@ export default function LeaveApprovalPage({ requests, employees, profile, holida
     }
     setSaving(true); setError("");
     try {
-      const batch = writeBatch(db);
       const actor = { uid: profile?.uid || "", name: profile?.name || "HR/Admin" };
-      batch.update(doc(db, "leaveRequests", request.id), {
+      await updateDoc(doc(db, "leaveRequests", request.id), {
         status, decisionReason: decisionReason.trim(), decidedOn: todayISO(),
         decidedAt: serverTimestamp(), decidedBy: actor.uid, decidedByName: actor.name,
         ...(status === "បានអនុម័ត" ? { days: authoritativeDays, workingDates: leaveDates, leaveYear: request.startDate.slice(0, 4) } : {}),
       });
-      if (status === "បានអនុម័ត") {
+      if (status === "បានអនុម័ត" && (!request.portion || request.portion === "ពេញថ្ងៃ")) {
         const employee = employees.find((item) => item.id === employeeId);
-        leaveDates.forEach((dateISO) => {
-          if (request.portion && request.portion !== "ពេញថ្ងៃ") return;
-          const record = { ...leaveAttendanceRecord(request, employee, dateISO, actor), updatedAt: serverTimestamp() };
-          batch.set(doc(db, "attendanceHistory", record.docId), record, { merge: true });
-          if (dateISO === todayISO()) batch.set(doc(db, "attendanceToday", record.recordId), record, { merge: true });
+        const now = new Date().toISOString();
+        const historyUpserts = leaveDates.map((dateISO) => {
+          const record = { ...leaveAttendanceRecord(request, employee, dateISO, actor), updatedAt: now };
+          return { id: record.docId, data: record };
         });
+        if (historyUpserts.length) await secureCollectionMutation("attendanceHistory", historyUpserts, []);
+        const todayRecord = historyUpserts.find((row) => row.data.dateISO === todayISO());
+        if (todayRecord) await secureCollectionMutation("attendanceToday", [{ id: todayRecord.data.recordId, data: todayRecord.data }], []);
       }
-      await batch.commit();
       await notifyTelegram("leave_decision", request.id);
       setDecision(null);
     } catch (decisionError) { setError(decisionError.message || "មិនអាចរក្សាទុកការសម្រេចបានទេ"); }

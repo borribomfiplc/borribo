@@ -3207,6 +3207,107 @@ async function handleOperationsMutation(user, env, body) {
 }
 
 
+const publicRateLimits = new Map();
+function clientKey(request, scope) {
+  const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+  return `${scope}:${ip}`;
+}
+function enforcePublicRateLimit(request, scope, limit = 12, windowMs = 15 * 60 * 1000) {
+  const key = clientKey(request, scope);
+  const now = Date.now();
+  const entry = publicRateLimits.get(key);
+  if (!entry || entry.resetAt <= now) {
+    publicRateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return;
+  }
+  entry.count += 1;
+  if (entry.count > limit) throw Object.assign(new Error("Too many requests"), { status: 429, code: "auth/too-many-requests" });
+}
+
+async function resolveAccountEmail(env, identifier) {
+  const value = String(identifier || "").trim().toLowerCase();
+  if (!value) return "";
+  if (value.includes("@")) return value;
+  if (!validUsername(value)) return "";
+  const record = await getDocument(env, `usernames/${value}`);
+  return record?.active !== false ? normalizeEmail(record?.email) : "";
+}
+
+async function handlePublicLogin(request, env, body) {
+  enforcePublicRateLimit(request, "login", 15);
+  if (!env.FIREBASE_WEB_API_KEY) throw new Error("FIREBASE_WEB_API_KEY is missing");
+  const email = await resolveAccountEmail(env, body?.identifier);
+  const password = String(body?.password || "");
+  if (!email || !password) throw Object.assign(new Error("Invalid login credentials"), { status: 401, code: "auth/invalid-credential" });
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(env.FIREBASE_WEB_API_KEY)}`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password, returnSecureToken: true }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.localId) {
+    const firebaseCode = String(result?.error?.message || "");
+    const disabled = firebaseCode === "USER_DISABLED";
+    throw Object.assign(new Error(disabled ? "This Login Account is disabled" : "Invalid login credentials"), {
+      status: disabled ? 403 : 401,
+      code: disabled ? "auth/user-disabled" : "auth/invalid-credential",
+    });
+  }
+  const profile = await getDocument(env, `profiles/${result.localId}`);
+  if (profile?.active === false) throw Object.assign(new Error("This Login Account is disabled"), { status: 403, code: "auth/user-disabled" });
+  return { ok: true, email };
+}
+
+async function handlePublicPasswordReset(request, env, body) {
+  enforcePublicRateLimit(request, "password-reset", 6, 60 * 60 * 1000);
+  const email = await resolveAccountEmail(env, body?.identifier);
+  if (email && env.FIREBASE_WEB_API_KEY) {
+    const directory = await getDocument(env, `passwordResetEmails/${email}`);
+    if (directory && directory.active !== false && normalizeEmail(directory.email || email) === email) {
+      await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(env.FIREBASE_WEB_API_KEY)}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestType: "PASSWORD_RESET", email }),
+      }).catch(() => null);
+    }
+  }
+  // Always return the same response so callers cannot discover accounts.
+  return { ok: true, accepted: true };
+}
+
+function safeDocumentId(value) {
+  const id = String(value || "").trim();
+  if (!id || id.length > 180 || id.includes("/") || id === "." || id === "..") throw Object.assign(new Error("Invalid document id"), { status: 400 });
+  return id;
+}
+
+async function handleSecureCollectionMutation(user, env, body) {
+  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
+  const collectionName = String(body?.collectionName || "");
+  if (!["attendanceToday", "attendanceHistory", "corrections"].includes(collectionName)) throw Object.assign(new Error("Collection is not allowed"), { status: 403 });
+  const upserts = Array.isArray(body?.upserts) ? body.upserts : [];
+  const deletes = Array.isArray(body?.deletes) ? body.deletes : [];
+  if (upserts.length + deletes.length > 450) throw Object.assign(new Error("Too many records in one request"), { status: 413 });
+  if (collectionName !== "corrections" && deletes.length) throw Object.assign(new Error("Attendance records cannot be hard-deleted"), { status: 409 });
+  const now = new Date().toISOString();
+  const writes = [];
+  for (const row of upserts) {
+    const id = safeDocumentId(row?.id);
+    const data = row?.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : null;
+    if (!data) throw Object.assign(new Error("Invalid record data"), { status: 400 });
+    if (collectionName.startsWith("attendance") && !data.dateISO) throw Object.assign(new Error("Attendance date is required"), { status: 400 });
+    writes.push({ path: `${collectionName}/${id}`, data: { ...data, securityUpdatedAt: now, securityUpdatedByUid: user.uid, securityUpdatedByEmail: user.email } });
+  }
+  for (const rawId of deletes) writes.push({ delete: `${collectionName}/${safeDocumentId(rawId)}` });
+  if (writes.length) {
+    writes.push({ path: `auditLogs/${Date.now()}_${crypto.randomUUID()}`, data: {
+      type: "secure_collection_mutation", module: collectionName, actorUid: user.uid, actorEmail: user.email,
+      upsertCount: upserts.length, deleteCount: deletes.length, createdAt: now,
+    }, exists: false });
+    await commitWrites(env, writes);
+  }
+  return { ok: true, upserted: upserts.length, deleted: deletes.length };
+}
+
+
 async function handleRequest(request, env) {
   const origin = allowedOrigin(request, env);
   if (request.method === "OPTIONS") return origin ? preflight(origin) : json({ error: "Origin not allowed" }, 403);
@@ -3216,6 +3317,15 @@ async function handleRequest(request, env) {
     return json({ ok: true, configured: adminConfigured, adminConfigured, telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN), emailConfigured: Boolean(env.RESEND_API_KEY && env.NOTIFICATION_FROM_EMAIL), backupConfigured: Boolean(env.FIRESTORE_BACKUP_BUCKET) }, 200, origin);
   }
   try {
+    if (!origin && request.headers.get("origin")) return json({ ok: false, error: "Origin not allowed" }, 403);
+    if (url.pathname === "/api/auth/resolve-login" && request.method === "POST") {
+      const result = await handlePublicLogin(request, env, await request.json());
+      return json(result, 200, origin);
+    }
+    if (url.pathname === "/api/auth/password-reset" && request.method === "POST") {
+      const result = await handlePublicPasswordReset(request, env, await request.json());
+      return json(result, 200, origin);
+    }
     const user = await verifyFirebaseUser(request, env);
     let result;
     if (url.pathname === "/api/attendance/employee/validate-qr" && request.method === "POST") result = await handleEmployeeQrValidation(user, env, await request.json());
@@ -3237,6 +3347,7 @@ async function handleRequest(request, env) {
     else if (url.pathname === "/api/admin/system/backup" && request.method === "POST") result = await handleSystemBackup(user, env);
     else if (url.pathname === "/api/admin/system/test-email" && request.method === "POST") result = await handleSystemTestEmail(user, env);
     else if (url.pathname === "/api/admin/operations/mutate" && request.method === "POST") result = await handleOperationsMutation(user, env, await request.json());
+    else if (url.pathname === "/api/admin/secure-collection/mutate" && request.method === "POST") result = await handleSecureCollectionMutation(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {
       if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
       result = await sendDailySummary(env, true);
@@ -3244,7 +3355,7 @@ async function handleRequest(request, env) {
     return json(result, 200, origin);
   } catch (error) {
     console.error("Worker request failed", error.message);
-    return json({ ok: false, error: error.message || "Request failed" }, error.status || 500, origin);
+    return json({ ok: false, error: error.message || "Request failed", code: error.code || "" }, error.status || 500, origin);
   }
 }
 
@@ -3261,4 +3372,12 @@ export default {
   },
 };
 
-export { decodeFields, encodeFields, eventMessage, normalizeEmployeeStatus, attendanceMetrics, distanceInMeters, normalizeAttendanceAction };
+export {
+  decodeFields,
+  encodeFields,
+  eventMessage,
+  normalizeEmployeeStatus,
+  attendanceMetrics,
+  distanceInMeters,
+  normalizeAttendanceAction,
+};

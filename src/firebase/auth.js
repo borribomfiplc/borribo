@@ -5,55 +5,9 @@ import {
   browserLocalPersistence,
   browserSessionPersistence,
   setPersistence,
-  sendPasswordResetEmail,
 } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "./config";
-
-function usernameError(code) {
-  const error = new Error(code);
-  error.code = code;
-  return error;
-}
-
-/**
- * Firebase deliberately hides whether an email address has an Auth account.
- * For this HRMS reset flow, the Admin scripts maintain a minimal public
- * directory of active account emails. It lets the UI stop before asking
- * Firebase to send a reset email for an address that is not an HRMS account.
- */
-async function verifyPasswordResetEmail(email) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const emailDoc = await getDoc(doc(db, "passwordResetEmails", normalizedEmail));
-
-  if (!emailDoc.exists() || !emailDoc.data()?.active) {
-    throw usernameError("auth/email-not-found");
-  }
-
-  return emailDoc.data()?.email || normalizedEmail;
-}
-
-/**
- * Firebase Email/Password Auth signs in with an email only. For a username,
- * resolve one exact document in the public `usernames` directory first.
- * The directory contains only a username -> email mapping; passwords and
- * roles always remain in Firebase Auth / protected profile documents.
- */
-export async function resolveLoginEmail(identifier) {
-  const value = identifier.trim();
-  if (value.includes("@")) return value.toLowerCase();
-
-  const username = value.toLowerCase();
-  if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(username)) {
-    throw usernameError("auth/invalid-username");
-  }
-
-  const usernameDoc = await getDoc(doc(db, "usernames", username));
-  if (!usernameDoc.exists() || !usernameDoc.data()?.active || !usernameDoc.data()?.email) {
-    throw usernameError("auth/username-not-found");
-  }
-  return usernameDoc.data().email;
-}
+import { auth } from "./config";
+import { requestSecurePasswordReset, resolveVerifiedLogin } from "../services/secureWrites";
 
 /**
  * Signs in with email + password. `remember` picks whether the session
@@ -62,7 +16,8 @@ export async function resolveLoginEmail(identifier) {
  */
 export async function login(identifier, password, remember = true) {
   await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
-  const email = await resolveLoginEmail(identifier);
+  const result = await resolveVerifiedLogin(identifier, password);
+  const email = result.email;
   const cred = await signInWithEmailAndPassword(auth, email, password);
   return cred.user;
 }
@@ -72,9 +27,10 @@ export function logout() {
 }
 
 export async function sendPasswordReset(identifier) {
-  const email = await resolveLoginEmail(identifier);
-  const verifiedEmail = await verifyPasswordResetEmail(email);
-  return sendPasswordResetEmail(auth, verifiedEmail);
+  // The Worker resolves the identifier and sends the reset email without
+  // exposing whether a username/email exists. The UI always shows the same
+  // confirmation message to prevent account enumeration.
+  return requestSecurePasswordReset(identifier);
 }
 
 /** Subscribes to auth state; returns an unsubscribe function. */

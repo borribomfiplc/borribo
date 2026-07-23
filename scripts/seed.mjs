@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { randomInt } from "node:crypto";
 import admin from "firebase-admin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,11 +60,39 @@ const collections = {
   roles: initialRoles,
 };
 
+function newUniquePin(usedPins) {
+  for (let attempt = 0; attempt < 20_000; attempt += 1) {
+    const pin = String(randomInt(0, 10_000)).padStart(4, "0");
+    if (!usedPins.has(pin)) {
+      usedPins.add(pin);
+      return pin;
+    }
+  }
+  throw new Error("Could not generate a unique 4-digit kiosk PIN");
+}
+
+const generatedPins = [];
 for (const [name, rows] of Object.entries(collections)) {
   const batch = db.batch();
-  rows.forEach((row) => batch.set(db.collection(name).doc(String(row.docId ?? row.id)), row, { merge: true }));
+  if (name === "employees") {
+    const existing = await Promise.all(rows.map((row) => db.collection(name).doc(String(row.id)).get()));
+    const usedPins = new Set(existing.map((snapshot) => String(snapshot.data()?.pin || "")).filter(Boolean));
+    rows.forEach((row, index) => {
+      const currentPin = String(existing[index].data()?.pin || "");
+      const pin = /^\d{4}$/.test(currentPin) ? currentPin : newUniquePin(usedPins);
+      if (!/^\d{4}$/.test(currentPin)) generatedPins.push({ employeeId: row.id, name: row.name, pin });
+      batch.set(db.collection(name).doc(String(row.id)), { ...row, pin }, { merge: true });
+    });
+  } else {
+    rows.forEach((row) => batch.set(db.collection(name).doc(String(row.docId ?? row.id)), row, { merge: true }));
+  }
   await batch.commit();
   console.log(`✅ Seeded ${rows.length} docs into "${name}"`);
+}
+
+if (generatedPins.length) {
+  console.log("\n🔐 Newly generated kiosk PINs (store securely; they are not bundled into the web app):");
+  console.table(generatedPins);
 }
 
 console.log("\nDone. Open the Firebase Console → Firestore Database to see your data.");

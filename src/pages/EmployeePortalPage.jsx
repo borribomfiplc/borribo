@@ -1,16 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, serverTimestamp, setDoc, updateDoc, query, where } from "firebase/firestore";
 import { CalendarDays, FileText, LogOut, MapPin, Clock3, ScanLine, Info, Download, XCircle } from "lucide-react";
 import { db } from "../firebase/config";
 import { COLORS } from "../data/theme";
-import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, distanceInMeters, timeNow, todayISO } from "../utils/attendance";
-import { parseQrPayload, sha256 } from "../utils/qrSecurity";
+import { todayISO } from "../utils/attendance";
 import QrScanner from "../components/QrScanner";
 import { correctionStatusStyle, leaveQuotas, leaveTypes } from "../data/mockData";
-import { notifyTelegram } from "../services/telegram";
 import { calculateLeaveDays, LEAVE_PORTIONS, leaveRequestsConflict, remainingLeaveDays } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
-const configuredValue = (primary, fallback = "") => String(primary ?? "").trim() === "" ? fallback : primary;
+import { recordEmployeeAttendance, validateEmployeeQr } from "../services/attendance";
+import { notifyTelegram } from "../services/telegram";
 function readLocation() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({ gpsStatus: "not-supported" });
@@ -22,7 +21,7 @@ function readLocation() {
   });
 }
 
-export default function EmployeePortalPage({ authUser, profile, onLogout, branches = [], holidays = [] }) {
+export default function EmployeePortalPage({ authUser, profile, onLogout, holidays = [] }) {
   const [requests, setRequests] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [form, setForm] = useState({ leaveType: leaveTypes[0], startDate: "", endDate: "", portion: LEAVE_PORTIONS[0], reason: "" });
@@ -32,6 +31,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
   const [attendanceMessage, setAttendanceMessage] = useState("");
   const [qrValue, setQrValue] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [qrValidating, setQrValidating] = useState(false);
   const employeeId = profile.employeeId || authUser.uid;
   const dateISO = todayISO();
   const attendanceId = `${employeeId}_${dateISO}`;
@@ -46,60 +46,21 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
 
   useEffect(() => onSnapshot(doc(db, "attendanceToday", attendanceId), (snap) => setAttendance(snap.exists() ? snap.data() : null)), [attendanceId]);
 
-  const validateAttendanceRequirements = async (location) => {
-    const settingsSnap = await getDoc(doc(db, "settings", "gpsQrPublic"));
-    if (!settingsSnap.exists()) throw new Error("GPS/QR មិនទាន់បានកំណត់សុវត្ថិភាព។ សូមឲ្យ HR បើកទំព័រ GPS និង QR ហើយចុចរក្សាទុក");
-    const settings = settingsSnap.data();
-    const branch = branches.find((item) => (
-      (profile.branchId && item.id === profile.branchId) || item.name === profile.branch
-    ));
-    if (!branch) throw new Error("រកមិនឃើញសាខារបស់អ្នក។ សូមទាក់ទង HR");
-    if (branch.status === "អសកម្ម") throw new Error("សាខារបស់អ្នកត្រូវបានដាក់អសកម្ម។ សូមទាក់ទង HR");
-    const savedGeofence = settings.branchGeofences?.[branch.id] || {};
-    const radius = Number(
-      branch.gpsRadiusMeters
-      || savedGeofence.radiusMeters
-      || settings.radii?.[branch.id]
-      || 100,
-    );
-    if (settings.requireGps) {
-      if (location.gpsStatus !== "recorded") throw new Error("សូមអនុញ្ញាត GPS មុនពេលកត់ត្រាវត្តមាន");
-      const branchLocation = {
-        latitude: configuredValue(branch.latitude, configuredValue(savedGeofence.latitude, settings.locations?.[branch.id]?.latitude ?? "")),
-        longitude: configuredValue(branch.longitude, configuredValue(savedGeofence.longitude, settings.locations?.[branch.id]?.longitude ?? "")),
-      };
-      if (String(branchLocation.latitude ?? "").trim() === ""
-        || String(branchLocation.longitude ?? "").trim() === ""
-        || !Number.isFinite(Number(branchLocation.latitude))
-        || !Number.isFinite(Number(branchLocation.longitude))) {
-        throw new Error("សាខារបស់អ្នកមិនទាន់កំណត់ទីតាំង GPS ទេ។ សូមទាក់ទង HR");
-      }
-      const maxAccuracy = Number(settings.maxGpsAccuracy || 100);
-      if (!Number.isFinite(location.accuracy) || location.accuracy > maxAccuracy) throw new Error(`GPS មិនទាន់ច្បាស់ (${location.accuracy ?? "—"}m)។ សូមចេញទៅកន្លែងបើកចំហ ហើយសាកម្ដងទៀត`);
-      const meters = distanceInMeters(location, branchLocation);
-      if (meters === null || meters > radius) throw new Error(`អ្នកស្ថិតនៅក្រៅតំបន់សាខា (${meters ?? "—"}m / ${radius}m)`);
-      location.distanceMeters = meters;
-      location.allowedRadiusMeters = radius;
-      location.verifiedBranchId = branch.id;
-      location.verifiedBranchName = branch.name;
+  const handleQrResult = useCallback(async (value) => {
+    setScanning(false);
+    setQrValidating(true);
+    setQrValue("");
+    setAttendanceMessage("");
+    setError("");
+    try {
+      const result = await validateEmployeeQr(value);
+      setQrValue(value);
+      setAttendanceMessage(result.message || "QR សាខាត្រឹមត្រូវ");
+    } catch (scanError) {
+      setError(scanError.message || "QR code មិនត្រឹមត្រូវ ឬមិនមែនរបស់សាខាអ្នក");
+    } finally {
+      setQrValidating(false);
     }
-    if (settings.requireQr) {
-      if (!qrValue.trim()) throw new Error("សូមស្កេន ឬបញ្ចូល QR code របស់សាខា");
-      const payload = parseQrPayload(qrValue);
-      if (!payload || payload.branchId !== branch.id) throw new Error("QR code មិនត្រឹមត្រូវ ឬមិនមែនរបស់សាខានេះទេ");
-      const tokenSnap = await getDoc(doc(db, "qrTokens", branch.id));
-      if (!tokenSnap.exists()) throw new Error("QR សាខានេះមិនទាន់ត្រូវបានដំណើរការ។ សូមទាក់ទង HR");
-      const token = tokenSnap.data();
-      if (token.expiresAt !== payload.expiresAt || new Date(token.expiresAt).getTime() <= Date.now()) throw new Error("QR code បានផុតកំណត់។ សូមស្កេន QR ថ្មីនៅសាខា");
-      if (await sha256(payload.token) !== token.tokenHash) throw new Error("QR code មិនត្រឹមត្រូវ ឬត្រូវបានប្ដូររួចហើយ");
-      settings.verifiedQr = { branchId: branch.id, expiresAt: token.expiresAt, version: token.version || 1 };
-    }
-    settings.verifiedBranch = { id: branch.id, name: branch.name, radiusMeters: radius };
-    return settings;
-  };
-
-  const handleQrResult = useCallback((value) => {
-    setQrValue(value); setAttendanceMessage("ស្កេន QR បានជោគជ័យ"); setError(""); setScanning(false);
   }, []);
 
   const submit = async (event) => {
@@ -158,57 +119,25 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
   };
 
   const markAttendance = async (kind) => {
-    if ((kind === "in" && attendance?.checkIn && attendance.checkIn !== "—") || (kind === "out" && (!attendance?.checkIn || attendance.checkIn === "—" || (attendance?.checkOut && attendance.checkOut !== "—")))) return;
-    setSaving(true); setError(""); setAttendanceMessage("");
+    if ((kind === "in" && attendance?.checkIn && attendance.checkIn !== "—")
+      || (kind === "out" && (!attendance?.checkIn || attendance.checkIn === "—" || (attendance?.checkOut && attendance.checkOut !== "—")))) return;
+    setSaving(true);
+    setError("");
+    setAttendanceMessage("");
     try {
       const location = await readLocation();
-      const settings = await validateAttendanceRequirements(location);
-      const capturedAt = new Date();
-      const now = timeNow(capturedAt);
-      const workingHoursSnap = await getDoc(doc(db, "settings", "workingHours"));
-      const workingHours = workingHoursSnap.exists() ? workingHoursSnap.data() : DEFAULT_WORKING_HOURS;
-      let employeeShift = profile.shift || "ព្រឹក";
-      try {
-        const employeeSnap = await getDoc(doc(db, "employees", employeeId));
-        if (employeeSnap.exists()) employeeShift = employeeSnap.data().shift || employeeShift;
-      } catch {
-        // A legacy profile may not have an employee directory record yet.
-        // Attendance still uses the profile/default shift instead of failing.
-      }
-      const base = {
-        id: employeeId, recordId: attendanceId, uid: authUser.uid, dateISO, name: profile.name || authUser.email,
-        role: profile.jobRole || "បុគ្គលិក", branch: settings.verifiedBranch?.name || profile.branch || "",
-        branchId: settings.verifiedBranch?.id || profile.branchId || "", shift: employeeShift,
-        updatedAt: serverTimestamp(),
-      };
-      let nextRecord;
-      if (kind === "in") {
-        const metrics = calculateAttendanceMetrics({ shift: employeeShift, workingHours, checkInAt: capturedAt });
-        nextRecord = {
-          ...base, checkIn: now, checkInAt: serverTimestamp(), checkInClientAt: capturedAt.toISOString(),
-          checkInLocation: location, gpsStatus: location.gpsStatus, checkOut: "—", ...metrics,
-          qrVerified: Boolean(settings.requireQr), qrBranchId: settings.verifiedQr?.branchId || "", qrExpiresAt: settings.verifiedQr?.expiresAt || "", gpsVerified: Boolean(settings.requireGps), source: "mobile",
-        };
-        setAttendanceMessage(`Check-in ជោគជ័យ នៅម៉ោង ${now}${metrics.isLate ? ` · មកយឺត ${metrics.lateMinutes} នាទី` : ""}`);
-      } else {
-        const metrics = calculateAttendanceMetrics({ shift: employeeShift, workingHours, checkInAt: attendance?.checkInClientAt, checkOutAt: capturedAt });
-        nextRecord = {
-          ...base, checkOut: now, checkOutAt: serverTimestamp(), checkOutClientAt: capturedAt.toISOString(),
-          checkOutLocation: location, gpsStatus: location.gpsStatus,
-          ...metrics,
-          qrVerified: Boolean(settings.requireQr), qrBranchId: settings.verifiedQr?.branchId || "", qrExpiresAt: settings.verifiedQr?.expiresAt || "", gpsVerified: Boolean(settings.requireGps), source: "mobile",
-        };
-        setAttendanceMessage(`Check-out ជោគជ័យ នៅម៉ោង ${now}${metrics.isEarlyLeave ? ` · ចេញមុន ${metrics.earlyLeaveMinutes} នាទី` : ""}`);
-      }
-      const mergedRecord = { ...attendance, ...nextRecord };
-      await Promise.all([
-        setDoc(doc(db, "attendanceToday", attendanceId), nextRecord, { merge: true }),
-        setDoc(doc(db, "attendanceHistory", attendanceId), attendanceHistoryRecord(mergedRecord), { merge: true }),
-      ]);
-      await notifyTelegram(kind === "in" ? "check_in" : "check_out", attendanceId);
-      if (settings.requireQr) setQrValue("");
-    } catch (err) { setError(err.message || "មិនអាចរក្សាទុកវត្តមានបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
-    finally { setSaving(false); }
+      const result = await recordEmployeeAttendance(kind, {
+        location,
+        qrPayload: qrValue,
+      });
+      setAttendance(result.record);
+      setAttendanceMessage(result.message || "កត់ត្រាវត្តមានបានជោគជ័យ");
+      if (result.requireQr) setQrValue("");
+    } catch (attendanceError) {
+      setError(attendanceError.message || "មិនអាចរក្សាទុកវត្តមានបានទេ។ សូមព្យាយាមម្ដងទៀត។");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const checkedIn = Boolean(attendance?.checkIn && attendance.checkIn !== "—");
@@ -219,7 +148,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, branch
       <div className="max-w-4xl mx-auto">
         <div className="flex items-start justify-between gap-3 mb-6"><div className="min-w-0"><h1 className="truncate text-lg sm:text-[22px] font-bold text-[#1E2333]">សួស្តី {profile.name || authUser.email}</h1><p className="text-sm text-[#8A8FA3] mt-1">វត្តមាន និងសំណើច្បាប់របស់អ្នក</p></div><button onClick={onLogout} className="shrink-0 rounded-xl border border-[#EBEDF3] bg-white px-3 py-2 text-sm text-[#5B5F73] flex gap-2 items-center"><LogOut size={16} /> ចាកចេញ</button></div>
 
-        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5 mb-5"><div className="flex items-center gap-2 font-semibold text-[#1E2333]"><Clock3 size={18} className="text-[#2A3F8F]" /> វត្តមានថ្ងៃនេះ</div><p className="text-xs text-[#8A8FA3] mt-1">{dateISO}{attendance?.gpsStatus === "recorded" ? ` · GPS ${attendance.checkInLocation?.distanceMeters ?? "—"}m ពីសាខា` : ""}</p><label className="block text-xs text-[#5B5F73] mt-4"><span className="flex items-center gap-1 mb-1.5"><ScanLine size={13} /> QR code សាខា</span><div className="flex flex-col gap-2 min-[380px]:flex-row"><input value={qrValue} onChange={(e) => setQrValue(e.target.value)} placeholder={qrValue ? "បានស្កេន QR" : "ស្កេន QR មុន Check-in/out"} className="min-w-0 flex-1 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /><button type="button" onClick={() => { setError(""); setScanning(true); }} className="shrink-0 rounded-xl px-3 py-2.5 text-xs font-medium text-white" style={{ background: COLORS.primary }}>ស្កេន QR</button></div></label><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><button disabled={saving || checkedIn} onClick={() => markAttendance("in")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.primary }}>{saving && !checkedIn ? "កំពុងកត់ត្រា..." : checkedIn ? `បាន Check-in ${attendance.checkIn}` : "Check-in"}</button><button disabled={saving || !checkedIn || checkedOut} onClick={() => markAttendance("out")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.green }}>{saving && checkedIn ? "កំពុងកត់ត្រា..." : checkedOut ? `បាន Check-out ${attendance.checkOut}` : "Check-out"}</button></div>{checkedIn && <div className="mt-3 grid grid-cols-1 min-[380px]:grid-cols-2 gap-3 text-xs"><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">ចូល: <span className="font-semibold text-[#1E2333]">{attendance.checkIn}</span></div><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">រយៈពេល: <span className="font-semibold text-[#1E2333]">{attendance.hours || "កំពុងធ្វើការ"}</span></div></div>}{attendance && (attendance.isLate || attendance.isEarlyLeave) && <p className="mt-3 text-xs text-[#B97913]">{attendance.isLate ? `មកយឺត ${attendance.lateMinutes} នាទី` : ""}{attendance.isLate && attendance.isEarlyLeave ? " · " : ""}{attendance.isEarlyLeave ? `ចេញមុន ${attendance.earlyLeaveMinutes} នាទី` : ""}</p>}{attendanceMessage && <p className="mt-3 text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-3 py-2">{attendanceMessage}</p>}{error && <p className="mt-3 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}<p className="text-xs text-[#8A8FA3] mt-3 flex items-center gap-1"><MapPin size={13} /> Browser នឹងស្នើសុំ GPS នៅពេល Check-in និង Check-out</p></section>
+        <section className="bg-white rounded-2xl border border-[#EBEDF3] p-4 sm:p-5 mb-5"><div className="flex items-center gap-2 font-semibold text-[#1E2333]"><Clock3 size={18} className="text-[#2A3F8F]" /> វត្តមានថ្ងៃនេះ</div><p className="text-xs text-[#8A8FA3] mt-1">{dateISO}{attendance?.gpsStatus === "recorded" ? ` · GPS ${attendance.checkInLocation?.distanceMeters ?? "—"}m ពីសាខា` : ""}</p><label className="block text-xs text-[#5B5F73] mt-4"><span className="flex items-center gap-1 mb-1.5"><ScanLine size={13} /> QR code សាខា</span><div className="flex flex-col gap-2 min-[380px]:flex-row"><input value={qrValue} readOnly placeholder={qrValue ? "QR ត្រូវបានផ្ទៀងផ្ទាត់" : "ស្កេន QR មុន Check-in/out"} className="min-w-0 flex-1 rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" /><button type="button" disabled={qrValidating} onClick={() => { setError(""); setScanning(true); }} className="shrink-0 rounded-xl px-3 py-2.5 text-xs font-medium text-white" style={{ background: COLORS.primary }}>{qrValidating ? "កំពុងផ្ទៀងផ្ទាត់..." : "ស្កេន QR"}</button></div></label><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><button disabled={saving || checkedIn} onClick={() => markAttendance("in")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.primary }}>{saving && !checkedIn ? "កំពុងកត់ត្រា..." : checkedIn ? `បាន Check-in ${attendance.checkIn}` : "Check-in"}</button><button disabled={saving || !checkedIn || checkedOut} onClick={() => markAttendance("out")} className="rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ background: COLORS.green }}>{saving && checkedIn ? "កំពុងកត់ត្រា..." : checkedOut ? `បាន Check-out ${attendance.checkOut}` : "Check-out"}</button></div>{checkedIn && <div className="mt-3 grid grid-cols-1 min-[380px]:grid-cols-2 gap-3 text-xs"><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">ចូល: <span className="font-semibold text-[#1E2333]">{attendance.checkIn}</span></div><div className="rounded-xl bg-[#F5F6FA] px-3 py-2 text-[#5B5F73]">រយៈពេល: <span className="font-semibold text-[#1E2333]">{attendance.hours || "កំពុងធ្វើការ"}</span></div></div>}{attendance && (attendance.isLate || attendance.isEarlyLeave) && <p className="mt-3 text-xs text-[#B97913]">{attendance.isLate ? `មកយឺត ${attendance.lateMinutes} នាទី` : ""}{attendance.isLate && attendance.isEarlyLeave ? " · " : ""}{attendance.isEarlyLeave ? `ចេញមុន ${attendance.earlyLeaveMinutes} នាទី` : ""}</p>}{attendanceMessage && <p className="mt-3 text-sm text-[#3FA66B] bg-[#E9F7EF] rounded-xl px-3 py-2">{attendanceMessage}</p>}{error && <p className="mt-3 text-sm text-[#D9614F] bg-[#FBEBE8] rounded-xl px-3 py-2">{error}</p>}<p className="text-xs text-[#8A8FA3] mt-3 flex items-center gap-1"><MapPin size={13} /> Browser នឹងស្នើសុំ GPS នៅពេល Check-in និង Check-out</p></section>
 
         <div className="flex items-start justify-between gap-3 mb-4">
           <div><h2 className="font-bold text-[#1E2333]">សំណើច្បាប់</h2><p className="text-xs text-[#8A8FA3] mt-1">បុគ្គលិក → HR/Admin</p></div>

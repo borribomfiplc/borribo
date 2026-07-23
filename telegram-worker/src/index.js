@@ -158,6 +158,15 @@ async function getDocument(env, path) {
   return result ? { id: result.name.split("/").pop(), ...decodeFields(result.fields) } : null;
 }
 
+async function getDocumentWithMetadata(env, path) {
+  const result = await firestoreRequest(env, `/${path}`);
+  return result ? {
+    id: result.name.split("/").pop(),
+    ...decodeFields(result.fields),
+    __updateTime: result.updateTime || "",
+  } : null;
+}
+
 async function putDocument(env, path, data) {
   return firestoreRequest(env, `/${path}`, { method: "PATCH", body: JSON.stringify({ fields: encodeFields(data) }) });
 }
@@ -179,7 +188,11 @@ async function commitWrites(env, writes) {
       if (write.delete) return { delete: documentName(env, write.delete) };
       return {
         update: { name: documentName(env, write.path), fields: encodeFields(write.data) },
-        ...(write.exists === undefined ? {} : { currentDocument: { exists: write.exists } }),
+        ...(write.updateTime
+          ? { currentDocument: { updateTime: write.updateTime } }
+          : write.exists === undefined
+            ? {}
+            : { currentDocument: { exists: write.exists } }),
       };
     }) }),
   });
@@ -230,8 +243,10 @@ async function verifyFirebaseUser(request, env) {
   return {
     uid: result.users[0].localId,
     email: result.users[0].email || "",
-    role: custom.role || payload.role || "",
-    employeeId: custom.employeeId || payload.employeeId || "",
+    role: custom.role || payload.role || profile?.role || "",
+    employeeId: custom.employeeId || payload.employeeId || profile?.employeeId || "",
+    branch: custom.branch || payload.branch || profile?.branch || "",
+    branchId: custom.branchId || payload.branchId || profile?.branchId || "",
   };
 }
 
@@ -1289,6 +1304,552 @@ async function logTelegramEvent(env, id, data) {
   await putDocument(env, `telegramOutbox/${id}`, { id, ...data, createdAt: new Date().toISOString() });
 }
 
+const ATTENDANCE_DEFAULT_WORKING_HOURS = {
+  schedules: {
+    weekday: { start: "08:00", end: "17:00", grace: "15" },
+    saturday: { start: "08:00", end: "12:00", grace: "15" },
+  },
+  workDays: ["ច័ន្ទ", "អង្គារ", "ពុធ", "ព្រហ", "សុក្រ", "សៅរ៍"],
+};
+
+const ATTENDANCE_WEEKDAYS = {
+  Monday: "ច័ន្ទ",
+  Tuesday: "អង្គារ",
+  Wednesday: "ពុធ",
+  Thursday: "ព្រហ",
+  Friday: "សុក្រ",
+  Saturday: "សៅរ៍",
+  Sunday: "អាទិត្យ",
+};
+
+function httpError(message, status = 400) {
+  return Object.assign(new Error(message), { status });
+}
+
+function normalizeAttendanceAction(value) {
+  const action = String(value || "").trim().toLowerCase();
+  if (["in", "check-in", "check_in"].includes(action)) return "in";
+  if (["out", "check-out", "check_out"].includes(action)) return "out";
+  throw httpError("Attendance action មិនត្រឹមត្រូវ", 400);
+}
+
+function configuredAttendanceValue(primary, fallback = "") {
+  return String(primary ?? "").trim() === "" ? fallback : primary;
+}
+
+function attendanceDateISO(date = new Date()) {
+  const parts = cambodiaParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function attendanceTimeLabel(date = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Phnom_Penh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+function attendanceDateLabel(dateISO) {
+  return new Intl.DateTimeFormat("km-KH", {
+    timeZone: "Asia/Phnom_Penh",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${dateISO}T12:00:00+07:00`));
+}
+
+function minutesFromTime(value) {
+  const [hours, minutes] = String(value || "").split(":").map(Number);
+  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : null;
+}
+
+function cambodiaMinutes(date) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Phnom_Penh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(date));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Number(values.hour) * 60 + Number(values.minute);
+}
+
+function safeWorkingHours(workingHours = {}) {
+  return {
+    schedules: {
+      weekday: {
+        ...ATTENDANCE_DEFAULT_WORKING_HOURS.schedules.weekday,
+        ...(workingHours.shifts?.morning || {}),
+        ...(workingHours.schedules?.weekday || {}),
+      },
+      saturday: {
+        ...ATTENDANCE_DEFAULT_WORKING_HOURS.schedules.saturday,
+        ...(workingHours.schedules?.saturday || {}),
+      },
+    },
+    workDays: Array.isArray(workingHours.workDays)
+      ? workingHours.workDays
+      : ATTENDANCE_DEFAULT_WORKING_HOURS.workDays,
+  };
+}
+
+function attendanceMetrics({ workingHours, checkInAt, checkOutAt }) {
+  const referenceDate = new Date(checkInAt || checkOutAt || Date.now());
+  const settings = safeWorkingHours(workingHours);
+  const englishWeekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Phnom_Penh",
+    weekday: "long",
+  }).format(referenceDate);
+  const workDay = ATTENDANCE_WEEKDAYS[englishWeekday];
+  const scheduleKey = englishWeekday === "Saturday" ? "saturday" : "weekday";
+  const schedule = settings.schedules[scheduleKey];
+  const isWorkingDay = settings.workDays.includes(workDay);
+  const checkInMinutes = checkInAt ? cambodiaMinutes(checkInAt) : null;
+  const checkOutMinutes = checkOutAt ? cambodiaMinutes(checkOutAt) : null;
+  const startMinutes = minutesFromTime(schedule.start);
+  const endMinutes = minutesFromTime(schedule.end);
+  const graceMinutes = Math.max(0, Number.parseInt(schedule.grace, 10) || 0);
+  const lateMinutes = isWorkingDay && checkInMinutes !== null && startMinutes !== null
+    ? Math.max(0, checkInMinutes - startMinutes - graceMinutes)
+    : 0;
+  const earlyLeaveMinutes = isWorkingDay && checkOutMinutes !== null && endMinutes !== null
+    ? Math.max(0, endMinutes - checkOutMinutes)
+    : 0;
+  const durationMinutes = checkInAt && checkOutAt
+    ? Math.max(0, Math.floor((new Date(checkOutAt) - new Date(checkInAt)) / 60_000))
+    : null;
+
+  return {
+    shift: scheduleKey === "saturday" ? "កន្លះថ្ងៃ" : "ពេញម៉ោង",
+    scheduleType: scheduleKey,
+    scheduleLabel: scheduleKey === "saturday" ? "សៅរ៍ កន្លះថ្ងៃ" : "ចន្ទ–សុក្រ ពេញមួយថ្ងៃ",
+    scheduledStart: schedule.start,
+    scheduledEnd: schedule.end,
+    graceMinutes,
+    workDay,
+    isWorkingDay,
+    lateMinutes,
+    earlyLeaveMinutes,
+    isLate: lateMinutes > 0,
+    isEarlyLeave: earlyLeaveMinutes > 0,
+    status: lateMinutes > 0 ? "យឺត" : "មានវត្តមាន",
+    hours: durationMinutes === null
+      ? "កំពុងធ្វើការ"
+      : `${Math.floor(durationMinutes / 60)} ម៉ោង ${durationMinutes % 60} នាទី`,
+  };
+}
+
+function distanceInMeters(from, to) {
+  if (!from || !to
+    || !Number.isFinite(Number(from.latitude))
+    || !Number.isFinite(Number(from.longitude))
+    || !Number.isFinite(Number(to.latitude))
+    || !Number.isFinite(Number(to.longitude))) return null;
+  const earthRadius = 6_371_000;
+  const lat1 = Number(from.latitude) * Math.PI / 180;
+  const lat2 = Number(to.latitude) * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLon = (Number(to.longitude) - Number(from.longitude)) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return Math.round(earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function withoutDocumentMetadata(document) {
+  if (!document) return { data: null, updateTime: "" };
+  const { __updateTime, ...data } = document;
+  return { data, updateTime: __updateTime || "" };
+}
+
+async function resolveAttendanceBranch(env, branchId, branchName) {
+  let branch = branchId ? await getDocument(env, `branches/${branchId}`) : null;
+  if (!branch && branchName) {
+    const branches = await listDocuments(env, "branches");
+    branch = branches.find((item) => String(item.name || "") === String(branchName || "")) || null;
+  }
+  if (!branch) throw httpError("រកមិនឃើញសាខាដែលបានកំណត់", 403);
+  if (String(branch.status || "") === "អសកម្ម") throw httpError("សាខានេះត្រូវបានដាក់អសកម្ម", 403);
+  return branch;
+}
+
+function employeeBelongsToBranch(employee, branch) {
+  if (employee.branchId && branch.id) return String(employee.branchId) === String(branch.id);
+  return String(employee.branch || "") === String(branch.name || "");
+}
+
+async function validateAttendanceLocation(env, branch, rawLocation) {
+  const settings = await getDocument(env, "settings/gpsQrPublic");
+  if (!settings) throw httpError("GPS/QR មិនទាន់បានកំណត់សុវត្ថិភាព។ សូមទាក់ទង HR", 503);
+  const savedGeofence = settings.branchGeofences?.[branch.id] || {};
+  const radius = Number(
+    branch.gpsRadiusMeters
+      || savedGeofence.radiusMeters
+      || settings.radii?.[branch.id]
+      || 100,
+  );
+
+  if (!settings.requireGps) {
+    return {
+      settings,
+      location: {
+        gpsStatus: "not-required",
+        verifiedBranchId: branch.id,
+        verifiedBranchName: branch.name,
+        allowedRadiusMeters: radius,
+      },
+    };
+  }
+
+  const location = rawLocation && typeof rawLocation === "object" ? rawLocation : {};
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+  const accuracy = Number(location.accuracy);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw httpError("សូមអនុញ្ញាត GPS មុនពេលកត់ត្រាវត្តមាន", 400);
+  }
+  const maxAccuracy = Number(settings.maxGpsAccuracy || 100);
+  if (!Number.isFinite(accuracy) || accuracy < 0 || accuracy > maxAccuracy) {
+    throw httpError(`GPS មិនទាន់ច្បាស់ (${Number.isFinite(accuracy) ? accuracy : "—"}m)`, 400);
+  }
+
+  const branchLocation = {
+    latitude: configuredAttendanceValue(
+      branch.latitude,
+      configuredAttendanceValue(savedGeofence.latitude, settings.locations?.[branch.id]?.latitude ?? ""),
+    ),
+    longitude: configuredAttendanceValue(
+      branch.longitude,
+      configuredAttendanceValue(savedGeofence.longitude, settings.locations?.[branch.id]?.longitude ?? ""),
+    ),
+  };
+  if (!Number.isFinite(Number(branchLocation.latitude)) || !Number.isFinite(Number(branchLocation.longitude))) {
+    throw httpError("សាខានេះមិនទាន់កំណត់ Latitude/Longitude", 503);
+  }
+
+  const meters = distanceInMeters({ latitude, longitude }, branchLocation);
+  if (meters === null || meters > radius) {
+    throw httpError(`អ្នកស្ថិតនៅក្រៅតំបន់សាខា (${meters ?? "—"}m / ${radius}m)`, 403);
+  }
+
+  return {
+    settings,
+    location: {
+      gpsStatus: "recorded",
+      latitude,
+      longitude,
+      accuracy: Math.round(accuracy),
+      capturedAt: new Date().toISOString(),
+      clientCapturedAt: String(location.capturedAt || ""),
+      distanceMeters: meters,
+      allowedRadiusMeters: radius,
+      verifiedBranchId: branch.id,
+      verifiedBranchName: branch.name,
+    },
+  };
+}
+
+async function validateEmployeeQr(env, settings, branch, rawPayload, forceValidation = false) {
+  if (!settings.requireQr && !forceValidation) return null;
+  const payloadText = String(rawPayload || "").trim();
+  if (!payloadText || payloadText.length > 2048) throw httpError("សូមស្កេន QR code របស់សាខា", 400);
+  let payload;
+  try { payload = JSON.parse(payloadText); } catch { throw httpError("QR code មិនត្រឹមត្រូវ", 400); }
+  if (payload.type !== "BORRIBO_ATTENDANCE" || payload.version !== 1
+    || String(payload.branchId || "") !== String(branch.id)
+    || !payload.token || !payload.expiresAt) {
+    throw httpError("QR code មិនត្រឹមត្រូវ ឬមិនមែនរបស់សាខានេះទេ", 400);
+  }
+  const token = await getDocument(env, `qrTokens/${branch.id}`);
+  if (!token) throw httpError("QR សាខានេះមិនទាន់ត្រូវបានដំណើរការ", 503);
+  if (String(token.expiresAt || "") !== String(payload.expiresAt)
+    || new Date(token.expiresAt).getTime() <= Date.now()) {
+    throw httpError("QR code បានផុតកំណត់។ សូមស្កេន QR ថ្មី", 400);
+  }
+  if (await hashKey(String(payload.token)) !== String(token.tokenHash || "")) {
+    throw httpError("QR code មិនត្រឹមត្រូវ ឬត្រូវបានប្ដូររួចហើយ", 400);
+  }
+  return { branchId: branch.id, expiresAt: token.expiresAt, version: token.version || 1 };
+}
+
+async function loadWorkingHours(env) {
+  return await getDocument(env, "settings/workingHours") || ATTENDANCE_DEFAULT_WORKING_HOURS;
+}
+
+const KIOSK_PIN_WINDOW_MS = 5 * 60 * 1000;
+const KIOSK_PIN_LOCK_MS = 15 * 60 * 1000;
+const KIOSK_PIN_MAX_FAILURES = 5;
+
+function kioskAttemptPath(user) {
+  return `kioskPinAttempts/${user.uid}`;
+}
+
+async function assertKioskPinAllowed(user, env) {
+  const attempt = await getDocument(env, kioskAttemptPath(user));
+  const lockedUntil = attempt?.lockedUntil ? new Date(attempt.lockedUntil).getTime() : 0;
+  if (lockedUntil > Date.now()) {
+    const minutes = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 60_000));
+    throw httpError(`បញ្ចូល PIN ខុសច្រើនដង។ សូមសាកម្ដងទៀតក្រោយ ${minutes} នាទី`, 429);
+  }
+}
+
+async function registerKioskPinFailure(user, env) {
+  const path = kioskAttemptPath(user);
+  for (let attemptNo = 0; attemptNo < 4; attemptNo += 1) {
+    const snapshot = await getDocumentWithMetadata(env, path);
+    const state = withoutDocumentMetadata(snapshot);
+    const now = Date.now();
+    const previousWindow = state.data?.windowStartedAt ? new Date(state.data.windowStartedAt).getTime() : 0;
+    const insideWindow = Number.isFinite(previousWindow) && now - previousWindow < KIOSK_PIN_WINDOW_MS;
+    const failedAttempts = insideWindow ? Number(state.data?.failedAttempts || 0) + 1 : 1;
+    const data = {
+      failedAttempts,
+      windowStartedAt: insideWindow ? state.data.windowStartedAt : new Date(now).toISOString(),
+      lastFailedAt: new Date(now).toISOString(),
+      lockedUntil: failedAttempts >= KIOSK_PIN_MAX_FAILURES
+        ? new Date(now + KIOSK_PIN_LOCK_MS).toISOString()
+        : "",
+    };
+    try {
+      await commitWrites(env, [{
+        path,
+        data,
+        ...(state.updateTime ? { updateTime: state.updateTime } : { exists: false }),
+      }]);
+      return data;
+    } catch (error) {
+      if (attemptNo === 3) throw httpError("មិនអាចផ្ទៀងផ្ទាត់ PIN នៅពេលនេះបានទេ", 503);
+    }
+  }
+  throw httpError("មិនអាចផ្ទៀងផ្ទាត់ PIN នៅពេលនេះបានទេ", 503);
+}
+
+async function clearKioskPinFailures(user, env) {
+  await deleteDocument(env, kioskAttemptPath(user)).catch(() => {});
+}
+
+async function employeeForAuthenticatedUser(user, env) {
+  if (user.role !== "employee") throw httpError("Employee account is required", 403);
+  if (!user.employeeId) throw httpError("គណនីនេះមិនទាន់ភ្ជាប់លេខសម្គាល់បុគ្គលិក", 403);
+  const employee = await getDocument(env, `employees/${user.employeeId}`);
+  if (!employee) throw httpError("រកមិនឃើញទិន្នន័យបុគ្គលិក", 404);
+  if (employee.uid && String(employee.uid) !== String(user.uid)) throw httpError("Employee account link មិនត្រឹមត្រូវ", 403);
+  if (normalizeEmployeeStatus(employee.status) === "អសកម្ម") throw httpError("គណនីបុគ្គលិកនេះអសកម្ម", 403);
+  return employee;
+}
+
+async function kioskEmployeeForPin(user, env, rawPin) {
+  if (user.role !== "kiosk") throw httpError("Kiosk account is required", 403);
+  await assertKioskPinAllowed(user, env);
+  const pin = String(rawPin || "");
+  if (!/^\d{4}$/.test(pin)) {
+    await registerKioskPinFailure(user, env);
+    throw httpError("លេខកូដមិនត្រឹមត្រូវ", 400);
+  }
+  const branch = await resolveAttendanceBranch(env, user.branchId, user.branch);
+  const employees = await listDocuments(env, "employees");
+  const matches = employees.filter((employee) => (
+    String(employee.pin ?? "") === pin
+    && normalizeEmployeeStatus(employee.status, "សកម្ម") !== "អសកម្ម"
+    && employeeBelongsToBranch(employee, branch)
+  ));
+  if (matches.length !== 1) {
+    if (matches.length > 1) console.error("Duplicate kiosk PIN detected", { kioskUid: user.uid, branchId: branch.id });
+    const failure = await registerKioskPinFailure(user, env);
+    if (failure.lockedUntil) throw httpError("បញ្ចូល PIN ខុសច្រើនដង។ Kiosk ត្រូវបានចាក់សោ 15 នាទី", 429);
+    throw httpError("លេខកូដមិនត្រឹមត្រូវ ឬបុគ្គលិកមិនស្ថិតក្នុងសាខានេះ", 401);
+  }
+  await clearKioskPinFailures(user, env);
+  return { employee: matches[0], branch };
+}
+
+function publicKioskEmployee(employee) {
+  return {
+    id: employee.id,
+    name: employee.name || employee.id,
+    role: employee.role || employee.jobRole || "បុគ្គលិក",
+    branch: employee.branch || "",
+    branchId: employee.branchId || "",
+  };
+}
+
+async function saveTrustedAttendance({ user, env, employee, branch, action, source, location, qr }) {
+  const now = new Date();
+  const nowISO = now.toISOString();
+  const dateISO = attendanceDateISO(now);
+  const recordId = `${employee.id}_${dateISO}`;
+  const [todayDocument, historyDocument, workingHours] = await Promise.all([
+    getDocumentWithMetadata(env, `attendanceToday/${recordId}`),
+    getDocumentWithMetadata(env, `attendanceHistory/${recordId}`),
+    loadWorkingHours(env),
+  ]);
+  const todayState = withoutDocumentMetadata(todayDocument);
+  const historyState = withoutDocumentMetadata(historyDocument);
+  const existing = todayState.data;
+
+  if (action === "in" && existing?.checkIn && existing.checkIn !== "—") {
+    throw httpError(`បាន Check-in រួចហើយនៅម៉ោង ${existing.checkIn}`, 409);
+  }
+  if (action === "out" && (!existing?.checkIn || existing.checkIn === "—")) {
+    throw httpError("មិនទាន់មាន Check-in សម្រាប់ថ្ងៃនេះ", 409);
+  }
+  if (action === "out" && existing?.checkOut && existing.checkOut !== "—") {
+    throw httpError(`បាន Check-out រួចហើយនៅម៉ោង ${existing.checkOut}`, 409);
+  }
+
+  const identity = {
+    id: employee.id,
+    uid: employee.uid || (source === "mobile" ? user.uid : ""),
+    recordId,
+    dateISO,
+    date: attendanceDateLabel(dateISO),
+    name: employee.name || employee.id,
+    role: employee.role || employee.jobRole || "បុគ្គលិក",
+    branch: branch.name || employee.branch || "",
+    branchId: branch.id || employee.branchId || "",
+    source,
+    updatedAt: nowISO,
+  };
+
+  let record;
+  if (action === "in") {
+    const metrics = attendanceMetrics({ workingHours, checkInAt: nowISO });
+    record = {
+      ...identity,
+      checkIn: attendanceTimeLabel(now),
+      checkInAt: nowISO,
+      checkInClientAt: nowISO,
+      checkInLocation: location,
+      checkOut: "—",
+      gpsStatus: location.gpsStatus,
+      gpsVerified: location.gpsStatus === "recorded",
+      qrVerified: Boolean(qr),
+      qrBranchId: qr?.branchId || "",
+      qrExpiresAt: qr?.expiresAt || "",
+      ...metrics,
+    };
+  } else {
+    const checkInAt = existing.checkInClientAt || existing.checkInAt;
+    const metrics = attendanceMetrics({ workingHours, checkInAt, checkOutAt: nowISO });
+    record = {
+      ...existing,
+      ...identity,
+      checkOut: attendanceTimeLabel(now),
+      checkOutAt: nowISO,
+      checkOutClientAt: nowISO,
+      checkOutLocation: location,
+      gpsStatus: location.gpsStatus,
+      gpsVerified: location.gpsStatus === "recorded",
+      qrVerified: Boolean(qr),
+      qrBranchId: qr?.branchId || "",
+      qrExpiresAt: qr?.expiresAt || "",
+      ...metrics,
+    };
+  }
+
+  const historyRecord = { ...record, docId: recordId };
+  await commitWrites(env, [
+    {
+      path: `attendanceToday/${recordId}`,
+      data: record,
+      ...(todayState.updateTime ? { updateTime: todayState.updateTime } : { exists: false }),
+    },
+    {
+      path: `attendanceHistory/${recordId}`,
+      data: historyRecord,
+      ...(historyState.updateTime ? { updateTime: historyState.updateTime } : { exists: false }),
+    },
+  ]);
+
+  const telegramType = action === "in" ? "check_in" : "check_out";
+  const telegram = await handleEvent(user, env, { type: telegramType, recordId })
+    .catch((error) => ({ ok: false, error: error.message }));
+  return { record, telegram };
+}
+
+async function handleEmployeeQrValidation(user, env, body) {
+  const employee = await employeeForAuthenticatedUser(user, env);
+  const branch = await resolveAttendanceBranch(env, employee.branchId || user.branchId, employee.branch || user.branch);
+  if (!employeeBelongsToBranch(employee, branch)) throw httpError("បុគ្គលិកមិនស្ថិតក្នុងសាខាដែលបានកំណត់", 403);
+  const settings = await getDocument(env, "settings/gpsQrPublic");
+  if (!settings) throw httpError("GPS/QR មិនទាន់បានកំណត់សុវត្ថិភាព។ សូមទាក់ទង HR", 503);
+  const qr = await validateEmployeeQr(env, settings, branch, body.qrPayload, true);
+  return {
+    ok: true,
+    valid: true,
+    branch: { id: branch.id, name: branch.name },
+    expiresAt: qr.expiresAt,
+    message: `QR ត្រឹមត្រូវសម្រាប់សាខា ${branch.name || branch.id}`,
+  };
+}
+
+async function handleEmployeeAttendance(user, env, body) {
+  const action = normalizeAttendanceAction(body.action);
+  const employee = await employeeForAuthenticatedUser(user, env);
+  const branch = await resolveAttendanceBranch(env, employee.branchId || user.branchId, employee.branch || user.branch);
+  if (!employeeBelongsToBranch(employee, branch)) throw httpError("បុគ្គលិកមិនស្ថិតក្នុងសាខាដែលបានកំណត់", 403);
+  const validation = await validateAttendanceLocation(env, branch, body.location);
+  const qr = await validateEmployeeQr(env, validation.settings, branch, body.qrPayload);
+  const result = await saveTrustedAttendance({
+    user,
+    env,
+    employee,
+    branch,
+    action,
+    source: "mobile",
+    location: validation.location,
+    qr,
+  });
+  return {
+    ok: true,
+    ...result,
+    requireQr: Boolean(validation.settings.requireQr),
+    message: action === "in"
+      ? `Check-in ជោគជ័យ នៅម៉ោង ${result.record.checkIn}${result.record.isLate ? ` · មកយឺត ${result.record.lateMinutes} នាទី` : ""}`
+      : `Check-out ជោគជ័យ នៅម៉ោង ${result.record.checkOut}${result.record.isEarlyLeave ? ` · ចេញមុន ${result.record.earlyLeaveMinutes} នាទី` : ""}`,
+  };
+}
+
+async function handleKioskLookup(user, env, body) {
+  const { employee, branch } = await kioskEmployeeForPin(user, env, body.pin);
+  const dateISO = attendanceDateISO();
+  const attendance = await getDocument(env, `attendanceToday/${employee.id}_${dateISO}`);
+  const { data } = withoutDocumentMetadata(attendance);
+  return {
+    ok: true,
+    employee: publicKioskEmployee(employee),
+    attendance: data,
+    branch: { id: branch.id, name: branch.name },
+  };
+}
+
+async function handleKioskAttendance(user, env, body) {
+  const action = normalizeAttendanceAction(body.action);
+  const { employee, branch } = await kioskEmployeeForPin(user, env, body.pin);
+  const validation = await validateAttendanceLocation(env, branch, body.location);
+  const result = await saveTrustedAttendance({
+    user,
+    env,
+    employee,
+    branch,
+    action,
+    source: "kiosk",
+    location: validation.location,
+    qr: null,
+  });
+  return {
+    ok: true,
+    ...result,
+    employee: publicKioskEmployee(employee),
+    message: action === "in"
+      ? `Check-in ជោគជ័យ នៅម៉ោង ${result.record.checkIn}`
+      : `Check-out ជោគជ័យ នៅម៉ោង ${result.record.checkOut}`,
+  };
+}
+
+
 async function handleTest(user, env) {
   if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
   const settings = await loadTelegramSettings(env);
@@ -1374,7 +1935,11 @@ async function handleRequest(request, env) {
   try {
     const user = await verifyFirebaseUser(request, env);
     let result;
-    if (url.pathname === "/api/telegram/test" && request.method === "POST") result = await handleTest(user, env);
+    if (url.pathname === "/api/attendance/employee/validate-qr" && request.method === "POST") result = await handleEmployeeQrValidation(user, env, await request.json());
+    else if (url.pathname === "/api/attendance/employee" && request.method === "POST") result = await handleEmployeeAttendance(user, env, await request.json());
+    else if (url.pathname === "/api/attendance/kiosk/lookup" && request.method === "POST") result = await handleKioskLookup(user, env, await request.json());
+    else if (url.pathname === "/api/attendance/kiosk" && request.method === "POST") result = await handleKioskAttendance(user, env, await request.json());
+    else if (url.pathname === "/api/telegram/test" && request.method === "POST") result = await handleTest(user, env);
     else if (url.pathname === "/api/telegram/event" && request.method === "POST") result = await handleEvent(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/create" && request.method === "POST") result = await handleCreateEmployee(user, env, await request.json());
     else if (url.pathname === "/api/admin/employees/provision-account" && request.method === "POST") result = await handleProvisionEmployeeAccount(user, env, await request.json());
@@ -1406,4 +1971,4 @@ export default {
   },
 };
 
-export { decodeFields, encodeFields, eventMessage, normalizeEmployeeStatus };
+export { decodeFields, encodeFields, eventMessage, normalizeEmployeeStatus, attendanceMetrics, distanceInMeters, normalizeAttendanceAction };

@@ -15,7 +15,8 @@
     "migrate-attendance": "node scripts/migrate-attendance.mjs",
     "migrate-organization-ids": "node scripts/migrate-organization-ids.mjs",
     "deploy": "npm run build && wrangler pages deploy dist",
-    "deploy:telegram": "wrangler deploy --config telegram-worker/wrangler.toml"
+    "deploy:telegram": "wrangler deploy --config telegram-worker/wrangler.toml",
+    "rotate-kiosk-pins": "node scripts/rotate-kiosk-pins.mjs"
   },
   "dependencies": {
     "@zxing/browser": "^0.1.5",

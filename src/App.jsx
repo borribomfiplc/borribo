@@ -75,7 +75,6 @@ function App() {
   const accountActive = profile?.active !== false;
   const managerAccess = Boolean(accountActive && profile && isManager(profile.role));
   const adminAccess = accountActive && profile?.role === ROLES.ADMIN;
-  const kioskAccess = accountActive && profile?.role === ROLES.KIOSK;
 
   const [openSection, setOpenSection] = useState("attendance");
   const [active, setActive] = useState("dashboard");
@@ -112,9 +111,9 @@ function App() {
   // [data, setData] shape as useState, so pages that call setX((list) => ...)
   // didn't need to change — see src/firebase/useFirestoreCollection.js.
   const [leaveRequests, setLeaveRequests] = useFirestoreCollection("leaveRequests", initialLeaveRequests, "id", managerAccess);
-  const [employees, setEmployees] = useFirestoreCollection("employees", initialEmployees, "id", managerAccess || kioskAccess);
-  const [todaysAttendance, setTodaysAttendance] = useFirestoreCollection("attendanceToday", attendanceToday, "recordId", managerAccess || kioskAccess);
-  const [attendanceHistory, setAttendanceHistory] = useFirestoreCollection("attendanceHistory", historyData, "docId", managerAccess || kioskAccess);
+  const [employees, setEmployees] = useFirestoreCollection("employees", initialEmployees, "id", managerAccess);
+  const [todaysAttendance, setTodaysAttendance] = useFirestoreCollection("attendanceToday", attendanceToday, "recordId", managerAccess);
+  const [attendanceHistory, setAttendanceHistory] = useFirestoreCollection("attendanceHistory", historyData, "docId", managerAccess);
   const [corrections, setCorrections] = useFirestoreCollection("corrections", initialCorrections, "id", managerAccess);
   const [branches, setBranches] = useFirestoreCollection("branches", initialBranches, "id", loggedIn);
   const [departments, setDepartments] = useFirestoreCollection("departments", initialDepartments, "id", managerAccess);
@@ -266,11 +265,11 @@ function App() {
   }
 
   if (profile.role === ROLES.KIOSK) {
-    return <KioskCheckInPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} branches={branches} profile={profile} onExit={handleLogout} />;
+    return <KioskCheckInPage branches={branches} profile={profile} onExit={handleLogout} />;
   }
 
   if (profile.role === ROLES.EMPLOYEE) {
-    return <Suspense fallback={<PageLoading />}><EmployeePortalPage authUser={authUser} profile={profile} branches={branches} holidays={holidays} onLogout={handleLogout} /></Suspense>;
+    return <Suspense fallback={<PageLoading />}><EmployeePortalPage authUser={authUser} profile={profile} holidays={holidays} onLogout={handleLogout} /></Suspense>;
   }
 
   const visibleNavSections = filterNavigation(navSections, profile.role);

@@ -27,60 +27,8 @@ service cloud.firestore {
       return hasRole('admin');
     }
 
-    function kiosk() {
-      return hasRole('kiosk');
-    }
-
-    function ownEmployeeId() {
-      return request.auth.token.get(
-        'employeeId',
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('employeeId', request.auth.uid)
-      );
-    }
-
-    function ownBranch() {
-      return request.auth.token.get(
-        'branch',
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('branch', '')
-      );
-    }
-
-    function validAttendanceStatus(value) {
-      return value in ['មានវត្តមាន', 'យឺត'];
-    }
-
-    function validSelfAttendance(data, recordId) {
-      return data.uid == request.auth.uid
-        && data.id == ownEmployeeId()
-        && data.recordId == recordId
-        && recordId == data.id + '_' + data.dateISO
-        && validAttendanceStatus(data.status)
-        && data.keys().hasAll(['id', 'recordId', 'uid', 'dateISO', 'name', 'branch', 'checkIn', 'checkInClientAt', 'status']);
-    }
-
-    function validSelfHistory(data, recordId) {
-      return data.uid == request.auth.uid
-        && data.id == ownEmployeeId()
-        && data.docId == recordId
-        && recordId == data.id + '_' + data.dateISO
-        && validAttendanceStatus(data.status);
-    }
-
-    function validKioskAttendance(data, recordId) {
-      return kiosk()
-        && ownBranch() != ''
-        && data.branch == ownBranch()
-        && data.source == 'kiosk'
-        && data.recordId == recordId
-        && recordId == data.id + '_' + data.dateISO
-        && validAttendanceStatus(data.status)
-        && data.keys().hasAll(['id', 'recordId', 'dateISO', 'name', 'branch', 'checkIn', 'checkInClientAt', 'status', 'source']);
-    }
-
-    function validKioskHistory(data, recordId) {
-      return validKioskAttendance(data, recordId)
-        && data.docId == recordId;
-    }
+    // Attendance identity, date/time, GPS, QR and PIN validation are enforced
+    // by the trusted Cloudflare Worker. Browser rules only permit reads.
 
     match /profiles/{userId} {
       allow get: if signedIn() && request.auth.uid == userId;
@@ -107,7 +55,10 @@ service cloud.firestore {
     }
 
     match /employees/{employeeId} {
-      allow get, list: if manager() || kiosk() || (activeAccount() && resource.data.uid == request.auth.uid);
+      // A kiosk must never download the employee directory or plaintext PINs.
+      // It submits a PIN to the trusted Worker, which returns only the matched
+      // employee's minimal display data after server-side verification.
+      allow get, list: if manager() || (activeAccount() && resource.data.uid == request.auth.uid);
       allow create, update, delete: if manager();
     }
 
@@ -173,68 +124,23 @@ service cloud.firestore {
       );
     }
 
-    // A kiosk is a dedicated branch-bound device account. It cannot access
-    // leave, roles, profiles of other users, or employee administration. It
-    // reads only the public GPS/QR and working-hours settings below.
+    // Attendance writes from employee and kiosk browsers are forbidden.
+    // The trusted Worker verifies identity, branch, PIN, GPS and QR, derives
+    // Cambodia server time, and atomically writes today + history documents.
+    // Manager writes remain temporarily enabled for the existing manual-entry
+    // workflow; they should be migrated to the Worker in the next hardening pass.
     match /attendanceToday/{recordId} {
-      // Employees use a stable per-day record ID and can only read/write the
-      // record that contains their own UID. A query/list is deliberately not
-      // exposed to employees, so they cannot enumerate other staff records.
-      allow get: if manager() || kiosk() || (activeAccount() && resource.data.uid == request.auth.uid);
-      allow list: if manager() || kiosk();
-      allow create: if manager() || validKioskAttendance(request.resource.data, recordId) || (
-        hasRole('employee')
-        && validSelfAttendance(request.resource.data, recordId)
-      );
-      allow update: if manager() || (
-        validKioskAttendance(request.resource.data, recordId)
-        && resource.data.branch == ownBranch()
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.recordId == resource.data.recordId
-        && request.resource.data.dateISO == resource.data.dateISO
-        && request.resource.data.checkIn == resource.data.checkIn
-        && request.resource.data.checkInClientAt == resource.data.checkInClientAt
-      ) || (
-        hasRole('employee')
-        && validSelfAttendance(request.resource.data, recordId)
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.recordId == resource.data.recordId
-        && request.resource.data.dateISO == resource.data.dateISO
-        && request.resource.data.name == resource.data.name
-        && request.resource.data.branch == resource.data.branch
-        && request.resource.data.checkIn == resource.data.checkIn
-        && request.resource.data.checkInClientAt == resource.data.checkInClientAt
-      );
-      allow delete: if manager();
+      allow get: if manager()
+        || (activeAccount() && resource.data.uid == request.auth.uid);
+      allow list: if manager();
+      allow create, update, delete: if manager();
     }
 
     match /attendanceHistory/{recordId} {
-      allow get, list: if manager() || kiosk();
-      allow create: if manager() || validKioskHistory(request.resource.data, recordId);
-      allow update: if manager() || (
-        validKioskHistory(request.resource.data, recordId)
-        && resource.data.branch == ownBranch()
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.docId == resource.data.docId
-        && request.resource.data.dateISO == resource.data.dateISO
-        && request.resource.data.checkIn == resource.data.checkIn
-        && request.resource.data.checkInClientAt == resource.data.checkInClientAt
-      );
-      allow delete: if manager();
-      allow get: if activeAccount() && resource.data.uid == request.auth.uid;
-      allow create: if hasRole('employee')
-        && validSelfHistory(request.resource.data, recordId);
-      allow update: if hasRole('employee')
-        && resource.data.uid == request.auth.uid
-        && validSelfHistory(request.resource.data, recordId)
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.docId == resource.data.docId
-        && request.resource.data.dateISO == resource.data.dateISO
-        && request.resource.data.name == resource.data.name
-        && request.resource.data.branch == resource.data.branch
-        && request.resource.data.checkIn == resource.data.checkIn
-        && request.resource.data.checkInClientAt == resource.data.checkInClientAt;
+      allow get: if manager()
+        || (activeAccount() && resource.data.uid == request.auth.uid);
+      allow list: if manager();
+      allow create, update, delete: if manager();
     }
 
     match /corrections/{recordId} {
@@ -273,15 +179,16 @@ service cloud.firestore {
     }
 
     match /settings/gpsQrPublic {
-      allow get: if activeAccount() || kiosk();
+      allow get: if activeAccount();
       allow list: if false;
       allow create, update: if manager();
       allow delete: if administrator();
     }
 
     match /qrTokens/{branchId} {
-      allow get: if activeAccount() || kiosk();
-      allow list: if manager();
+      // QR token hashes are validated by the trusted Worker. Browsers no
+      // longer need access to this collection.
+      allow get, list: if manager();
       allow create, update: if manager()
         && request.resource.data.branchId == branchId
         && request.resource.data.tokenHash is string
@@ -291,9 +198,11 @@ service cloud.firestore {
     }
 
     match /settings/{settingId} {
-      // Employees and a kiosk need the shift schedule only to calculate their
-      // own attendance. Other settings remain manager-only.
-      allow get: if manager() || kiosk() || (activeAccount() && settingId == 'workingHours');
+      // This wildcard deliberately grants non-managers access only to the
+      // working-hours document. It must never make settings/gpsQr readable.
+      allow get: if manager()
+        || (activeAccount() && settingId == 'workingHours');
+      allow list: if false;
       allow create, update: if manager();
       allow delete: if administrator();
     }

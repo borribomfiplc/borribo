@@ -25,24 +25,24 @@ export function OrgHeader({ title, sub, onAdd, addLabel }) {
   );
 }
 
-export function OrgModal({ title, onClose, onSubmit, submitLabel, error, children }) {
+export function OrgModal({ title, onClose, onSubmit, submitLabel, error, saving = false, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
       <div className="w-full max-w-md max-h-[92dvh] overflow-y-auto rounded-t-2xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:max-h-[90vh] sm:rounded-2xl sm:p-6">
         <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-5 flex items-center justify-between border-b border-[#EBEDF3] bg-white px-4 py-4 sm:static sm:mx-0 sm:mt-0 sm:border-0 sm:p-0">
           <h3 className="font-bold text-[#1E2333] text-lg">{title}</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]">
+          <button onClick={onClose} disabled={saving} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]">
             <X size={18} />
           </button>
         </div>
         {error && <div className="text-xs text-[#D9614F] bg-[#FBEBE8] rounded-lg px-3 py-2 mb-3.5">{error}</div>}
         <div className="flex flex-col gap-3.5">{children}</div>
         <div className="sticky bottom-0 -mx-4 -mb-4 mt-6 grid grid-cols-2 gap-3 border-t border-[#EBEDF3] bg-white px-4 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:static sm:mx-0 sm:mb-0 sm:flex sm:border-0 sm:p-0">
-          <button onClick={onClose} className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#5B5F73]">
+          <button onClick={onClose} disabled={saving} className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#5B5F73]">
             បោះបង់
           </button>
-          <button onClick={onSubmit} className="flex-1 text-white rounded-xl py-2.5 text-sm font-semibold" style={{ background: COLORS.primary }}>
-            {submitLabel}
+          <button onClick={onSubmit} disabled={saving} className="flex-1 text-white disabled:opacity-60 rounded-xl py-2.5 text-sm font-semibold" style={{ background: COLORS.primary }}>
+            {saving ? "កំពុងរក្សាទុក..." : submitLabel}
           </button>
         </div>
       </div>

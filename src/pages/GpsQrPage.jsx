@@ -1,14 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ScanLine, MapPin, ShieldCheck } from "lucide-react";
-import { doc, serverTimestamp, writeBatch } from "firebase/firestore";
 import { QRCodeSVG } from "qrcode.react";
 import { FieldLabel, SelectField } from "../components/shared/FormFields";
 import { ToggleRow, SettingsSaveBar } from "../components/shared/SettingsWidgets";
 import { loadSettingsDoc } from "../firebase/settingsDoc";
-import { db } from "../firebase/config";
-import {
-  createQrPayload, newQrCredential, publicQrCredential, qrCredentialExpired,
-} from "../utils/qrSecurity";
+import { createQrPayload, newQrCredential, qrCredentialExpired } from "../utils/qrSecurity";
+import { saveGpsQrConfiguration } from "../services/organization";
 
 const defaultRadii = (branches) => Object.fromEntries(branches.map((branch) => [
   branch.id, String(branch.gpsRadiusMeters || 100),
@@ -16,7 +13,6 @@ const defaultRadii = (branches) => Object.fromEntries(branches.map((branch) => [
 const defaultLocations = (branches) => Object.fromEntries(branches.map((branch) => [branch.id, {
   latitude: branch.latitude ?? "", longitude: branch.longitude ?? "",
 }]));
-const coordinateValue = (value) => String(value ?? "").trim() === "" ? "" : Number(value);
 const configuredValue = (primary, fallback = "") => String(primary ?? "").trim() === "" ? fallback : primary;
 
 export default function GpsQrPage({ branches = [] }) {
@@ -29,6 +25,7 @@ export default function GpsQrPage({ branches = [] }) {
   const [saved, setSaved] = useState(false);
   const [regenerated, setRegenerated] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [qrTokens, setQrTokens] = useState({});
@@ -42,97 +39,93 @@ export default function GpsQrPage({ branches = [] }) {
     branch.id, branch.status, branch.latitude, branch.longitude, branch.gpsRadiusMeters,
   ].join(":")).join("|");
 
-  const persistConfiguration = useCallback(async ({ tokens, interval = qrInterval }) => {
-    const publicCredentials = await Promise.all(
-      activeBranches.map(async (branch) => [branch.id, await publicQrCredential(tokens[branch.id], interval)]),
-    );
-    const branchGeofences = Object.fromEntries(activeBranches.map((branch) => [branch.id, {
-      branchId: branch.id,
-      name: branch.name,
-      latitude: coordinateValue(locations[branch.id]?.latitude),
-      longitude: coordinateValue(locations[branch.id]?.longitude),
-      radiusMeters: Number(radii[branch.id]),
-      active: true,
-    }]));
-    const batch = writeBatch(db);
-    batch.set(doc(db, "settings", "gpsQr"), {
-      radii, requireQr, requireGps, maxGpsAccuracy, qrInterval: interval, qrTokens: tokens, locations,
-      branchGeofences, updatedAt: serverTimestamp(),
-    }, { merge: true });
-    batch.set(doc(db, "settings", "gpsQrPublic"), {
-      radii, requireQr, requireGps, maxGpsAccuracy, qrInterval: interval, locations,
-      branchGeofences, updatedAt: serverTimestamp(),
-    }, { merge: true });
-    activeBranches.forEach((branch) => {
-      batch.set(doc(db, "branches", branch.id), {
-        latitude: coordinateValue(locations[branch.id]?.latitude),
-        longitude: coordinateValue(locations[branch.id]?.longitude),
-        gpsRadiusMeters: Number(radii[branch.id]),
-        gpsUpdatedAt: serverTimestamp(),
-      }, { merge: true });
+  const persistConfiguration = useCallback(async ({
+    tokens,
+    interval = qrInterval,
+    nextRadii = radii,
+    nextLocations = locations,
+    nextRequireQr = requireQr,
+    nextRequireGps = requireGps,
+    nextMaxGpsAccuracy = maxGpsAccuracy,
+  }) => {
+    await saveGpsQrConfiguration({
+      radii: nextRadii,
+      requireQr: nextRequireQr,
+      requireGps: nextRequireGps,
+      maxGpsAccuracy: nextMaxGpsAccuracy,
+      qrInterval: interval,
+      qrTokens: tokens,
+      locations: nextLocations,
     });
-    publicCredentials.forEach(([branchId, credential]) => {
-      batch.set(doc(db, "qrTokens", branchId), credential);
-    });
-    await batch.commit();
-  }, [activeBranches, locations, maxGpsAccuracy, qrInterval, radii, requireGps, requireQr]);
+  }, [locations, maxGpsAccuracy, qrInterval, radii, requireGps, requireQr]);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
-      setLoading(true); setError("");
+      setLoading(true);
+      setError("");
       const defaults = {
         radii: defaultRadii(branches), requireQr: true, requireGps: true,
         maxGpsAccuracy: "100", qrInterval: "ប្រចាំថ្ងៃ", qrTokens: {},
         locations: defaultLocations(branches),
       };
-      const data = await loadSettingsDoc("gpsQr", defaults);
-      if (!active) return;
-      const interval = data.qrInterval || defaults.qrInterval;
-      const tokens = {};
-      let needsSync = false;
-      activeBranches.forEach((branch) => {
-        const stored = data.qrTokens?.[branch.id];
-        if (stored && !qrCredentialExpired(stored)) tokens[branch.id] = stored;
-        else {
-          tokens[branch.id] = newQrCredential(branch.id, interval);
-          needsSync = true;
+      try {
+        const data = await loadSettingsDoc("gpsQr", defaults, { createIfMissing: false });
+        if (!active) return;
+        const interval = data.qrInterval || defaults.qrInterval;
+        const tokens = {};
+        let needsSync = false;
+        activeBranches.forEach((branch) => {
+          const stored = data.qrTokens?.[branch.id];
+          if (stored && !qrCredentialExpired(stored)) tokens[branch.id] = stored;
+          else {
+            tokens[branch.id] = newQrCredential(branch.id, interval);
+            needsSync = true;
+          }
+        });
+        const nextRadii = Object.fromEntries(branches.map((branch) => [
+          branch.id,
+          String(branch.gpsRadiusMeters || data.radii?.[branch.id] || defaults.radii[branch.id] || 100),
+        ]));
+        const nextLocations = Object.fromEntries(branches.map((branch) => [branch.id, {
+          latitude: configuredValue(branch.latitude, data.locations?.[branch.id]?.latitude ?? ""),
+          longitude: configuredValue(branch.longitude, data.locations?.[branch.id]?.longitude ?? ""),
+        }]));
+        setRadii(nextRadii); setRequireQr(Boolean(data.requireQr)); setRequireGps(Boolean(data.requireGps));
+        setMaxGpsAccuracy(String(data.maxGpsAccuracy || defaults.maxGpsAccuracy));
+        setQrInterval(interval); setLoadedInterval(interval); setQrTokens(tokens); setLocations(nextLocations);
+        setSettingsLoaded(true);
+        setQrBranchId((current) => activeBranches.some((branch) => branch.id === current) ? current : activeBranches[0]?.id || "");
+        if (needsSync) {
+          try {
+            await persistConfiguration({
+              tokens,
+              interval,
+              nextRadii,
+              nextLocations,
+              nextRequireQr: Boolean(data.requireQr),
+              nextRequireGps: Boolean(data.requireGps),
+              nextMaxGpsAccuracy: String(data.maxGpsAccuracy || defaults.maxGpsAccuracy),
+            });
+          } catch {
+            if (active) setError("មិនអាចធ្វើសមកាលកម្ម QR បានទេ។ សូមចុចរក្សាទុកម្ដងទៀត");
+          }
         }
-      });
-      const nextRadii = Object.fromEntries(branches.map((branch) => [
-        branch.id,
-        String(branch.gpsRadiusMeters || data.radii?.[branch.id] || defaults.radii[branch.id] || 100),
-      ]));
-      const nextLocations = Object.fromEntries(branches.map((branch) => [branch.id, {
-        latitude: configuredValue(branch.latitude, data.locations?.[branch.id]?.latitude ?? ""),
-        longitude: configuredValue(branch.longitude, data.locations?.[branch.id]?.longitude ?? ""),
-      }]));
-      setRadii(nextRadii); setRequireQr(Boolean(data.requireQr)); setRequireGps(Boolean(data.requireGps));
-      setMaxGpsAccuracy(String(data.maxGpsAccuracy || defaults.maxGpsAccuracy));
-      setQrInterval(interval); setLoadedInterval(interval); setQrTokens(tokens); setLocations(nextLocations);
-      setQrBranchId((current) => activeBranches.some((branch) => branch.id === current) ? current : activeBranches[0]?.id || "");
-      setLoading(false);
-      if (needsSync) {
-        try {
-          const publicCredentials = await Promise.all(activeBranches.map(async (branch) => [branch.id, await publicQrCredential(tokens[branch.id], interval)]));
-          const batch = writeBatch(db);
-          batch.set(doc(db, "settings", "gpsQr"), { qrTokens: tokens, qrInterval: interval }, { merge: true });
-          batch.set(doc(db, "settings", "gpsQrPublic"), {
-            radii: nextRadii, requireQr: Boolean(data.requireQr), requireGps: Boolean(data.requireGps),
-            maxGpsAccuracy: String(data.maxGpsAccuracy || defaults.maxGpsAccuracy), qrInterval: interval, locations: nextLocations,
-          }, { merge: true });
-          publicCredentials.forEach(([branchId, credential]) => batch.set(doc(db, "qrTokens", branchId), credential));
-          await batch.commit();
-        } catch {
-          if (active) setError("មិនអាចធ្វើសមកាលកម្ម QR បានទេ។ សូមចុចរក្សាទុកម្ដងទៀត");
-        }
+      } catch (loadError) {
+        if (active) { setSettingsLoaded(false); setError(loadError?.message || "មិនអាចទាញយកការកំណត់ GPS/QR បានទេ"); }
+      } finally {
+        if (active) setLoading(false);
       }
     };
     load();
     return () => { active = false; };
+  // persistConfiguration receives explicit initial values above; limiting this
+  // effect to branch changes avoids a save/load loop when local form state changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchKey]);
 
   const handleSave = async () => {
+    if (saving || !settingsLoaded) return;
     setSaving(true); setError("");
     try {
       if (!activeBranches.length) throw new Error("មិនមានសាខាសកម្មសម្រាប់កំណត់ GPS/QR ទេ");
@@ -164,7 +157,7 @@ export default function GpsQrPage({ branches = [] }) {
   };
 
   const handleRegenerate = async () => {
-    if (!qrBranchId) return;
+    if (!settingsLoaded || saving || !qrBranchId) return;
     setSaving(true); setError("");
     try {
       const tokens = { ...qrTokens, [qrBranchId]: newQrCredential(qrBranchId, qrInterval) };
@@ -201,8 +194,8 @@ export default function GpsQrPage({ branches = [] }) {
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">GPS និង QR</h1>
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">កំណត់តំបន់ GPS និង QR មានថ្ងៃផុតកំណត់ដាច់ដោយឡែកតាមសាខា</p>
       </div>
-      <SettingsSaveBar onSave={handleSave} saved={saved} />
-      {saving && <p className="mb-3 text-xs text-[#2A3F8F]">កំពុងរក្សាទុក...</p>}
+      <SettingsSaveBar onSave={handleSave} saved={saved} saving={saving} disabled={!settingsLoaded} />
+
       {error && <p className="mb-4 rounded-xl bg-[#FBEBE8] px-3 py-2 text-sm text-[#D9614F]">{error}</p>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -245,7 +238,7 @@ export default function GpsQrPage({ branches = [] }) {
           <p className="mb-3 text-center text-[11px] text-[#8A8FA3]">ផុតកំណត់៖ {currentCredential?.expiresAt ? new Date(currentCredential.expiresAt).toLocaleString("km-KH") : "—"}</p>
           <ToggleRow label="តម្រូវឲ្យស្កេន QR" desc="QR ត្រូវនឹងសាខា និងមិនទាន់ផុតកំណត់" checked={requireQr} onChange={setRequireQr} />
           <div className="mt-1 mb-4"><FieldLabel>ថេរវេលាបង្កើត QR ថ្មី</FieldLabel><SelectField options={["ប្រចាំថ្ងៃ", "ប្រចាំសប្តាហ៍", "ប្រចាំខែ"]} value={qrInterval} onChange={(event) => setQrInterval(event.target.value)} /></div>
-          <button disabled={saving || !qrBranchId} onClick={handleRegenerate} className="mt-auto flex items-center justify-center gap-2 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#2A3F8F] disabled:opacity-50"><ScanLine size={15} />{regenerated ? "បានបង្កើត QR ថ្មីរួចរាល់!" : "បង្កើត QR ថ្មី"}</button>
+          <button disabled={saving || !settingsLoaded || !qrBranchId} onClick={handleRegenerate} className="mt-auto flex items-center justify-center gap-2 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#2A3F8F] disabled:opacity-50"><ScanLine size={15} />{regenerated ? "បានបង្កើត QR ថ្មីរួចរាល់!" : "បង្កើត QR ថ្មី"}</button>
           <p className="mt-3 flex gap-1.5 text-[11px] leading-relaxed text-[#8A8FA3]"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#3FA66B]" /> Employee អាចអានតែ QR hash មិនអាចអាន token ពិតពី Firebase បានទេ។</p>
         </div>
       </div>

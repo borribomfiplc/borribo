@@ -13,19 +13,16 @@ import { normalizeSystemSettings, publicSystemSettings } from "../config/systemS
 /**
  * Loads a settings document, merged over `defaults` so new fields added to
  * a page later always have a value even for documents saved before that
- * field existed. Creates the document with `defaults` if it doesn't exist yet.
+ * field existed. By default it creates the document with `defaults` if it
+ * doesn't exist; security-sensitive screens can pass createIfMissing=false
+ * and let the trusted Worker create it after validation.
  */
-export async function loadSettingsDoc(docId, defaults) {
+export async function loadSettingsDoc(docId, defaults, { createIfMissing = true } = {}) {
   const ref = doc(db, "settings", docId);
-  try {
-    const snap = await getDoc(ref);
-    if (snap.exists()) return { ...defaults, ...snap.data() };
-    await setDoc(ref, defaults);
-    return defaults;
-  } catch (err) {
-    console.error(`[firestore] Failed to load settings/${docId}:`, err);
-    return defaults;
-  }
+  const snap = await getDoc(ref);
+  if (snap.exists()) return { ...defaults, ...snap.data() };
+  if (createIfMissing) await setDoc(ref, defaults);
+  return { ...defaults };
 }
 
 /** Writes a settings document (merges with whatever is already stored). */

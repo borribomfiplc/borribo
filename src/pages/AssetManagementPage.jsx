@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { todayISO } from "../utils/attendance";
 import {
   ArrowRightLeft, Calculator, CheckCircle2, ChevronDown, ChevronUp, History,
   Loader2, Package, Pencil, Plus, RotateCcw, Send, Wrench, X,
@@ -6,18 +7,18 @@ import {
 import StatCard from "../components/shared/StatCard";
 import { COLORS } from "../data/theme";
 import {
-  createAsset, recordAssetMaintenance, reviewAsset, submitAsset, transferAsset, updateAsset,
+  createAsset, recordAssetMaintenance, reviewAsset, submitAsset, transferAsset, updateAsset, updateAssetMaintenance,
 } from "../services/operations";
 
 const statuses = ["កំពុងប្រើ", "នៅស្តុក", "ជួសជុល", "បាត់/លុបចេញ"];
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayISO();
 const emptyAsset = () => ({
   assetCode: "", name: "", category: "កុំព្យូទ័រ", assignedTo: "",
   status: "នៅស្តុក", purchaseDate: "", value: "", usefulLifeYears: "",
   salvageValue: "0", serialNumber: "", note: "", approvalStatus: "រង់ចាំអនុម័ត",
 });
 const emptyTransfer = () => ({ toEmployeeId: "", date: today(), note: "" });
-const emptyMaintenance = () => ({ date: today(), type: "ការជួសជុលទូទៅ", cost: "", vendor: "", status: "កំពុងជួសជុល", note: "" });
+const emptyMaintenance = () => ({ maintenanceId: "", date: today(), type: "ការជួសជុលទូទៅ", cost: "", vendor: "", status: "កំពុងជួសជុល", note: "" });
 
 function assetApproval(asset) { return asset.approvalStatus || "បានអនុម័ត"; }
 function statusClass(status) {
@@ -75,7 +76,20 @@ export default function AssetManagementPage({ employees = [], assets = [] }) {
     setError(""); setModal("edit");
   };
   const openTransfer = (asset) => { setSelected(asset); setTransfer(emptyTransfer()); setError(""); setModal("transfer"); };
-  const openMaintenance = (asset) => { setSelected(asset); setMaintenance(emptyMaintenance()); setError(""); setModal("maintenance"); };
+  const openMaintenance = (asset, record = null) => {
+    setSelected(asset);
+    setMaintenance(record ? {
+      maintenanceId: record.maintenanceId || "",
+      date: record.date || today(),
+      type: record.type || "ការជួសជុលទូទៅ",
+      cost: String(record.cost || ""),
+      vendor: record.vendor || "",
+      status: record.status || "កំពុងជួសជុល",
+      note: record.note || "",
+    } : emptyMaintenance());
+    setError("");
+    setModal("maintenance");
+  };
   const openReview = (asset, type) => { setSelected(asset); setReviewComment(""); setError(""); setModal(type); };
   const close = () => { if (!saving) { setModal(null); setSelected(null); setError(""); } };
   const run = async (task) => {
@@ -104,7 +118,12 @@ export default function AssetManagementPage({ employees = [], assets = [] }) {
   });
   const saveMaintenance = () => run(async () => {
     if (!maintenance.type.trim()) throw new Error("សូមបំពេញប្រភេទការជួសជុល");
-    await recordAssetMaintenance(selected.assetId, { ...maintenance, cost: Number(maintenance.cost || 0) });
+    const payload = { ...maintenance, cost: Number(maintenance.cost || 0) };
+    if (maintenance.maintenanceId) {
+      await updateAssetMaintenance(selected.assetId, maintenance.maintenanceId, payload);
+    } else {
+      await recordAssetMaintenance(selected.assetId, payload);
+    }
   });
   const submit = (asset) => run(() => submitAsset(asset.assetId));
   const review = (decision) => run(async () => {
@@ -150,7 +169,7 @@ export default function AssetManagementPage({ employees = [], assets = [] }) {
               <button onClick={() => setExpanded(isOpen ? "" : asset.assetId)} className="p-2 rounded-lg hover:bg-[#F5F6FA]">{isOpen ? <ChevronUp size={17}/> : <ChevronDown size={17}/>}</button>
             </div>
           </div>
-          {isOpen && <AssetDetails asset={asset}/>}
+          {isOpen && <AssetDetails asset={asset} onEditMaintenance={(record) => openMaintenance(asset, record)}/>}
         </div>;
       })}
       {!assets.length && <div className="bg-white rounded-2xl border border-[#EBEDF3] text-center py-14 text-[#8A8FA3]">មិនទាន់មានទ្រព្យសម្បត្តិទេ។</div>}
@@ -179,7 +198,7 @@ export default function AssetManagementPage({ employees = [], assets = [] }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label className="asset-field sm:col-span-2">ផ្ទេរទៅ<select value={transfer.toEmployeeId} onChange={(event) => setTransfer({...transfer, toEmployeeId:event.target.value})} className="asset-control"><option value="">ប្រគល់ចូលស្តុក</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.branch || ""}</option>)}</select></label><Input label="ថ្ងៃផ្ទេរ" type="date" value={transfer.date} change={(value) => setTransfer({...transfer, date:value})}/><label className="asset-field sm:col-span-2">កំណត់ចំណាំ<textarea rows="3" value={transfer.note} onChange={(event) => setTransfer({...transfer, note:event.target.value})} className="asset-control resize-none"/></label></div>
     </Modal>}
 
-    {modal === "maintenance" && <Modal title="កត់ត្រាការជួសជុល" close={close} save={saveMaintenance} saving={saving} error={error} saveLabel="រក្សាទុកការជួសជុល">
+    {modal === "maintenance" && <Modal title={maintenance.maintenanceId ? "កែប្រែការជួសជុល" : "កត់ត្រាការជួសជុល"} close={close} save={saveMaintenance} saving={saving} error={error} saveLabel={maintenance.maintenanceId ? "រក្សាទុកការកែប្រែ" : "រក្សាទុកការជួសជុល"}>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><Input label="ថ្ងៃជួសជុល" type="date" value={maintenance.date} change={(value) => setMaintenance({...maintenance, date:value})}/><Input label="ប្រភេទការជួសជុល *" value={maintenance.type} change={(value) => setMaintenance({...maintenance, type:value})}/><Input label="ចំណាយ (USD)" type="number" value={maintenance.cost} change={(value) => setMaintenance({...maintenance, cost:value})}/><Input label="អ្នកផ្គត់ផ្គង់/ហាង" value={maintenance.vendor} change={(value) => setMaintenance({...maintenance, vendor:value})}/><label className="asset-field">ស្ថានភាព<select value={maintenance.status} onChange={(event) => setMaintenance({...maintenance, status:event.target.value})} className="asset-control"><option>កំពុងជួសជុល</option><option>រួចរាល់</option></select></label><label className="asset-field sm:col-span-2">កំណត់ចំណាំ<textarea rows="3" value={maintenance.note} onChange={(event) => setMaintenance({...maintenance, note:event.target.value})} className="asset-control resize-none"/></label></div>
     </Modal>}
 
@@ -192,19 +211,19 @@ export default function AssetManagementPage({ employees = [], assets = [] }) {
   </>;
 }
 
-function AssetDetails({ asset }) {
+function AssetDetails({ asset, onEditMaintenance }) {
   const assignments = [...(Array.isArray(asset.assignmentHistory) ? asset.assignmentHistory : [])].reverse();
   const maintenance = [...(Array.isArray(asset.maintenanceHistory) ? asset.maintenanceHistory : [])].reverse();
   const history = [...(Array.isArray(asset.history) ? asset.history : [])].reverse();
   return <div className="border-t border-[#EBEDF3] bg-[#FAFBFD] p-4 sm:p-5 grid grid-cols-1 xl:grid-cols-3 gap-5">
     <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><Calculator size={16}/>Depreciation</h3><div className="bg-white border border-[#EBEDF3] rounded-xl p-3 grid grid-cols-2 gap-3"><Info label="តម្លៃទិញ" value={`${Number(asset.value || 0).toLocaleString()} $`}/><Info label="តម្លៃសៀវភៅ" value={`${assetBookValue(asset).toLocaleString()} $`}/><Info label="អាយុកាល" value={Number(asset.usefulLifeYears || 0) > 0 ? `${asset.usefulLifeYears} ឆ្នាំ` : "មិនបានកំណត់"}/><Info label="រំលស់/ឆ្នាំ" value={`${Number(asset.annualDepreciation || 0).toLocaleString()} $`}/><Info label="តម្លៃសំណល់" value={`${Number(asset.salvageValue || 0).toLocaleString()} $`}/><Info label="វិធីសាស្ត្រ" value={asset.depreciationMethod === "straight-line" ? "Straight-line" : "មិនគិតរំលស់"}/></div>{asset.managerComment && <p className="text-xs text-[#5B5F73] mt-2"><strong>មតិអ្នកអនុម័ត៖</strong> {asset.managerComment}</p>}</div>
     <HistoryList icon={ArrowRightLeft} title="ប្រវត្តិផ្ទេរ" empty="មិនទាន់មានការផ្ទេរ។" items={assignments.map((item) => ({ id:item.transferId, title:`${item.fromEmployeeName || "ស្តុក"} → ${item.toEmployeeName || "ស្តុក"}`, meta:`${item.date || "—"} · ${item.recordedByEmail || "—"}`, detail:item.note }))}/>
-    <HistoryList icon={Wrench} title="ប្រវត្តិជួសជុល" empty="មិនទាន់មានការជួសជុល។" items={maintenance.map((item) => ({ id:item.maintenanceId, title:`${item.type} · ${Number(item.cost || 0).toLocaleString()} $`, meta:`${item.date || "—"} · ${item.status || ""}`, detail:item.vendor || item.note }))}/>
+    <HistoryList icon={Wrench} title="ប្រវត្តិជួសជុល" empty="មិនទាន់មានការជួសជុល។" items={maintenance.map((item) => ({ id:item.maintenanceId, title:`${item.type} · ${Number(item.cost || 0).toLocaleString()} $`, meta:`${item.date || "—"} · ${item.status || ""}`, detail:item.vendor || item.note, action: onEditMaintenance ? () => onEditMaintenance(item) : null }))}/>
     <div className="xl:col-span-3"><HistoryList icon={History} title="Audit history" empty="Legacy record — មិនទាន់មាន audit history។" items={history.map((item) => ({ id:item.id, title:item.label, meta:`${String(item.at || "").slice(0,16).replace("T"," ")} · ${item.actorEmail || "—"}` }))}/></div>
     {asset.note && <div className="xl:col-span-3 text-sm text-[#5B5F73]"><strong>កំណត់ចំណាំ៖</strong> {asset.note}</div>}
   </div>;
 }
-function HistoryList({ icon:Icon, title, items, empty }) { return <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><Icon size={16}/>{title}</h3><div className="space-y-2">{items.map((item) => <div key={item.id} className="bg-white border border-[#EBEDF3] rounded-xl p-3 text-sm"><div className="font-medium">{item.title}</div><div className="text-xs text-[#8A8FA3] mt-1">{item.meta}</div>{item.detail && <div className="text-xs text-[#5B5F73] mt-1">{item.detail}</div>}</div>)}{!items.length && <p className="text-xs text-[#8A8FA3]">{empty}</p>}</div></div>; }
+function HistoryList({ icon:Icon, title, items, empty }) { return <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><Icon size={16}/>{title}</h3><div className="space-y-2">{items.map((item) => <div key={item.id} className="bg-white border border-[#EBEDF3] rounded-xl p-3 text-sm"><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><div className="font-medium">{item.title}</div><div className="text-xs text-[#8A8FA3] mt-1">{item.meta}</div>{item.detail && <div className="text-xs text-[#5B5F73] mt-1">{item.detail}</div>}</div>{item.action && <button type="button" onClick={item.action} className="w-8 h-8 rounded-lg border border-[#EBEDF3] text-[#69708A] hover:bg-[#EEF1FB] hover:text-[#2A3F8F] flex items-center justify-center shrink-0" aria-label="កែប្រែការជួសជុល"><Pencil size={14}/></button>}</div></div>)}{!items.length && <p className="text-xs text-[#8A8FA3]">{empty}</p>}</div></div>; }
 function Info({ label, value }) { return <div><div className="text-[11px] text-[#8A8FA3]">{label}</div><div className="text-sm text-[#5B5F73] mt-0.5">{value}</div></div>; }
 function Input({ label, value, change, type="text", placeholder }) { return <label className="asset-field">{label}<input type={type} min={type === "number" ? "0" : undefined} value={value} onChange={(event) => change(event.target.value)} placeholder={placeholder} className="asset-control"/></label>; }
 function Modal({ title, children, close, save, saving, error, saveLabel="រក្សាទុក", danger=false }) { return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"><div className="w-full max-w-xl max-h-[92dvh] overflow-y-auto rounded-t-2xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:max-h-[90vh] sm:rounded-2xl sm:p-5"><div className="flex items-center justify-between mb-4"><h2 className="font-bold text-[#1E2333]">{title}</h2><button onClick={close} disabled={saving}><X size={20}/></button></div>{children}{error && <p className="text-sm text-[#D9614F] mt-3">{error}</p>}<div className="flex gap-2 mt-5"><button onClick={close} disabled={saving} className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm disabled:opacity-50">បោះបង់</button><button onClick={save} disabled={saving} className={`flex-1 text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60 ${danger ? "bg-[#D9614F]" : "bg-[#2A3F8F]"}`}>{saving && <Loader2 size={16} className="animate-spin"/>}{saveLabel}</button></div></div></div>; }

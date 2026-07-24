@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { collection, doc, onSnapshot, serverTimestamp, setDoc, updateDoc, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { CalendarDays, FileText, LogOut, MapPin, Clock3, ScanLine, Info, Download, XCircle } from "lucide-react";
 import { db } from "../firebase/config";
 import { COLORS } from "../data/theme";
@@ -9,7 +9,7 @@ import { correctionStatusStyle, leaveQuotas, leaveTypes } from "../data/mockData
 import { calculateLeaveDays, LEAVE_PORTIONS, leaveRequestsConflict, remainingLeaveDays } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
 import { recordEmployeeAttendance, validateEmployeeQr } from "../services/attendance";
-import { notifyTelegram } from "../services/telegram";
+import { createLeaveRequest, cancelLeaveRequest } from "../services/leave";
 function readLocation() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({ gpsStatus: "not-supported" });
@@ -24,6 +24,8 @@ function readLocation() {
 export default function EmployeePortalPage({ authUser, profile, onLogout, holidays = [] }) {
   const [requests, setRequests] = useState([]);
   const [attendance, setAttendance] = useState(null);
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
   const [form, setForm] = useState({ leaveType: leaveTypes[0], startDate: "", endDate: "", portion: LEAVE_PORTIONS[0], reason: "" });
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -40,11 +42,26 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, holida
   const remainingForType = remainingLeaveDays(requests, employeeId, form.leaveType, { year: leaveYear, holidays });
 
   useEffect(() => {
+    setRequestsLoading(true);
     const q = query(collection(db, "leaveRequests"), where("employeeUid", "==", authUser.uid));
-    return onSnapshot(q, (snap) => setRequests(snap.docs.map((item) => ({ id: item.id, ...item.data() }))), () => setError("មិនអាចទាញយកសំណើច្បាប់បានទេ"));
+    return onSnapshot(
+      q,
+      (snap) => {
+        setRequests(snap.docs.map((item) => ({ id: item.id, ...item.data() })));
+        setRequestsLoading(false);
+      },
+      () => { setRequests([]); setRequestsLoading(false); setError("មិនអាចទាញយកសំណើច្បាប់បានទេ"); },
+    );
   }, [authUser.uid]);
 
-  useEffect(() => onSnapshot(doc(db, "attendanceToday", attendanceId), (snap) => setAttendance(snap.exists() ? snap.data() : null)), [attendanceId]);
+  useEffect(() => {
+    setAttendanceLoading(true);
+    return onSnapshot(
+      doc(db, "attendanceToday", attendanceId),
+      (snap) => { setAttendance(snap.exists() ? snap.data() : null); setAttendanceLoading(false); },
+      () => { setAttendance(null); setAttendanceLoading(false); setError("មិនអាចទាញយកវត្តមានថ្ងៃនេះបានទេ"); },
+    );
+  }, [attendanceId]);
 
   const handleQrResult = useCallback(async (value) => {
     setScanning(false);
@@ -86,18 +103,13 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, holida
     }
     setSaving(true); setError("");
     try {
-      const requestRef = doc(collection(db, "leaveRequests"));
-      const documentRequired = form.leaveType === "ច្បាប់ឈឺ" && leaveDays > 1;
-      await setDoc(requestRef, {
-        employeeUid: authUser.uid, employeeId, name: profile.name || authUser.email,
-        branch: profile.branch || "", role: profile.jobRole || "បុគ្គលិក", leaveType: form.leaveType,
-        startDate: form.startDate, endDate: form.endDate, days: leaveDays, leaveYear,
-        portion: form.portion, reason: form.reason.trim(), status: "រង់ចាំពិនិត្យ", requestedOn: dateISO,
-        requestedAt: serverTimestamp(),
-        documentRequired,
-        documentReceiptStatus: documentRequired ? "មិនទាន់ទទួល" : "មិនត្រូវការ",
+      await createLeaveRequest({
+        leaveType: form.leaveType,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        portion: form.portion,
+        reason: form.reason.trim(),
       });
-      await notifyTelegram("leave_request", requestRef.id);
       setForm({ leaveType: leaveTypes[0], startDate: "", endDate: "", portion: LEAVE_PORTIONS[0], reason: "" });
       setShowForm(false);
     } catch (submitError) { setError(submitError.message || "មិនអាចរក្សាទុកសំណើបានទេ។ សូមព្យាយាមម្ដងទៀត។"); }
@@ -108,7 +120,7 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, holida
     if (request.status !== "រង់ចាំពិនិត្យ" || !window.confirm("តើអ្នកចង់លុបចោលសំណើនេះមែនទេ?")) return;
     setSaving(true); setError("");
     try {
-      await updateDoc(doc(db, "leaveRequests", request.id), { status: "បានលុបចោល", cancelledOn: dateISO, cancelledAt: serverTimestamp() });
+      await cancelLeaveRequest(request.id);
     } catch { setError("មិនអាចលុបចោលសំណើបានទេ"); }
     finally { setSaving(false); }
   };
@@ -142,6 +154,10 @@ export default function EmployeePortalPage({ authUser, profile, onLogout, holida
 
   const checkedIn = Boolean(attendance?.checkIn && attendance.checkIn !== "—");
   const checkedOut = Boolean(attendance?.checkOut && attendance.checkOut !== "—");
+
+  if (requestsLoading || attendanceLoading) {
+    return <div className="min-h-screen bg-[#F5F6FA] flex items-center justify-center text-sm text-[#8A8FA3]">កំពុងទាញយកទិន្នន័យ...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-[#F5F6FA] p-4 sm:p-7" style={{ fontFamily: "'Noto Sans Khmer','Inter',sans-serif" }}>

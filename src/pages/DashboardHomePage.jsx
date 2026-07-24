@@ -14,7 +14,7 @@ const todayISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Phnom_
 
 export default function DashboardHomePage({ employees = [], attendanceToday = [], attendanceHistory = [], leaveRequests = [], profile, setActive, setOpenSection, setEditingEmployee }) {
   const [showDate, setShowDate] = useState(false);
-  const today = new Intl.DateTimeFormat("km-KH", { day: "numeric", month: "long", year: "numeric" }).format(new Date());
+  const today = new Intl.DateTimeFormat("km-KH", { timeZone: "Asia/Phnom_Penh", day: "numeric", month: "long", year: "numeric" }).format(new Date());
   const { stats, weekData, leaveData, checkins, birthdays, total } = useMemo(() => {
     const todayRows = attendanceToday.filter((row) => row.dateISO === todayISO());
     const present = todayRows.filter((row) => row.status === "មានវត្តមាន").length;
@@ -33,7 +33,7 @@ export default function DashboardHomePage({ employees = [], attendanceToday = []
     });
     const types = [["ច្បាប់ប្រចាំឆ្នាំ", COLORS.primary], ["ច្បាប់ឈឺ", COLORS.green], ["ច្បាប់ផ្ទាល់ខ្លួន", COLORS.accent], ["ច្បាប់សម្រាលកូន", COLORS.purple], ["ច្បាប់គ្មានប្រាក់ខែ", COLORS.red]];
     const leaves = types.map(([name, color]) => ({ name, color, value: leaveRequests.filter((row) => row.status === "បានអនុម័ត" && row.leaveType === name).reduce((sum, row) => sum + Number(row.days || 0), 0) })).filter((row) => row.value > 0);
-    const birthday = new Date().toISOString().slice(5);
+    const birthday = todayISO().slice(5);
     return { stats: { present, late, absent, onLeave }, weekData: trend, leaveData: leaves, checkins: todayRows.filter((row) => row.checkIn && row.checkIn !== "—").sort((a, b) => String(b.checkInClientAt || "").localeCompare(String(a.checkInClientAt || ""))).slice(0, 5).map((row) => ({ name: row.name, role: row.role, time: row.checkIn })), birthdays: employees.filter((row) => row.birthDate?.slice(5) === birthday).slice(0, 4), total: leaves.reduce((sum, row) => sum + row.value, 0) };
   }, [employees, attendanceToday, attendanceHistory, leaveRequests]);
 

@@ -23,6 +23,7 @@ const summaryTimes = Array.from({ length: 29 }, (_, index) => {
 export default function TelegramBotPage({ outbox = [] }) {
   const [settings, setSettings] = useState(defaults);
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState(null);
   const workerConfigured = isTelegramWorkerConfigured();
@@ -32,13 +33,25 @@ export default function TelegramBotPage({ outbox = [] }) {
   );
 
   useEffect(() => {
-    loadSettingsDoc("telegram", defaults).then((data) => {
-      setSettings({ ...defaults, ...data });
-      setLoading(false);
-    });
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setMessage(null);
+      try {
+        const data = await loadSettingsDoc("telegram", defaults);
+        if (!cancelled) { setSettings({ ...defaults, ...data }); setSettingsLoaded(true); }
+      } catch (loadError) {
+        if (!cancelled) { setSettingsLoaded(false); setMessage({ ok: false, text: loadError?.message || "មិនអាចទាញយកការកំណត់ Telegram បានទេ" }); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   const save = async () => {
+    if (!settingsLoaded) return;
     if (settings.chatId && !/^(-?\d+|@[A-Za-z0-9_]{5,})$/.test(settings.chatId.trim())) {
       setMessage({ ok: false, text: "Telegram Chat ID មិនត្រឹមត្រូវ" });
       return;
@@ -53,6 +66,7 @@ export default function TelegramBotPage({ outbox = [] }) {
   };
 
   const runTest = async () => {
+    if (!settingsLoaded) return;
     if (!settings.chatId.trim()) { setMessage({ ok: false, text: "សូមបំពេញ Telegram Chat ID ជាមុន" }); return; }
     setBusy("test"); setMessage(null);
     try {
@@ -65,6 +79,7 @@ export default function TelegramBotPage({ outbox = [] }) {
   };
 
   const runSummary = async () => {
+    if (!settingsLoaded) return;
     setBusy("summary"); setMessage(null);
     try {
       await saveSettingsDoc("telegram", { ...settings, chatId: settings.chatId.trim() });
@@ -129,9 +144,9 @@ export default function TelegramBotPage({ outbox = [] }) {
           )}
 
           <div className="flex flex-wrap gap-2 mt-5">
-            <button disabled={Boolean(busy)} onClick={save} className="bg-[#2A3F8F] text-white rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-60">{busy === "save" ? "កំពុងរក្សាទុក..." : "រក្សាទុក"}</button>
-            <button disabled={Boolean(busy) || !workerConfigured} onClick={runTest} className="border border-[#EBEDF3] text-[#2A3F8F] rounded-xl px-4 py-2.5 text-sm font-semibold flex gap-2 items-center disabled:opacity-50"><Send size={15} />{busy === "test" ? "កំពុងផ្ញើ..." : "ផ្ញើ Test ពិត"}</button>
-            <button disabled={Boolean(busy) || !workerConfigured} onClick={runSummary} className="border border-[#EBEDF3] text-[#2A3F8F] rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50">{busy === "summary" ? "កំពុងផ្ញើ..." : "ផ្ញើ Report ឥឡូវ"}</button>
+            <button disabled={Boolean(busy) || !settingsLoaded} onClick={save} className="bg-[#2A3F8F] text-white rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-60">{busy === "save" ? "កំពុងរក្សាទុក..." : "រក្សាទុក"}</button>
+            <button disabled={Boolean(busy) || !settingsLoaded || !workerConfigured} onClick={runTest} className="border border-[#EBEDF3] text-[#2A3F8F] rounded-xl px-4 py-2.5 text-sm font-semibold flex gap-2 items-center disabled:opacity-50"><Send size={15} />{busy === "test" ? "កំពុងផ្ញើ..." : "ផ្ញើ Test ពិត"}</button>
+            <button disabled={Boolean(busy) || !settingsLoaded || !workerConfigured} onClick={runSummary} className="border border-[#EBEDF3] text-[#2A3F8F] rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50">{busy === "summary" ? "កំពុងផ្ញើ..." : "ផ្ញើ Report ឥឡូវ"}</button>
           </div>
           {message && <p className={`mt-3 text-sm rounded-xl px-3 py-2 ${message.ok ? "text-[#257C4B] bg-[#E9F7EF]" : "text-[#B84637] bg-[#FBEBE8]"}`}>{message.text}</p>}
         </div>

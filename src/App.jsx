@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from "rea
 import {
   LayoutDashboard, Users, Clock, CalendarDays, Building2, Calendar,
   BarChart3, Settings, Search, Bell, ChevronDown, Sun, ChevronRight, ChevronLeft,
-  UserPlus, FileText, ScanLine, Cake, Menu, LogOut, Moon, Check, Languages
+  UserPlus, FileText, ScanLine, Cake, Menu, LogOut, Moon, Check, Languages,
+  BellRing, CheckCheck, Clock3, CalendarCheck2, ArrowUpRight
 } from "lucide-react";
 import { COLORS } from "./data/theme";
 import {
@@ -27,7 +28,10 @@ import { reactivateEmployee, removeEmployee } from "./services/employees";
 import { useAutoSignOut } from "./hooks/useAutoSignOut";
 import { useSettingsDoc } from "./firebase/useSettingsDoc";
 import { updateSystemSettings } from "./firebase/settingsDoc";
+import { useNotificationReadState } from "./hooks/useNotificationReadState";
+import { todayISO } from "./utils/attendance";
 import { DEFAULT_PUBLIC_SYSTEM_SETTINGS, sessionTimeoutMs } from "./config/systemSettings";
+import { APP_VERSION_LABEL, COPYRIGHT_YEAR } from "./config/appVersion";
 
 // Every other page is code-split with React.lazy so the initial bundle only
 // pays for the dashboard home screen; each page's JS loads on first visit.
@@ -89,7 +93,8 @@ function App() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [language, setLanguage] = useState(() => localStorage.getItem("borribo-language") || "ខ្មែរ");
-  const [selectedBranch, setSelectedBranch] = useState(() => localStorage.getItem("borribo-selected-branch") || "");
+  const [uiError, setUiError] = useState("");
+  const [selectedBranchId, setSelectedBranchId] = useState(() => localStorage.getItem("borribo-selected-branch-id") || "");
   const topbarRef = useRef(null);
   useEnglishUi(language);
   const [systemSettings] = useSettingsDoc(
@@ -124,36 +129,38 @@ function App() {
     setLanguageMenuOpen(false);
   }, [authUser?.uid]);
 
-  // Every collection below is a real-time Firestore listener with the same
-  // [data, setData] shape as useState, so pages that call setX((list) => ...)
-  // didn't need to change — see src/firebase/useFirestoreCollection.js.
-  const [leaveRequests, setLeaveRequests] = useFirestoreCollection("leaveRequests", initialLeaveRequests, "id", managerAccess);
-  const [employees, setEmployees] = useFirestoreCollection("employees", initialEmployees, "id", managerAccess);
-  const [todaysAttendance, setTodaysAttendance] = useFirestoreCollection("attendanceToday", attendanceToday, "recordId", managerAccess);
-  const [attendanceHistory, setAttendanceHistory] = useFirestoreCollection("attendanceHistory", historyData, "docId", managerAccess);
-  const [corrections, setCorrections] = useFirestoreCollection("corrections", initialCorrections, "id", managerAccess);
-  const [branches, setBranches] = useFirestoreCollection("branches", initialBranches, "id", loggedIn);
-  const [departments, setDepartments] = useFirestoreCollection("departments", initialDepartments, "id", managerAccess);
-  const [jobRoles, setJobRoles] = useFirestoreCollection("jobRoles", initialJobRoles, "id", managerAccess);
-  const [holidays, setHolidays] = useFirestoreCollection("holidays", initialHolidays, "id", loggedIn);
+  // Every collection below is a real-time Firestore listener. Security-sensitive
+  // collections are read-only in the browser; their mutations use validated Worker services.
+  const [leaveRequests, , leaveLoading, leaveError] = useFirestoreCollection("leaveRequests", initialLeaveRequests, "id", managerAccess);
+  const [employees, , employeesLoading, employeesError] = useFirestoreCollection("employees", initialEmployees, "id", managerAccess);
+  const [todaysAttendance, , todayLoading, todayError] = useFirestoreCollection("attendanceToday", attendanceToday, "recordId", managerAccess);
+  const [attendanceHistory, , historyLoading, historyError] = useFirestoreCollection("attendanceHistory", historyData, "docId", managerAccess);
+  const [corrections, , correctionsLoading, correctionsError] = useFirestoreCollection("corrections", initialCorrections, "id", managerAccess);
+  const [branches, , branchesLoading, branchesError] = useFirestoreCollection("branches", initialBranches, "id", loggedIn);
+  const [departments, , departmentsLoading, departmentsError] = useFirestoreCollection("departments", initialDepartments, "id", managerAccess);
+  const [jobRoles, , jobRolesLoading, jobRolesError] = useFirestoreCollection("jobRoles", initialJobRoles, "id", managerAccess);
+  const [holidays, , holidaysLoading, holidaysError] = useFirestoreCollection("holidays", initialHolidays, "id", loggedIn);
   const [calendarEvents, setCalendarEvents] = useFirestoreCollection("calendarEvents", [], "id", managerAccess);
-  const [users, setUsers] = useFirestoreCollection("users", initialUsers, "id", adminAccess);
-  const [roles, setRoles] = useFirestoreCollection("roles", initialRoles, "id", adminAccess);
-  const [kpis] = useFirestoreCollection("kpis", [], "kpiId", managerAccess);
-  const [assets] = useFirestoreCollection("assets", [], "assetId", managerAccess);
-  const [staffLoans] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
-  const [payrollRecords] = useFirestoreCollection("payrollRecords", [], "payrollId", managerAccess);
-  const [telegramOutbox, setTelegramOutbox] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
-  const [employmentActions] = useFirestoreCollection("employmentActions", [], "id", managerAccess);
-  const [auditLogs] = useFirestoreCollection("auditLogs", [], "id", adminAccess);
+  const [users, , usersLoading, usersError] = useFirestoreCollection("users", initialUsers, "id", adminAccess);
+  const [roles, , rolesLoading, rolesError] = useFirestoreCollection("roles", initialRoles, "id", adminAccess);
+  const [kpis, , kpisLoading, kpisError] = useFirestoreCollection("kpis", [], "kpiId", managerAccess);
+  const [assets, , assetsLoading, assetsError] = useFirestoreCollection("assets", [], "assetId", managerAccess);
+  const [staffLoans, , loansLoading, loansError] = useFirestoreCollection("staffLoans", [], "loanId", managerAccess);
+  const [payrollRecords, , payrollLoading, payrollError] = useFirestoreCollection("payrollRecords", [], "payrollId", managerAccess);
+  const [telegramOutbox, , telegramLoading, telegramError] = useFirestoreCollection("telegramOutbox", [], "id", managerAccess);
+  const [employmentActions, , actionsLoading, actionsError] = useFirestoreCollection("employmentActions", [], "id", managerAccess);
+  const [auditLogs, , auditLoading, auditError] = useFirestoreCollection("auditLogs", [], "id", adminAccess);
 
-  // Branch is a reporting dimension. The Topbar selection deliberately scopes
-  // dashboard and report inputs without mutating records from other branches.
-  const filterByBranch = (rows = []) => selectedBranch ? rows.filter((row) => row.branch === selectedBranch) : rows;
-  const scopedEmployees = useMemo(() => filterByBranch(employees), [employees, selectedBranch]);
-  const scopedAttendanceToday = useMemo(() => filterByBranch(todaysAttendance), [todaysAttendance, selectedBranch]);
-  const scopedAttendanceHistory = useMemo(() => filterByBranch(attendanceHistory), [attendanceHistory, selectedBranch]);
-  const scopedLeaveRequests = useMemo(() => filterByBranch(leaveRequests), [leaveRequests, selectedBranch]);
+  // Branch filters use a stable document ID. Name snapshots remain only as a
+  // legacy fallback for old records that have not yet received branchId.
+  const selectedBranchRecord = useMemo(() => branches.find((branch) => branch.id === selectedBranchId) || null, [branches, selectedBranchId]);
+  const filterByBranch = (rows = []) => selectedBranchId
+    ? rows.filter((row) => row.branchId === selectedBranchId || (!row.branchId && row.branch === selectedBranchRecord?.name))
+    : rows;
+  const scopedEmployees = useMemo(() => filterByBranch(employees), [employees, selectedBranchId, selectedBranchRecord?.name]);
+  const scopedAttendanceToday = useMemo(() => filterByBranch(todaysAttendance), [todaysAttendance, selectedBranchId, selectedBranchRecord?.name]);
+  const scopedAttendanceHistory = useMemo(() => filterByBranch(attendanceHistory), [attendanceHistory, selectedBranchId, selectedBranchRecord?.name]);
+  const scopedLeaveRequests = useMemo(() => filterByBranch(leaveRequests), [leaveRequests, selectedBranchId, selectedBranchRecord?.name]);
 
   const [employeeQuery, setEmployeeQuery] = useState(""); // controlled search text for EmployeeListPage
   const [editingEmployee, setEditingEmployee] = useState(null); // employee currently open in AddEmployeePage's edit mode
@@ -164,13 +171,21 @@ function App() {
   const [headerQuery, setHeaderQuery] = useState(""); // topbar quick-search text
 
   useEffect(() => {
-    localStorage.setItem("borribo-selected-branch", selectedBranch);
-  }, [selectedBranch]);
+    localStorage.setItem("borribo-selected-branch-id", selectedBranchId);
+  }, [selectedBranchId]);
 
-  // Keep a stored selection valid after an administrator renames/deletes a branch.
+  // One-time migration from the v61 name-based preference.
   useEffect(() => {
-    if (selectedBranch && branches.length && !branches.some((branch) => branch.name === selectedBranch)) setSelectedBranch("");
-  }, [branches, selectedBranch]);
+    if (selectedBranchId || !branches.length) return;
+    const legacyName = localStorage.getItem("borribo-selected-branch") || "";
+    const match = branches.find((branch) => branch.name === legacyName);
+    if (match) setSelectedBranchId(match.id);
+    localStorage.removeItem("borribo-selected-branch");
+  }, [branches, selectedBranchId]);
+
+  useEffect(() => {
+    if (selectedBranchId && branches.length && !branches.some((branch) => branch.id === selectedBranchId)) setSelectedBranchId("");
+  }, [branches, selectedBranchId]);
 
   useEffect(() => {
     const closeOnOutsideClick = (event) => {
@@ -227,11 +242,17 @@ function App() {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
+  const showUiError = (message) => {
+    setUiError(message);
+    window.setTimeout(() => setUiError(""), 4500);
+  };
+
   const toggleDarkMode = async () => {
     try {
       await updateSystemSettings({ darkMode: !darkMode });
     } catch (error) {
       console.error("Failed to save dark mode", error);
+      showUiError("មិនអាចរក្សាទុកម៉ូតបង្ហាញបានទេ។ សូមព្យាយាមម្ដងទៀត");
     }
   };
 
@@ -241,30 +262,22 @@ function App() {
     setLanguageMenuOpen(false);
   };
 
-  const notificationStorageKey = `borribo-read-notifications-${authUser?.uid || "guest"}`;
-  const [readNotificationIds, setReadNotificationIds] = useState(() => new Set());
-  useEffect(() => {
-    try { setReadNotificationIds(new Set(JSON.parse(localStorage.getItem(notificationStorageKey) || "[]"))); }
-    catch { setReadNotificationIds(new Set()); }
-  }, [notificationStorageKey]);
-  const saveReadNotifications = (next) => {
-    setReadNotificationIds(next);
-    localStorage.setItem(notificationStorageKey, JSON.stringify([...next]));
-  };
+  const { readIds: readNotificationIds, markRead, markAllRead } = useNotificationReadState(authUser?.uid);
   const topbarNotifications = useMemo(() => {
     if (!pushNotif) return [];
     const pendingLeaves = leaveRequests.filter((row) => row.status === "រង់ចាំពិនិត្យ");
     const pendingCorrections = corrections.filter((row) => row.status === "រង់ចាំពិនិត្យ");
     const lateToday = todaysAttendance.filter((row) => row.status === "យឺត");
+    const stable = (prefix, rows, idField = "id") => `${prefix}:${rows.map((row) => String(row[idField] || row.id || "")).filter(Boolean).sort().join("|")}`;
     return [
-      ...(managerAccess && pendingLeaves.length ? [{ id: `leave-${pendingLeaves.map((row) => row.id).join("-")}`, text: `មានសំណើច្បាប់ ${pendingLeaves.length} កំពុងរង់ចាំអនុម័ត`, detail: "ទៅកាន់ Leave Approval", page: "អនុម័តច្បាប់", section: "leave" }] : []),
-      ...(managerAccess && pendingCorrections.length ? [{ id: `correction-${pendingCorrections.map((row) => row.id).join("-")}`, text: `មានសំណើកែវត្តមាន ${pendingCorrections.length} កំពុងរង់ចាំពិនិត្យ`, detail: "ទៅកាន់ Attendance Correction", page: "កែតម្រូវវត្តមាន", section: "attendance" }] : []),
-      ...(lateToday.length ? [{ id: `late-${lateToday.map((row) => row.recordId || row.id).join("-")}`, text: `បុគ្គលិក ${lateToday.length} នាក់មកយឺតថ្ងៃនេះ`, detail: "ទៅកាន់ Daily Attendance", page: "វត្តមានប្រចាំថ្ងៃ", section: "attendance" }] : []),
+      ...(managerAccess && pendingLeaves.length ? [{ id: stable("leave", pendingLeaves), text: `មានសំណើច្បាប់ ${pendingLeaves.length} កំពុងរង់ចាំអនុម័ត`, detail: "ទៅកាន់ Leave Approval", page: "អនុម័តច្បាប់", section: "leave" }] : []),
+      ...(managerAccess && pendingCorrections.length ? [{ id: stable("correction", pendingCorrections), text: `មានសំណើកែវត្តមាន ${pendingCorrections.length} កំពុងរង់ចាំពិនិត្យ`, detail: "ទៅកាន់ Attendance Correction", page: "កែតម្រូវវត្តមាន", section: "attendance" }] : []),
+      ...(lateToday.length ? [{ id: stable(`late-${todayISO()}`, lateToday, "recordId"), text: `បុគ្គលិក ${lateToday.length} នាក់មកយឺតថ្ងៃនេះ`, detail: "ទៅកាន់ Daily Attendance", page: "វត្តមានប្រចាំថ្ងៃ", section: "attendance" }] : []),
     ];
   }, [leaveRequests, corrections, todaysAttendance, managerAccess, pushNotif]);
   const unreadNotifications = topbarNotifications.filter((note) => !readNotificationIds.has(note.id));
   const openNotification = (notification) => {
-    const next = new Set(readNotificationIds); next.add(notification.id); saveReadNotifications(next);
+    markRead(notification.id);
     setActive(notification.page); setOpenSection(notification.section); setNotificationOpen(false);
   };
 
@@ -294,6 +307,22 @@ function App() {
     return <AccessDeniedPage onLogout={handleLogout} title="គណនីនេះត្រូវបានបិទ" message="អ្នកមិនអាច Login ឬប្រើ Check-in បានទេ។ សូមទាក់ទង Admin ឬ HR។" />;
   }
 
+  const coreLoading = branchesLoading || holidaysLoading
+    || (managerAccess && (leaveLoading || employeesLoading || todayLoading || historyLoading || correctionsLoading
+      || departmentsLoading || jobRolesLoading || kpisLoading || assetsLoading || loansLoading || payrollLoading
+      || telegramLoading || actionsLoading))
+    || (adminAccess && (usersLoading || rolesLoading || auditLoading));
+  const coreError = branchesError || holidaysError
+    || (managerAccess && (leaveError || employeesError || todayError || historyError || correctionsError
+      || departmentsError || jobRolesError || kpisError || assetsError || loansError || payrollError
+      || telegramError || actionsError))
+    || (adminAccess && (usersError || rolesError || auditError));
+
+  if (coreLoading) return <PageLoading />;
+  if (coreError) {
+    return <AccessDeniedPage onLogout={handleLogout} title="មិនអាចទាញយកទិន្នន័យ" message="ការតភ្ជាប់ Firestore មានបញ្ហា។ សូមពិនិត្យអ៊ីនធឺណិត និង Security Rules រួចព្យាយាមម្ដងទៀត។" />;
+  }
+
   if (profile.role === ROLES.KIOSK) {
     return <KioskCheckInPage branches={branches} profile={profile} onExit={handleLogout} />;
   }
@@ -309,6 +338,11 @@ function App() {
       className={`h-screen h-dvh overflow-hidden flex ${darkMode ? "bg-[#151827] text-white" : "bg-[#F5F6FA]"}`}
       style={{ fontFamily: "'Noto Sans Khmer','Inter',sans-serif" }}
     >
+      {uiError && (
+        <div role="alert" className="fixed right-3 top-16 z-[80] max-w-[calc(100vw-1.5rem)] rounded-xl border border-[#F0C7C1] bg-white px-4 py-3 text-sm text-[#B44335] shadow-lg">
+          {uiError}
+        </div>
+      )}
       {/* Mobile overlay backdrop */}
       {sidebarOpen && (
         <div
@@ -345,7 +379,7 @@ function App() {
         </nav>
 
         <div className="px-5 py-4 border-t border-[#EBEDF3] text-[11px] text-[#B4B7C6] shrink-0">
-          © 2026 BORRIBO MFI · v61
+          © {COPYRIGHT_YEAR} BORRIBO MFI · {APP_VERSION_LABEL}
         </div>
       </aside>
 
@@ -381,8 +415,8 @@ function App() {
           <button onClick={() => setSearchOpen((v) => !v)} aria-label="បើកប្រអប់ស្វែងរក" className="sm:hidden w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0"><Search size={18} /></button>
 
           <div className="relative">
-            <button onClick={() => { setBranchMenuOpen((v) => !v); setNotificationOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={branchMenuOpen} aria-label={`ជ្រើសរើសសាខា៖ ${selectedBranch || "គ្រប់សាខា"}`} className="flex items-center gap-2 border border-[#EBEDF3] rounded-xl px-2.5 xl:px-3.5 py-2 text-sm text-[#5B5F73] font-medium shrink-0"><Building2 size={15} /><span className="hidden xl:inline max-w-40 truncate">{selectedBranch || "គ្រប់សាខា"}</span><ChevronDown size={14} className="hidden xl:block" /></button>
-            {branchMenuOpen && <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden"><button onClick={() => { setSelectedBranch(""); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span>គ្រប់សាខា</span>{!selectedBranch && <Check size={16} className="text-[#2A3F8F]" />}</button>{branches.map((branch) => <button key={branch.id} onClick={() => { setSelectedBranch(branch.name); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span className="truncate">{branch.name}</span>{selectedBranch === branch.name && <Check size={16} className="text-[#2A3F8F] shrink-0" />}</button>)}</div>}
+            <button onClick={() => { setBranchMenuOpen((v) => !v); setNotificationOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={branchMenuOpen} aria-label={`ជ្រើសរើសសាខា៖ ${selectedBranchRecord?.name || "គ្រប់សាខា"}`} className="flex items-center gap-2 border border-[#EBEDF3] rounded-xl px-2.5 xl:px-3.5 py-2 text-sm text-[#5B5F73] font-medium shrink-0"><Building2 size={15} /><span className="hidden xl:inline max-w-40 truncate">{selectedBranchRecord?.name || "គ្រប់សាខា"}</span><ChevronDown size={14} className="hidden xl:block" /></button>
+            {branchMenuOpen && <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden"><button onClick={() => { setSelectedBranchId(""); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span>គ្រប់សាខា</span>{!selectedBranchId && <Check size={16} className="text-[#2A3F8F]" />}</button>{branches.map((branch) => <button key={branch.id} onClick={() => { setSelectedBranchId(branch.id); setBranchMenuOpen(false); }} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-right text-sm text-[#1E2333] hover:bg-[#F7F8FB]"><span className="truncate">{branch.name}</span>{selectedBranchId === branch.id && <Check size={16} className="text-[#2A3F8F] shrink-0" />}</button>)}</div>}
           </div>
 
           <div className="relative">
@@ -409,10 +443,61 @@ function App() {
 
           <div className="relative">
             <button disabled={!pushNotif} onClick={() => { setNotificationOpen((v) => !v); setBranchMenuOpen(false); setProfileMenuOpen(false); setLanguageMenuOpen(false); }} aria-expanded={notificationOpen} aria-label={pushNotif ? `ការជូនដំណឹង (${unreadNotifications.length} ថ្មី)` : "ការជូនដំណឹងត្រូវបានបិទ"} title={pushNotif ? "ការជូនដំណឹង" : "ការជូនដំណឹងក្នុងកម្មវិធីត្រូវបានបិទក្នុង System Settings"} className="relative w-9 h-9 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"><Bell size={18} />{unreadNotifications.length > 0 && <span className="absolute -top-0.5 -right-0.5 bg-[#D9614F] text-white text-[10px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center">{unreadNotifications.length}</span>}</button>
-            {notificationOpen && <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-1rem)] rounded-xl border border-[#EBEDF3] bg-white shadow-lg z-50 overflow-hidden"><div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#EBEDF3]"><div className="text-sm font-semibold text-[#1E2333]">ការជូនដំណឹងថ្មី</div>{unreadNotifications.length > 0 && <button onClick={() => saveReadNotifications(new Set(topbarNotifications.map((note) => note.id)))} className="text-xs font-medium text-[#2A3F8F] whitespace-nowrap">សម្គាល់ថាបានអានទាំងអស់</button>}</div>{topbarNotifications.length ? topbarNotifications.map((note) => <button key={note.id} onClick={() => openNotification(note)} className={`w-full px-4 py-3 text-right border-b border-[#EBEDF3] last:border-0 hover:bg-[#F7F8FB] ${readNotificationIds.has(note.id) ? "" : "bg-[#F7F8FB]"}`}><div className="text-sm text-[#1E2333]">{note.text}</div><div className="text-xs text-[#2A3F8F] mt-1">{note.detail}</div></button>) : <div className="px-4 py-5 text-sm text-[#8A8FA3] text-center">មិនមានការជូនដំណឹងថ្មីទេ</div>}</div>}
+            {notificationOpen && (
+              <div className="absolute right-0 top-full mt-2 w-[304px] max-w-[calc(100vw-0.75rem)] rounded-2xl border border-[#E7EAF1] bg-white shadow-[0_18px_50px_rgba(30,35,51,0.16)] z-50 overflow-hidden">
+                <div className="flex items-center gap-2.5 px-3.5 py-3 border-b border-[#EEF0F5] bg-[#FBFCFE]">
+                  <span className="w-8 h-8 rounded-xl bg-[#EEF1FB] text-[#2A3F8F] flex items-center justify-center shrink-0"><BellRing size={16} /></span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold text-[#1E2333]">ការជូនដំណឹង</div>
+                    <div className="text-[10px] text-[#9A9EAE]">{unreadNotifications.length ? `${unreadNotifications.length} មិនទាន់អាន` : "បានអានទាំងអស់"}</div>
+                  </div>
+                  {unreadNotifications.length > 0 && (
+                    <button
+                      onClick={() => markAllRead(topbarNotifications.map((note) => note.id))}
+                      aria-label="សម្គាល់ថាបានអានទាំងអស់"
+                      title="សម្គាល់ថាបានអានទាំងអស់"
+                      className="w-8 h-8 rounded-lg text-[#2A3F8F] hover:bg-[#EEF1FB] flex items-center justify-center shrink-0"
+                    >
+                      <CheckCheck size={16} />
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-[288px] overflow-y-auto p-1.5">
+                  {topbarNotifications.length ? topbarNotifications.map((note) => {
+                    const isRead = readNotificationIds.has(note.id);
+                    const NoteIcon = note.section === "leave" ? CalendarCheck2 : Clock3;
+                    return (
+                      <button
+                        key={note.id}
+                        onClick={() => openNotification(note)}
+                        className={`group w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors ${isRead ? "hover:bg-[#F8F9FC]" : "bg-[#F5F7FD] hover:bg-[#EEF2FC]"}`}
+                      >
+                        <span className={`mt-0.5 w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${isRead ? "bg-[#F3F4F7] text-[#8A8FA3]" : "bg-white text-[#2A3F8F] shadow-sm"}`}>
+                          <NoteIcon size={15} />
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="flex items-start gap-2">
+                            <span className="flex-1 text-[12px] leading-[18px] font-medium text-[#2B3040]">{note.text}</span>
+                            {!isRead && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#D9614F] shrink-0" />}
+                          </span>
+                          <span className="mt-0.5 flex items-center gap-1 text-[10px] font-medium text-[#6D78A8]">
+                            {note.detail}<ArrowUpRight size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  }) : (
+                    <div className="px-4 py-7 text-center">
+                      <span className="mx-auto mb-2 w-9 h-9 rounded-full bg-[#F4F5F8] text-[#A4A8B6] flex items-center justify-center"><Bell size={16} /></span>
+                      <div className="text-[12px] font-medium text-[#5B5F73]">មិនមានការជូនដំណឹងថ្មីទេ</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
-          <button onClick={toggleDarkMode} aria-label="ប្តូររចនាប័ទ្មពន្លឺ/ងងឹត" className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0">{darkMode ? <Moon size={18} /> : <Sun size={18} />}</button>
+          <button onClick={toggleDarkMode} aria-label={darkMode ? "ប្តូរទៅម៉ូតភ្លឺ" : "ប្តូរទៅម៉ូតងងឹត"} title={darkMode ? "ម៉ូតភ្លឺ" : "ម៉ូតងងឹត"} className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA] shrink-0">{darkMode ? <Sun size={18} /> : <Moon size={18} />}</button>
 
           <div className="relative flex items-center gap-2 sm:gap-2.5 pl-1.5 sm:pl-2 sm:border-l border-[#EBEDF3] shrink-0">
           <button onClick={() => { setProfileMenuOpen((v) => !v); setBranchMenuOpen(false); setNotificationOpen(false); setLanguageMenuOpen(false); }} aria-expanded={profileMenuOpen} className="flex items-center gap-2.5 text-right">
@@ -529,9 +614,7 @@ function App() {
           <DailyAttendancePage
             employees={employees}
             attendanceToday={todaysAttendance}
-            setAttendanceToday={setTodaysAttendance}
             attendanceHistory={attendanceHistory}
-            setAttendanceHistory={setAttendanceHistory}
             leaveRequests={leaveRequests}
             holidays={holidays}
           />
@@ -541,11 +624,8 @@ function App() {
           <AttendanceCorrectionPage
             employees={employees}
             attendanceToday={todaysAttendance}
-            setAttendanceToday={setTodaysAttendance}
             attendanceHistory={attendanceHistory}
-            setAttendanceHistory={setAttendanceHistory}
             corrections={corrections}
-            setCorrections={setCorrections}
             profile={profile}
           />
         ) : active === "សំណើសុំច្បាប់" ? (
@@ -566,19 +646,15 @@ function App() {
         ) : active === "សាខា" ? (
           <BranchPage
             employees={employees}
-            setEmployees={setEmployees}
             branches={branches}
-            setBranches={setBranches}
             attendanceHistory={attendanceHistory}
           />
         ) : active === "នាយកដ្ឋាន" ? (
-          <DepartmentPage employees={employees} setEmployees={setEmployees} departments={departments} setDepartments={setDepartments} jobRoles={jobRoles} setJobRoles={setJobRoles} />
+          <DepartmentPage employees={employees} departments={departments} jobRoles={jobRoles} />
         ) : active === "តួនាទីការងារ" ? (
           <JobRolePage
             employees={employees}
-            setEmployees={setEmployees}
             jobRoles={jobRoles}
-            setJobRoles={setJobRoles}
             departments={departments}
           />
         ) : active === "calendar" ? (
@@ -618,13 +694,13 @@ function App() {
         ) : active === "ម៉ោងធ្វើការ" ? (
           <WorkingHoursPage />
         ) : active === "ថ្ងៃឈប់សម្រាក" ? (
-          <HolidaysSettingsPage holidays={holidays} setHolidays={setHolidays} />
+          <HolidaysSettingsPage holidays={holidays} />
         ) : active === "GPS និង QR" ? (
           <GpsQrPage branches={branches} />
         ) : active === "ប្រព័ន្ធ" ? (
           <SystemSettingsPage />
         ) : active === "Fingerprint ម៉ាស៊ីន" ? (
-          <FingerprintPage employees={employees} attendanceToday={todaysAttendance} setAttendanceToday={setTodaysAttendance} attendanceHistory={attendanceHistory} setAttendanceHistory={setAttendanceHistory} />
+          <FingerprintPage employees={employees} attendanceHistory={attendanceHistory} />
         ) : active === "Telegram Bot" ? (
           <TelegramBotPage outbox={telegramOutbox} />
         ) : (

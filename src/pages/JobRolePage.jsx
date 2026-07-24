@@ -3,37 +3,30 @@ import { User, Power, Pencil } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
+import { saveJobRole, toggleJobRoleStatus } from "../services/organization";
 
 export default function JobRolePage({ employees, setEmployees, jobRoles: roles, setJobRoles: setRoles, departments }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" });
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const handleSubmit = async () => {
-    if (!form.name.trim()) {
-      setError("សូមបំពេញឈ្មោះតួនាទីការងារ");
-      return;
-    }
-    if (roles.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase())) { setError("ឈ្មោះតួនាទីនេះមានរួចហើយ"); return; }
-    const existing = roles.find((item) => item.id === editingId);
-    const departmentId = departments.find((item) => item.name === form.dept)?.id || existing?.departmentId || "";
-    await setRoles((list) => editingId
-      ? list.map((item) => item.id === editingId ? { ...item, ...form, name: form.name.trim(), departmentId } : item)
-      : [{ id: `ROLE-${String(list.length + 1).padStart(3, "0")}`, ...form, name: form.name.trim(), departmentId }, ...list]);
-    if (existing && existing.name !== form.name.trim()) {
-      await setEmployees((list) => list.map((employee) => (employee.roleId === existing.id || employee.role === existing.name)
-        ? { ...employee, roleId: existing.id, role: form.name.trim(), departmentId, dept: form.dept } : employee));
-    }
-    setError("");
-    setForm({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" });
-    setEditingId(null);
-    setShowNew(false);
+    if (!form.name.trim()) { setError("សូមបំពេញឈ្មោះតួនាទីការងារ"); return; }
+    const department = departments.find((item) => item.name === form.dept);
+    if (!department) { setError("សូមជ្រើសរើសនាយកដ្ឋានត្រឹមត្រូវ"); return; }
+    setSaving(true); setError("");
+    try {
+      await saveJobRole(editingId, { ...form, name: form.name.trim(), departmentId: department.id });
+      setForm({ name: "", dept: departments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" }); setEditingId(null); setShowNew(false);
+    } catch (saveError) { setError(saveError.message || "មិនអាចរក្សាទុកតួនាទីបានទេ"); }
+    finally { setSaving(false); }
   };
 
-  const toggleStatus = (id) => setRoles((list) => list.map((role) => role.id === id ? { ...role, status: role.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : role));
+  const toggleStatus = async (id) => { setError(""); try { await toggleJobRoleStatus(id); } catch (toggleError) { setError(toggleError.message || "មិនអាចប្ដូរស្ថានភាពបានទេ"); } };
   const activeDepartments = departments.filter((item) => item.status !== "អសកម្ម");
   const openAdd = () => { setEditingId(null); setForm({ name: "", dept: activeDepartments[0]?.name ?? "", level: "បុគ្គលិក", status: "សកម្ម" }); setError(""); setShowNew(true); };
   const editRole = (role) => { setEditingId(role.id); setForm({ name: role.name || "", dept: role.dept || activeDepartments[0]?.name || "", level: role.level || "បុគ្គលិក", status: role.status || "សកម្ម" }); setError(""); setShowNew(true); };
@@ -120,7 +113,7 @@ export default function JobRolePage({ employees, setEmployees, jobRoles: roles, 
       </div>
 
       {showNew && (
-        <OrgModal title={editingId ? "កែតួនាទីការងារ" : "បន្ថែមតួនាទីថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកតួនាទី" error={error}>
+        <OrgModal title={editingId ? "កែតួនាទីការងារ" : "បន្ថែមតួនាទីថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកតួនាទី" error={error} saving={saving}>
           <div>
             <FieldLabel required>ឈ្មោះតួនាទី</FieldLabel>
             <TextField value={form.name} onChange={update("name")} placeholder="ឧ. មន្ត្រីសវនកម្ម" />

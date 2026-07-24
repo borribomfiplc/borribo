@@ -7,6 +7,7 @@ import { dayLabelsKh, monthNamesKh } from "../data/mockData";
 import { todayISO } from "../utils/attendance";
 import { approvedLeaveOnDate, workingLeaveDates } from "../utils/leave";
 import { isEmployeeInactive } from "../utils/employeeStatus";
+import { newRecordId } from "../utils/id";
 
 const ITEM_STYLE = {
   holiday: { label: "ថ្ងៃឈប់សម្រាក", color: "#E8A33D", bg: "#FDF3E3" },
@@ -145,6 +146,7 @@ export default function CalendarPage({
   const [filterType, setFilterType] = useState("all");
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
+  const [pageError, setPageError] = useState("");
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -249,8 +251,9 @@ export default function CalendarPage({
   };
 
   const saveEvent = async (form) => {
+    setPageError("");
     const record = {
-      ...(editingEvent || {}), id: editingEvent?.id || `EVT-${Date.now()}`, title: form.title, eventType: form.type,
+      ...(editingEvent || {}), id: editingEvent?.id || newRecordId("EVT"), title: form.title, eventType: form.type,
       startDate: form.startDate, endDate: form.endDate, branch: form.branch, department: form.department,
       notes: form.notes, createdAt: editingEvent?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
       createdBy: editingEvent?.createdBy || profile?.name || profile?.email || "HR/Admin",
@@ -260,8 +263,12 @@ export default function CalendarPage({
 
   const deleteEvent = async (event) => {
     if (!window.confirm(`លុបព្រឹត្តិការណ៍ “${event.title}” មែនទេ?`)) return;
-    try { await setCalendarEvents((list) => list.filter((item) => item.id !== event.id)); }
-    catch (err) { window.alert(err?.message || "លុបមិនបាន សូមព្យាយាមម្ដងទៀត"); }
+    setPageError("");
+    try {
+      await setCalendarEvents((list) => list.filter((item) => item.id !== event.id));
+    } catch (err) {
+      setPageError(err?.message || "លុបមិនបាន សូមព្យាយាមម្ដងទៀត");
+    }
   };
 
   return (
@@ -276,6 +283,8 @@ export default function CalendarPage({
           <button onClick={() => { setEditingEvent(null); setShowEventModal(true); }} className="text-xs sm:text-sm font-semibold text-white bg-[#2A3F8F] rounded-xl px-3.5 py-2.5 flex items-center gap-1.5"><Plus size={16} /> បន្ថែមព្រឹត្តិការណ៍</button>
         </div>
       </div>
+
+      {pageError && <div className="mb-4 rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#B44335] flex items-start gap-2"><AlertCircle size={17} className="mt-0.5 shrink-0" />{pageError}</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {[

@@ -137,3 +137,17 @@ export const distanceInMeters = (from, to) => {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return Math.round(earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 };
+
+export const time24InputValue = (value) => {
+  const text = String(value || "").trim();
+  if (/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(text)) return text;
+  const match = text.match(/^(\d{1,2}):([0-5]\d)\s*(AM|PM)$/i);
+  if (!match) return "";
+  let hours = Number(match[1]);
+  if (hours < 1 || hours > 12) return "";
+  if (match[3].toUpperCase() === "PM" && hours !== 12) hours += 12;
+  if (match[3].toUpperCase() === "AM" && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, "0")}:${match[2]}`;
+};
+
+export const isTime24 = (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(value || ""));

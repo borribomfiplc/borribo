@@ -2,33 +2,28 @@ import React, { useState } from "react";
 import { X, Pencil } from "lucide-react";
 import { FieldLabel, TextField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
+import { deleteHoliday, saveHoliday } from "../services/organization";
 
 export default function HolidaysSettingsPage({ holidays, setHolidays }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ date: "", name: "" });
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleSubmit = () => {
-    if (!form.date.trim() || !form.name.trim()) {
-      setError("សូមបំពេញកាលបរិច្ឆេទ និងឈ្មោះថ្ងៃឈប់សម្រាក");
-      return;
-    }
-    setHolidays((list) => {
-      const next = editingId
-        ? list.map((holiday) => holiday.id === editingId ? { ...holiday, dateISO: form.date, name: form.name } : holiday)
-        : [...list, { id: `HOL-${String(list.length + 1).padStart(3, "0")}`, dateISO: form.date, name: form.name }];
-      return next.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
-    });
-    setError("");
-    setForm({ date: "", name: "" });
-    setEditingId(null);
-    setShowNew(false);
+  const handleSubmit = async () => {
+    if (!form.date.trim() || !form.name.trim()) { setError("សូមបំពេញកាលបរិច្ឆេទ និងឈ្មោះថ្ងៃឈប់សម្រាក"); return; }
+    setSaving(true); setError("");
+    try {
+      await saveHoliday(editingId, { dateISO: form.date, name: form.name.trim() });
+      setForm({ date: "", name: "" }); setEditingId(null); setShowNew(false);
+    } catch (saveError) { setError(saveError.message || "មិនអាចរក្សាទុកថ្ងៃឈប់សម្រាកបានទេ"); }
+    finally { setSaving(false); }
   };
 
-  const remove = (id) => setHolidays((list) => list.filter((h) => h.id !== id));
+  const remove = async (id) => { if (!window.confirm("តើអ្នកចង់លុបថ្ងៃឈប់សម្រាកនេះមែនទេ?")) return; setError(""); try { await deleteHoliday(id); } catch (removeError) { setError(removeError.message || "មិនអាចលុបថ្ងៃឈប់សម្រាកបានទេ"); } };
   const edit = (holiday) => { setEditingId(holiday.id); setForm({ date: holiday.dateISO, name: holiday.name }); setError(""); setShowNew(true); };
   const years = [...new Set(holidays.map((holiday) => holiday.dateISO?.slice(0, 4)).filter(Boolean))].join(" / ");
 
@@ -88,7 +83,7 @@ export default function HolidaysSettingsPage({ holidays, setHolidays }) {
       </div>
 
       {showNew && (
-        <OrgModal title={editingId ? "កែថ្ងៃឈប់សម្រាក" : "បន្ថែមថ្ងៃឈប់សម្រាកថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុក" error={error}>
+        <OrgModal title={editingId ? "កែថ្ងៃឈប់សម្រាក" : "បន្ថែមថ្ងៃឈប់សម្រាកថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុក" error={error} saving={saving}>
           <div>
             <FieldLabel required>កាលបរិច្ឆេទ</FieldLabel>
             <TextField type="date" dir="ltr" value={form.date} onChange={update("date")} />

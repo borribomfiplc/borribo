@@ -5,6 +5,8 @@ import {
 import { COLORS } from "../data/theme";
 import { login, authErrorMessage, sendPasswordReset } from "../firebase/auth";
 import { AUTO_SIGN_OUT_NOTICE_KEY } from "../hooks/useAutoSignOut";
+import { timeoutLabel } from "../config/systemSettings";
+import { APP_VERSION_LABEL, COPYRIGHT_YEAR } from "../config/appVersion";
 
 const REMEMBERED_IDENTIFIER_KEY = "borribo_hrms_remembered_identifier";
 
@@ -18,9 +20,18 @@ function getRememberedIdentifier() {
 
 function getAutoSignOutNotice() {
   try {
-    if (window.sessionStorage.getItem(AUTO_SIGN_OUT_NOTICE_KEY) !== "1") return "";
+    const raw = window.sessionStorage.getItem(AUTO_SIGN_OUT_NOTICE_KEY);
+    if (!raw) return "";
     window.sessionStorage.removeItem(AUTO_SIGN_OUT_NOTICE_KEY);
-    return "អ្នកត្រូវបានចាកចេញដោយស្វ័យប្រវត្តិ ព្រោះមិនមានសកម្មភាពរយៈពេល 5 នាទី។";
+
+    let minutes = 30;
+    try {
+      const value = JSON.parse(raw);
+      if (Number.isFinite(Number(value?.timeoutMinutes))) minutes = Number(value.timeoutMinutes);
+    } catch {
+      // v63 and earlier stored the literal value "1". Keep a sensible fallback.
+    }
+    return `អ្នកត្រូវបានចាកចេញដោយស្វ័យប្រវត្តិ ព្រោះមិនមានសកម្មភាពរយៈពេល ${timeoutLabel(minutes)}។`;
   } catch {
     return "";
   }
@@ -34,6 +45,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(getAutoSignOutNotice);
   const [submitting, setSubmitting] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const handleLogin = async () => {
     if (!identifier.trim() || !password.trim()) {
@@ -68,19 +80,23 @@ export default function LoginPage() {
       setError("សូមបញ្ចូល Username ឬអ៊ីមែលរបស់អ្នកជាមុនសិន");
       return;
     }
+    if (resetting) return;
     setError("");
     setNotice("");
+    setResetting(true);
     try {
       await sendPasswordReset(identifier);
-      setNotice("បានផ្ញើតំណប្តូរលេខសម្ងាត់ទៅអ៊ីមែលរបស់អ្នករួចហើយ");
+      setNotice("ប្រសិនបើគណនីនេះមានអ៊ីមែល តំណប្តូរលេខសម្ងាត់នឹងត្រូវបានផ្ញើទៅអ៊ីមែលនោះ។");
     } catch (err) {
       setError(authErrorMessage(err));
+    } finally {
+      setResetting(false);
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    handleLogin();
+    await handleLogin();
   };
 
   const handleRememberChange = (e) => {
@@ -129,8 +145,8 @@ export default function LoginPage() {
             </p>
           </div>
           <div className="relative z-10 flex items-center gap-6 text-xs text-white/60">
-            <span>© 2026 BORRIBO MFI</span>
-            <span>v1.0.0</span>
+            <span>© {COPYRIGHT_YEAR} BORRIBO MFI</span>
+            <span>{APP_VERSION_LABEL}</span>
           </div>
         </div>
 
@@ -199,14 +215,14 @@ export default function LoginPage() {
                 />
                 ចងចាំខ្ញុំ
               </label>
-              <button type="button" onClick={handlePasswordReset} className="text-[#2A3F8F] font-medium hover:underline">
-                ភ្លេចលេខសម្ងាត់?
+              <button type="button" disabled={submitting || resetting} onClick={handlePasswordReset} className="text-[#2A3F8F] font-medium hover:underline disabled:cursor-not-allowed disabled:opacity-50">
+                {resetting ? "កំពុងផ្ញើ..." : "ភ្លេចលេខសម្ងាត់?"}
               </button>
             </div>
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || resetting}
               className="mt-2 w-full text-white text-sm font-semibold rounded-xl py-3 flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
               style={{ background: COLORS.primary }}
             >

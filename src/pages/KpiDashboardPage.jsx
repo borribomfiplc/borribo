@@ -6,10 +6,11 @@ import {
 import StatCard from "../components/shared/StatCard";
 import { COLORS } from "../data/theme";
 import { createKpi, reviewKpi, submitKpi, updateKpi } from "../services/operations";
+import { todayISO } from "../utils/attendance";
 
 const emptyKpi = (employees = []) => ({
   employeeId: employees[0]?.id || "", metric: "គុណភាពការងារ", target: "100",
-  actual: "0", weight: "100", period: new Date().toISOString().slice(0, 7),
+  actual: "0", weight: "100", period: todayISO().slice(0, 7),
   cycle: "monthly", status: "ព្រាង", note: "",
 });
 const cycleLabels = { monthly: "ប្រចាំខែ", quarterly: "ប្រចាំត្រីមាស", yearly: "ប្រចាំឆ្នាំ" };
@@ -54,7 +55,7 @@ export default function KpiDashboardPage({ employees = [], kpis = [] }) {
     setSelected(kpi);
     setForm({
       employeeId: kpi.employeeId || "", metric: kpi.metric || "", target: String(kpi.target || ""),
-      actual: String(kpi.actual || 0), weight: String(kpi.weight || 100), period: kpi.period || new Date().toISOString().slice(0,7),
+      actual: String(kpi.actual || 0), weight: String(kpi.weight || 100), period: kpi.period || todayISO().slice(0, 7),
       cycle: kpi.cycle || "monthly", status: normalizedStatus(kpi), note: kpi.note || "",
     });
     setError(""); setModal("edit");

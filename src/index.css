@@ -25,34 +25,86 @@ body {
   overflow-x: hidden;
 }
 
-/* The full interface, not only the Topbar, follows the selected dark theme.
-   Attribute selectors cover the Tailwind colour utilities already used across
-   the page modules without changing their existing component APIs. */
+/* The full interface follows the selected dark theme. Use exact Tailwind
+   class selectors rather than broad [class*=...] matching: the latter also
+   matched hover:bg-* utilities and accidentally painted buttons permanently. */
+html.dark {
+  color-scheme: dark;
+}
+
 html.dark body,
 html.dark #root {
   background: #151827;
   color: #edf0fa;
 }
 
-html.dark .bg-white,
-html.dark [class*="bg-[#F5F6FA]"],
-html.dark [class*="bg-[#F7F8FB]"] {
-  background-color: #202538 !important;
+html.dark .bg-white { background-color: #202538 !important; }
+html.dark .bg-\[\#F5F6FA\],
+html.dark .bg-\[\#F7F8FB\],
+html.dark .bg-\[\#F8F9FC\],
+html.dark .bg-\[\#FAFBFD\],
+html.dark .bg-\[\#FBFCFE\],
+html.dark .bg-\[\#FAFAFC\],
+html.dark .bg-\[\#F2F3F7\],
+html.dark .bg-\[\#F3F4F7\],
+html.dark .bg-\[\#F4F5F8\],
+html.dark .bg-\[\#F5F7FD\],
+html.dark .bg-\[\#EEF2FC\] {
+  background-color: #252b3f !important;
 }
 
-html.dark [class*="border-[#EBEDF3]"] {
-  border-color: #343b53 !important;
+html.dark .bg-\[\#EEF1FB\],
+html.dark .bg-\[\#EAF4FF\] { background-color: #283451 !important; }
+html.dark .bg-\[\#E9F7EF\],
+html.dark .bg-\[\#EAF8F0\] { background-color: #173528 !important; }
+html.dark .bg-\[\#FBEBE8\],
+html.dark .bg-\[\#FFF2EE\],
+html.dark .bg-\[\#FFF8F6\] { background-color: #3a2327 !important; }
+html.dark .bg-\[\#FDF3E3\],
+html.dark .bg-\[\#FFF7ED\],
+html.dark .bg-\[\#FFF7E8\] { background-color: #3b3020 !important; }
+html.dark .bg-\[\#F1EBFE\],
+html.dark .bg-\[\#FCEBF3\] { background-color: #302943 !important; }
+
+html.dark .border-\[\#EBEDF3\],
+html.dark .border-\[\#E4E7EF\],
+html.dark .border-\[\#E5E8F0\],
+html.dark .border-\[\#E7EAF1\],
+html.dark .border-\[\#E8EBF3\],
+html.dark .border-\[\#EEF0F5\],
+html.dark .border-\[\#D9DEEC\],
+html.dark .border-\[\#DDE2F0\],
+html.dark .border-\[\#DDE2F1\] {
+  border-color: #3a435f !important;
 }
 
-html.dark [class*="text-[#1E2333]"] {
-  color: #f4f6ff !important;
+html.dark .divide-\[\#EBEDF3\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: #3a435f !important;
 }
 
-html.dark [class*="text-[#5B5F73]"],
-html.dark [class*="text-[#8A8FA3]"],
-html.dark [class*="text-[#B4B7C6]"] {
-  color: #b9c1d9 !important;
-}
+html.dark .text-\[\#1E2333\],
+html.dark .text-\[\#2B3040\],
+html.dark .text-\[\#3D4254\] { color: #f4f6ff !important; }
+html.dark .text-\[\#5B5F73\],
+html.dark .text-\[\#69708A\],
+html.dark .text-\[\#6B7085\],
+html.dark .text-\[\#73778A\],
+html.dark .text-\[\#8A8FA3\],
+html.dark .text-\[\#9A9EAE\],
+html.dark .text-\[\#A2A6B7\],
+html.dark .text-\[\#A4A8B6\],
+html.dark .text-\[\#B4B7C6\] { color: #b9c1d9 !important; }
+html.dark .text-\[\#2A3F8F\],
+html.dark .text-\[\#6D78A8\] { color: #a9b9ff !important; }
+html.dark .text-\[\#3FA66B\],
+html.dark .text-\[\#2F9D62\],
+html.dark .text-\[\#257C4B\] { color: #78d69e !important; }
+html.dark .text-\[\#D9614F\],
+html.dark .text-\[\#B44335\],
+html.dark .text-\[\#B84637\] { color: #ff9d91 !important; }
+html.dark .text-\[\#E8A33D\],
+html.dark .text-\[\#B97816\],
+html.dark .text-\[\#B97913\] { color: #f5c36f !important; }
 
 html.dark input,
 html.dark select,
@@ -63,15 +115,19 @@ html.dark textarea {
 }
 
 html.dark input::placeholder,
-html.dark textarea::placeholder {
-  color: #97a1bd !important;
-}
+html.dark textarea::placeholder { color: #97a1bd !important; }
+html.dark option { background-color: #171b2a; color: #f4f6ff; }
+
+html.dark .hover\:bg-\[\#F5F6FA\]:hover,
+html.dark .hover\:bg-\[\#F7F8FB\]:hover,
+html.dark .hover\:bg-\[\#F8F9FC\]:hover { background-color: #30374d !important; }
+html.dark .hover\:bg-\[\#EEF1FB\]:hover { background-color: #334269 !important; }
+html.dark .hover\:bg-\[\#FBEBE8\]:hover { background-color: #4a2a2e !important; }
 
 html.dark .recharts-cartesian-grid line,
 html.dark .recharts-cartesian-axis-line,
-html.dark .recharts-cartesian-axis-tick-line {
-  stroke: #49536f !important;
-}
+html.dark .recharts-cartesian-axis-tick-line { stroke: #49536f !important; }
+html.dark .recharts-text { fill: #b9c1d9 !important; }
 
 /* Keep forms and wide report tables usable on small phones. */
 input,

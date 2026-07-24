@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  Save
+  Loader2, Save
 } from "lucide-react";
 import { COLORS } from "../../data/theme";
 
@@ -12,6 +12,10 @@ export function ToggleRow({ label, desc, checked, onChange }) {
         {desc && <div className="text-xs text-[#8A8FA3] mt-0.5">{desc}</div>}
       </div>
       <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
         onClick={() => onChange(!checked)}
         className="w-11 h-6 rounded-full relative shrink-0 transition-colors"
         style={{ background: checked ? COLORS.primary : "#EBEDF3" }}
@@ -25,7 +29,7 @@ export function ToggleRow({ label, desc, checked, onChange }) {
   );
 }
 
-export function SettingsSaveBar({ onSave, saved, disabled = false }) {
+export function SettingsSaveBar({ onSave, saved, disabled = false, saving = false }) {
   return (
     <div className="flex items-center justify-between mb-5 sm:mb-6 flex-wrap gap-3">
       {saved ? (
@@ -34,13 +38,14 @@ export function SettingsSaveBar({ onSave, saved, disabled = false }) {
         <span />
       )}
       <button
+        type="button"
         onClick={onSave}
-        disabled={disabled}
+        disabled={disabled || saving}
         className="flex items-center gap-2 text-white text-xs sm:text-sm font-semibold rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 whitespace-nowrap ml-auto disabled:cursor-not-allowed disabled:opacity-60"
         style={{ background: COLORS.primary }}
       >
-        <Save size={16} />
-        រក្សាទុក
+        {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+        {saving ? "កំពុងរក្សាទុក..." : "រក្សាទុក"}
       </button>
     </div>
   );

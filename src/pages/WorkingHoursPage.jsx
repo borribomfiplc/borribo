@@ -12,13 +12,19 @@ export default function WorkingHoursPage() {
   const [schedules, setSchedules] = useState(DEFAULT_WORKING_HOURS.schedules);
   const [workDays, setWorkDays] = useState(DEFAULT_WORKING_HOURS.workDays);
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    loadSettingsDoc("workingHours", DEFAULT_WORKING_HOURS).then((data) => {
-      if (!cancelled) {
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await loadSettingsDoc("workingHours", DEFAULT_WORKING_HOURS);
+        if (cancelled) return;
         setSchedules({
           weekday: {
             ...DEFAULT_WORKING_HOURS.schedules.weekday,
@@ -31,9 +37,14 @@ export default function WorkingHoursPage() {
           },
         });
         setWorkDays(Array.isArray(data.workDays) ? data.workDays : DEFAULT_WORKING_HOURS.workDays);
-        setLoading(false);
+        setSettingsLoaded(true);
+      } catch (loadError) {
+        if (!cancelled) { setSettingsLoaded(false); setError(loadError?.message || "មិនអាចទាញយកម៉ោងធ្វើការបានទេ"); }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    });
+    };
+    load();
     return () => { cancelled = true; };
   }, []);
 
@@ -46,6 +57,7 @@ export default function WorkingHoursPage() {
     setWorkDays((list) => (list.includes(d) ? list.filter((x) => x !== d) : [...list, d]));
 
   const handleSave = async () => {
+    if (saving || !settingsLoaded) return;
     const invalidSchedule = Object.values(schedules).some((schedule) => {
       const start = Number(schedule.start?.replace(":", ""));
       const end = Number(schedule.end?.replace(":", ""));
@@ -55,13 +67,16 @@ export default function WorkingHoursPage() {
       setError("សូមកំណត់ម៉ោងចេញឱ្យក្រោយម៉ោងចូល រយៈពេលអនុគ្រោះមិនអវិជ្ជមាន និងជ្រើសថ្ងៃធ្វើការយ៉ាងហោចណាស់ ១ ថ្ងៃ");
       return;
     }
+    setSaving(true);
     try {
       setError("");
       await saveSettingsDoc("workingHours", { schedules, workDays });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
-    } catch {
-      setError("មិនអាចរក្សាទុកម៉ោងធ្វើការបានទេ។ សូមព្យាយាមម្ដងទៀត");
+    } catch (saveError) {
+      setError(saveError?.message || "មិនអាចរក្សាទុកម៉ោងធ្វើការបានទេ។ សូមព្យាយាមម្ដងទៀត");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -75,7 +90,7 @@ export default function WorkingHoursPage() {
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ម៉ោងធ្វើការ</h1>
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">កំណត់ម៉ោងធ្វើការតាមថ្ងៃ រយៈពេលអនុគ្រោះ និងថ្ងៃធ្វើការ</p>
       </div>
-      <SettingsSaveBar onSave={handleSave} saved={saved} />
+      <SettingsSaveBar onSave={handleSave} saved={saved} saving={saving} disabled={!settingsLoaded} />
       {error && <p className="mb-4 rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#D9614F]">{error}</p>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
@@ -131,7 +146,8 @@ export default function WorkingHoursPage() {
             <button
               key={d}
               onClick={() => toggleDay(d)}
-              className="px-4 py-2 rounded-xl text-sm font-medium border transition-colors"
+              disabled={saving || !settingsLoaded}
+              className="px-4 py-2 rounded-xl text-sm font-medium border transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               style={
                 workDays.includes(d)
                   ? { background: COLORS.primaryLight, color: COLORS.primary, borderColor: "transparent" }

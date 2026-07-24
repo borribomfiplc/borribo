@@ -2,16 +2,11 @@ import React, { useState } from "react";
 import {
   ChevronDown, CheckCircle2, XCircle, AlertCircle, Download, X, FileCheck2, FileWarning
 } from "lucide-react";
-import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { COLORS } from "../data/theme";
 import { correctionStatusStyle, leaveQuotas, leaveTypeStyle, leaveTypes } from "../data/mockData";
 import StatCard from "../components/shared/StatCard";
-import { notifyTelegram } from "../services/telegram";
-import { db } from "../firebase/config";
-import { leaveAttendanceRecord, remainingLeaveDays, requestLeaveDaysForYear, workingLeaveDates } from "../utils/leave";
 import { downloadLeaveAttachment } from "../services/leaveAttachments";
-import { todayISO } from "../utils/attendance";
-import { secureCollectionMutation } from "../services/secureWrites";
+import { decideLeaveRequest, updateLeaveDocumentReceipt } from "../services/leave";
 
 export default function LeaveApprovalPage({ requests, employees, profile, holidays = [] }) {
   const [branchFilter, setBranchFilter] = useState("គ្រប់សាខា");
@@ -47,12 +42,7 @@ export default function LeaveApprovalPage({ requests, employees, profile, holida
     const received = request.documentReceiptStatus === "បានទទួល";
     setSaving(true); setError("");
     try {
-      await updateDoc(doc(db, "leaveRequests", request.id), {
-        documentReceiptStatus: received ? "មិនទាន់ទទួល" : "បានទទួល",
-        documentReceiptUpdatedAt: serverTimestamp(),
-        documentReceiptUpdatedBy: profile?.uid || "",
-        documentReceiptUpdatedByName: profile?.name || "HR/Admin",
-      });
+      await updateLeaveDocumentReceipt(request.id, !received);
     } catch (receiptError) {
       setError(receiptError.message || "មិនអាចកែស្ថានភាពឯកសារបានទេ");
     } finally { setSaving(false); }
@@ -64,42 +54,9 @@ export default function LeaveApprovalPage({ requests, employees, profile, holida
     if (status === "បានបដិសេធ" && !decisionReason.trim()) {
       setError("សូមបញ្ចូលមូលហេតុបដិសេធ"); return;
     }
-    const employeeId = request.employeeId || request.empId;
-    const leaveDates = workingLeaveDates(request.startDate, request.endDate, holidays);
-    const authoritativeDays = requestLeaveDaysForYear(request, "", holidays);
-    if (status === "បានអនុម័ត" && !leaveDates.length) {
-      setError("ចន្លោះថ្ងៃនេះមិនមានថ្ងៃធ្វើការទេ"); return;
-    }
-    if (status === "បានអនុម័ត" && leaveQuotas[request.leaveType] > 0) {
-      const years = [...new Set(leaveDates.map((dateISO) => dateISO.slice(0, 4)))];
-      for (const year of years) {
-        const requested = requestLeaveDaysForYear(request, year, holidays);
-        const remaining = remainingLeaveDays(requests, employeeId, request.leaveType, { year, holidays, excludedId: request.id });
-        if (remaining != null && requested > remaining) {
-          setError(`សមតុល្យ ${request.leaveType} ឆ្នាំ ${year} នៅសល់តែ ${remaining} ថ្ងៃ`); return;
-        }
-      }
-    }
     setSaving(true); setError("");
     try {
-      const actor = { uid: profile?.uid || "", name: profile?.name || "HR/Admin" };
-      await updateDoc(doc(db, "leaveRequests", request.id), {
-        status, decisionReason: decisionReason.trim(), decidedOn: todayISO(),
-        decidedAt: serverTimestamp(), decidedBy: actor.uid, decidedByName: actor.name,
-        ...(status === "បានអនុម័ត" ? { days: authoritativeDays, workingDates: leaveDates, leaveYear: request.startDate.slice(0, 4) } : {}),
-      });
-      if (status === "បានអនុម័ត" && (!request.portion || request.portion === "ពេញថ្ងៃ")) {
-        const employee = employees.find((item) => item.id === employeeId);
-        const now = new Date().toISOString();
-        const historyUpserts = leaveDates.map((dateISO) => {
-          const record = { ...leaveAttendanceRecord(request, employee, dateISO, actor), updatedAt: now };
-          return { id: record.docId, data: record };
-        });
-        if (historyUpserts.length) await secureCollectionMutation("attendanceHistory", historyUpserts, []);
-        const todayRecord = historyUpserts.find((row) => row.data.dateISO === todayISO());
-        if (todayRecord) await secureCollectionMutation("attendanceToday", [{ id: todayRecord.data.recordId, data: todayRecord.data }], []);
-      }
-      await notifyTelegram("leave_decision", request.id);
+      await decideLeaveRequest(request.id, status === "បានអនុម័ត" ? "approve" : "reject", decisionReason.trim());
       setDecision(null);
     } catch (decisionError) { setError(decisionError.message || "មិនអាចរក្សាទុកការសម្រេចបានទេ"); }
     finally { setSaving(false); }
@@ -318,7 +275,7 @@ export default function LeaveApprovalPage({ requests, employees, profile, holida
         )}
       </div>
 
-      {decision && <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"><div className="bg-white rounded-2xl w-full max-w-md p-5"><div className="flex items-center justify-between gap-3 mb-4"><div><h3 className="font-bold text-[#1E2333]">{decision.status === "បានអនុម័ត" ? "បញ្ជាក់ការអនុម័ត" : "បញ្ជាក់ការបដិសេធ"}</h3><p className="text-xs text-[#8A8FA3] mt-1">{decision.request.name} · {decision.request.days} ថ្ងៃ</p></div><button onClick={() => setDecision(null)} className="w-8 h-8 rounded-lg hover:bg-[#F5F6FA] flex items-center justify-center"><X size={18} /></button></div><label className="text-sm text-[#5B5F73]">{decision.status === "បានបដិសេធ" ? "មូលហេតុបដិសេធ *" : "កំណត់ចំណាំ (បើមាន)"}<textarea value={decisionReason} onChange={(event) => setDecisionReason(event.target.value)} rows={3} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" placeholder="បញ្ចូលមតិរបស់ HR/Admin..." /></label>{error && <p className="mt-3 rounded-xl bg-[#FBEBE8] px-3 py-2 text-sm text-[#D9614F]">{error}</p>}<div className="flex gap-2 mt-5"><button disabled={saving} onClick={() => setDecision(null)} className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm">បោះបង់</button><button disabled={saving} onClick={confirmDecision} className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white disabled:opacity-60" style={{ background: decision.status === "បានអនុម័ត" ? COLORS.green : COLORS.red }}>{saving ? "កំពុងរក្សាទុក..." : decision.status === "បានអនុម័ត" ? "អនុម័ត" : "បដិសេធ"}</button></div></div></div>}
+      {decision && <div className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center p-0 sm:items-center sm:p-4"><div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[92dvh] flex flex-col overflow-hidden"><div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 p-4 sm:p-5 border-b border-[#EBEDF3]"><div><h3 className="font-bold text-[#1E2333]">{decision.status === "បានអនុម័ត" ? "បញ្ជាក់ការអនុម័ត" : "បញ្ជាក់ការបដិសេធ"}</h3><p className="text-xs text-[#8A8FA3] mt-1">{decision.request.name} · {decision.request.days} ថ្ងៃ</p></div><button onClick={() => setDecision(null)} className="w-8 h-8 rounded-lg hover:bg-[#F5F6FA] flex items-center justify-center"><X size={18} /></button></div><div className="overflow-y-auto p-4 sm:p-5"><label className="text-sm text-[#5B5F73]">{decision.status === "បានបដិសេធ" ? "មូលហេតុបដិសេធ *" : "កំណត់ចំណាំ (បើមាន)"}<textarea value={decisionReason} onChange={(event) => setDecisionReason(event.target.value)} rows={3} className="mt-1.5 w-full rounded-xl bg-[#F5F6FA] px-3 py-2.5 outline-none" placeholder="បញ្ចូលមតិរបស់ HR/Admin..." /></label>{error && <p className="mt-3 rounded-xl bg-[#FBEBE8] px-3 py-2 text-sm text-[#D9614F]">{error}</p>}<div className="sticky bottom-0 bg-white flex gap-2 mt-5 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] border-t border-[#EBEDF3]"><button disabled={saving} onClick={() => setDecision(null)} className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm">បោះបង់</button><button disabled={saving} onClick={confirmDecision} className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white disabled:opacity-60" style={{ background: decision.status === "បានអនុម័ត" ? COLORS.green : COLORS.red }}>{saving ? "កំពុងរក្សាទុក..." : decision.status === "បានអនុម័ត" ? "អនុម័ត" : "បដិសេធ"}</button></div></div></div></div>}
     </>
   );
 }

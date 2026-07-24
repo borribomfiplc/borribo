@@ -49,3 +49,24 @@ export function recordKioskAttendance(action, { pin, location } = {}) {
     location: location || null,
   });
 }
+
+
+export function recordManualAttendance(record) {
+  return attendanceRequest("/api/admin/attendance/mutate", { action: "attendance.manual-upsert", payload: { record } });
+}
+
+export function finalizeDailyAttendance(records) {
+  return attendanceRequest("/api/admin/attendance/mutate", { action: "attendance.daily-close", payload: { records } });
+}
+
+export function importFingerprintAttendance(rows) {
+  return attendanceRequest("/api/admin/attendance/mutate", { action: "attendance.fingerprint-import", payload: { rows } });
+}
+
+export function createAttendanceCorrection(correction) {
+  return attendanceRequest("/api/admin/attendance/mutate", { action: "correction.create", payload: { correction } });
+}
+
+export function decideAttendanceCorrection(correctionId, decision, reason = "") {
+  return attendanceRequest("/api/admin/attendance/mutate", { action: "correction.decide", payload: { correctionId, decision, reason } });
+}

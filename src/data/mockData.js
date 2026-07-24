@@ -67,7 +67,7 @@ const attendanceTodayRaw = [
 
 // One employee gets one record per day. `recordId` is the Firestore document
 // key; `id` remains the human employee ID used throughout the UI.
-const seedAttendanceDate = new Date().toISOString().slice(0, 10);
+const seedAttendanceDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Phnom_Penh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 export const attendanceToday = attendanceTodayRaw.map((row) => ({
   ...row,
   dateISO: seedAttendanceDate,

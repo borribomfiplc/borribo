@@ -1,6 +1,7 @@
 // One-time migration for installations created before v49. It backfills stable
-// branch/department/role IDs on employee, profile, user and job-role documents
-// while keeping all legacy name fields for backwards compatibility.
+// branch/department/role IDs on employee, profile, user, job-role and linked
+// attendance/leave/correction documents while keeping legacy name fields for
+// backwards compatibility.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -15,13 +16,20 @@ catch { throw new Error("Missing serviceAccountKey.json in the project root."); 
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
-const [branchSnap, departmentSnap, roleSnap, employeeSnap, profileSnap, userSnap] = await Promise.all([
+const [
+  branchSnap, departmentSnap, roleSnap, employeeSnap, profileSnap, userSnap,
+  attendanceTodaySnap, attendanceHistorySnap, leaveRequestSnap, correctionSnap,
+] = await Promise.all([
   db.collection("branches").get(),
   db.collection("departments").get(),
   db.collection("jobRoles").get(),
   db.collection("employees").get(),
   db.collection("profiles").get(),
   db.collection("users").get(),
+  db.collection("attendanceToday").get(),
+  db.collection("attendanceHistory").get(),
+  db.collection("leaveRequests").get(),
+  db.collection("corrections").get(),
 ]);
 
 const byName = (snapshot) => new Map(snapshot.docs.map((item) => [String(item.data().name || "").trim().toLowerCase(), item.id]));
@@ -57,6 +65,19 @@ for (const employeeDoc of employeeSnap.docs) {
   writes += 1;
   pending += 1;
   await commitIfNeeded();
+}
+
+
+for (const snapshot of [attendanceTodaySnap, attendanceHistorySnap, leaveRequestSnap, correctionSnap]) {
+  for (const recordDoc of snapshot.docs) {
+    const record = recordDoc.data();
+    const branchId = record.branchId || branchIds.get(normalized(record.branch)) || "";
+    if (!branchId || branchId === record.branchId) continue;
+    batch.set(recordDoc.ref, { branchId }, { merge: true });
+    writes += 1;
+    pending += 1;
+    await commitIfNeeded();
+  }
 }
 
 for (const profileDoc of profileSnap.docs) {

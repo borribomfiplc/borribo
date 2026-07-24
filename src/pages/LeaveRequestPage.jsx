@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, Download, FileText, Search, XCi
 import { COLORS } from "../data/theme";
 import { correctionStatusStyle, leaveTypeStyle } from "../data/mockData";
 import StatCard from "../components/shared/StatCard";
+import { todayISO } from "../utils/attendance";
 
 export default function LeaveRequestPage({ requests = [] }) {
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
@@ -18,7 +19,7 @@ export default function LeaveRequestPage({ requests = [] }) {
     const rows = [["Request ID", "Employee ID", "Name", "Branch", "Leave type", "Start", "End", "Days", "Portion", "Status", "Reason", "Decision reason"], ...filtered.map((request) => [request.id, request.employeeId || request.empId, request.name, request.branch, request.leaveType, request.startDate, request.endDate, request.days, request.portion || "ពេញថ្ងៃ", request.status, request.reason, request.decisionReason || ""])];
     const csv = "\ufeff" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = `leave-requests-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
+    const link = document.createElement("a"); link.href = url; link.download = `leave-requests-${todayISO()}.csv`; link.click(); URL.revokeObjectURL(url);
   };
 
   const counts = {

@@ -9,11 +9,10 @@ import { FieldLabel, TextField, SelectField } from "../components/shared/FormFie
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../firebase/config";
-import { attendanceHistoryRecord, calculateAttendanceMetrics, DEFAULT_WORKING_HOURS, scheduleTextForRecord, todayISO } from "../utils/attendance";
+import { isTime24, scheduleTextForRecord, time24InputValue, todayISO } from "../utils/attendance";
 import { approvedLeaveOnDate } from "../utils/leave";
 import { isEmployeeInactive } from "../utils/employeeStatus";
+import { finalizeDailyAttendance, recordManualAttendance } from "../services/attendance";
 
 const sourceMeta = {
   mobile: { label: "ទូរស័ព្ទ GPS/QR", icon: Smartphone, color: "#2A3F8F", bg: "#EEF1FB" },
@@ -40,7 +39,9 @@ export default function DailyAttendancePage({
   const [editingRecord, setEditingRecord] = useState(null);
   const [manualForm, setManualForm] = useState({ employeeId: "", checkIn: "08:00", checkOut: "17:00", status: "មានវត្តមាន" });
   const [finalizing, setFinalizing] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
   const [finalizeMessage, setFinalizeMessage] = useState("");
+  const [manualError, setManualError] = useState("");
 
   const dailyRows = useMemo(() => {
     const activeEmployees = employees.filter((employee) => !isEmployeeInactive(employee.status));
@@ -107,7 +108,7 @@ export default function DailyAttendancePage({
   };
 
   const editRecord = (record) => {
-    setManualForm({ employeeId: record.id, checkIn: record.checkIn === "—" ? "08:00" : record.checkIn, checkOut: record.checkOut === "—" ? "17:00" : record.checkOut, status: record.status });
+    setManualForm({ employeeId: record.id, checkIn: time24InputValue(record.checkIn) || "08:00", checkOut: time24InputValue(record.checkOut) || "17:00", status: record.status });
     setEditingRecord(record.id);
     setShowManual(true);
   };
@@ -133,61 +134,25 @@ export default function DailyAttendancePage({
   const saveManualEntry = async () => {
     const employee = employees.find((item) => item.id === manualForm.employeeId);
     if (!employee) return;
-    const dateISO = todayISO();
-    const absent = manualForm.status === "អវត្តមាន" || manualForm.status === "ច្បាប់";
-    let metrics = {};
-    if (!absent) {
-      try {
-        const settings = await getDoc(doc(db, "settings", "workingHours"));
-        const workingHours = settings.exists() ? settings.data() : DEFAULT_WORKING_HOURS;
-        metrics = calculateAttendanceMetrics({
-          shift: employee.shift,
-          workingHours,
-          checkInAt: new Date(`${dateISO}T${manualForm.checkIn}:00+07:00`),
-          checkOutAt: new Date(`${dateISO}T${manualForm.checkOut}:00+07:00`),
-        });
-      } catch {
-        metrics = calculateAttendanceMetrics({
-          shift: employee.shift,
-          workingHours: DEFAULT_WORKING_HOURS,
-          checkInAt: new Date(`${dateISO}T${manualForm.checkIn}:00+07:00`),
-          checkOutAt: new Date(`${dateISO}T${manualForm.checkOut}:00+07:00`),
-        });
-      }
+    const noTime = ["អវត្តមាន", "ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"].includes(manualForm.status);
+    if (!noTime && (!isTime24(manualForm.checkIn) || !isTime24(manualForm.checkOut))) {
+      setManualError("សូមបញ្ចូលម៉ោងជា HH:mm"); return;
     }
-    const nextRecord = {
-      id: employee.id,
-      name: employee.name,
-      role: employee.role,
-      branch: employee.branch,
-      shift: employee.shift === "ល្ងាច" ? "ល្ងាច" : "ព្រឹក",
-      checkIn: absent ? "—" : manualForm.checkIn,
-      checkOut: absent ? "—" : manualForm.checkOut,
-      checkInClientAt: absent ? null : `${dateISO}T${manualForm.checkIn}:00+07:00`,
-      checkOutClientAt: absent ? null : `${dateISO}T${manualForm.checkOut}:00+07:00`,
-      hours: absent ? "—" : metrics.hours,
-      status: absent ? manualForm.status : metrics.status,
-      ...metrics,
-      dateISO,
-      recordId: `${employee.id}_${dateISO}`,
-      updatedAt: new Date().toISOString(),
-      source: "manual",
-      manualEntry: true,
-    };
-    await setAttendanceToday((records) => {
-      const exists = records.some((record) => record.id === employee.id);
-      return exists
-        ? records.map((record) => (record.id === employee.id ? { ...record, ...nextRecord } : record))
-        : [nextRecord, ...records];
-    });
-    if (setAttendanceHistory) {
-      const historyRecord = attendanceHistoryRecord(nextRecord);
-      await setAttendanceHistory((records) => records.some((record) => record.docId === historyRecord.docId)
-        ? records.map((record) => record.docId === historyRecord.docId ? { ...record, ...historyRecord } : record)
-        : [historyRecord, ...records]);
+    if (!noTime && manualForm.checkOut <= manualForm.checkIn) {
+      setManualError("ម៉ោងចេញត្រូវក្រោយម៉ោងចូល"); return;
     }
-    setEditingRecord(null);
-    setShowManual(false);
+    setSavingManual(true); setManualError("");
+    try {
+      await recordManualAttendance({
+        employeeId: employee.id,
+        dateISO: todayISO(),
+        status: manualForm.status,
+        checkIn: noTime ? "" : manualForm.checkIn,
+        checkOut: noTime ? "" : manualForm.checkOut,
+      });
+      setEditingRecord(null); setShowManual(false);
+    } catch (saveError) { setManualError(saveError.message || "មិនអាចរក្សាទុកវត្តមានបានទេ"); }
+    finally { setSavingManual(false); }
   };
 
   const finalizeToday = async () => {
@@ -195,22 +160,15 @@ export default function DailyAttendancePage({
     if (!placeholders.length) { setFinalizeMessage("វត្តមានថ្ងៃនេះត្រូវបានរក្សាទុកគ្រប់រួចហើយ"); return; }
     setFinalizing(true); setFinalizeMessage("");
     try {
-      const finalized = placeholders.map(({ isPlaceholder, ...record }) => ({
-        ...record,
-        recordId: `${record.id}_${record.dateISO}`,
-        docId: `${record.id}_${record.dateISO}`,
-        finalizedAt: new Date().toISOString(),
-        source: record.source === "unknown" ? "daily-close" : record.source,
-      }));
-      await setAttendanceToday((records) => {
-        const existing = new Set(records.map((record) => record.id));
-        return [...records, ...finalized.filter((record) => !existing.has(record.id))];
-      });
-      await setAttendanceHistory((records) => {
-        const existing = new Set(records.map((record) => record.docId));
-        return [...finalized.filter((record) => !existing.has(record.docId)), ...records];
-      });
-      setFinalizeMessage(`បានរក្សាទុកអវត្តមាន/ច្បាប់ ${finalized.length} នាក់សម្រាប់ថ្ងៃនេះ`);
+      const result = await finalizeDailyAttendance(placeholders.map((record) => ({
+        employeeId: record.id,
+        dateISO: record.dateISO,
+        status: record.status,
+        leaveRequestId: record.leaveRequestId || "",
+        leaveType: record.leaveType || "",
+        leavePortion: record.leavePortion || "",
+      })));
+      setFinalizeMessage(`បានរក្សាទុកអវត្តមាន/ច្បាប់ ${result.finalized ?? placeholders.length} នាក់សម្រាប់ថ្ងៃនេះ`);
     } catch (finalizeError) {
       setFinalizeMessage(finalizeError.message || "មិនអាចបិទបញ្ជីវត្តមានថ្ងៃនេះបានទេ");
     } finally { setFinalizing(false); }
@@ -487,51 +445,22 @@ export default function DailyAttendancePage({
       {/* Manual entry modal */}
       {showManual && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
+          <div className="w-full max-w-md max-h-[92dvh] overflow-hidden rounded-t-2xl bg-white flex flex-col sm:max-h-[90vh] sm:rounded-2xl">
+            <div className="sticky top-0 z-10 bg-white flex items-center justify-between p-4 sm:p-5 border-b border-[#EBEDF3]">
               <h3 className="font-bold text-[#1E2333] text-lg">{editingRecord ? "កែតម្រូវវត្តមាន" : "កត់ត្រាវត្តមានដោយដៃ"}</h3>
-              <button
-                onClick={() => { setShowManual(false); setEditingRecord(null); }}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]"
-              >
-                <X size={18} />
-              </button>
+              <button disabled={savingManual} onClick={() => { setShowManual(false); setEditingRecord(null); setManualError(""); }} className="w-8 h-8 rounded-lg flex items-center justify-center text-[#8A8FA3] hover:bg-[#F5F6FA]"><X size={18} /></button>
             </div>
-            <div className="flex flex-col gap-3.5">
-              <div>
-                <FieldLabel>ជ្រើសរើសបុគ្គលិក</FieldLabel>
-                <SelectField options={employees.map((employee) => ({ label: `${employee.name} · ${employee.id}`, value: employee.id }))} value={manualForm.employeeId} onChange={(e) => setManualForm({ ...manualForm, employeeId: e.target.value })} />
+            <div className="overflow-y-auto p-4 sm:p-5 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+              <div className="flex flex-col gap-3.5">
+                <div><FieldLabel>ជ្រើសរើសបុគ្គលិក</FieldLabel><SelectField options={employees.map((employee) => ({ label: `${employee.name} · ${employee.id}`, value: employee.id }))} value={manualForm.employeeId} onChange={(e) => setManualForm({ ...manualForm, employeeId: e.target.value })} /></div>
+                <div className="grid grid-cols-2 gap-3"><div><FieldLabel>ម៉ោងចូល</FieldLabel><TextField type="time" value={manualForm.checkIn} onChange={(e) => setManualForm({ ...manualForm, checkIn: e.target.value })} /></div><div><FieldLabel>ម៉ោងចេញ</FieldLabel><TextField type="time" value={manualForm.checkOut} onChange={(e) => setManualForm({ ...manualForm, checkOut: e.target.value })} /></div></div>
+                <div><FieldLabel>ស្ថានភាព</FieldLabel><SelectField options={["មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"]} value={manualForm.status} onChange={(e) => setManualForm({ ...manualForm, status: e.target.value })} /></div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <FieldLabel>ម៉ោងចូល</FieldLabel>
-                  <TextField type="time" value={manualForm.checkIn} onChange={(e) => setManualForm({ ...manualForm, checkIn: e.target.value })} />
-                </div>
-                <div>
-                  <FieldLabel>ម៉ោងចេញ</FieldLabel>
-                  <TextField type="time" value={manualForm.checkOut} onChange={(e) => setManualForm({ ...manualForm, checkOut: e.target.value })} />
-                </div>
+              {manualError && <p className="mt-4 rounded-xl bg-[#FBEBE8] px-3 py-2 text-sm text-[#D9614F]">{manualError}</p>}
+              <div className="sticky bottom-0 bg-white flex gap-3 mt-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] border-t border-[#EBEDF3]">
+                <button disabled={savingManual} onClick={() => { setShowManual(false); setEditingRecord(null); setManualError(""); }} className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#5B5F73] disabled:opacity-60">បោះបង់</button>
+                <button onClick={saveManualEntry} disabled={!manualForm.employeeId || savingManual} className="flex-1 text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60" style={{ background: COLORS.primary }}>{savingManual ? "កំពុងរក្សាទុក..." : "រក្សាទុក"}</button>
               </div>
-              <div>
-                <FieldLabel>ស្ថានភាព</FieldLabel>
-                <SelectField options={["មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់"]} value={manualForm.status} onChange={(e) => setManualForm({ ...manualForm, status: e.target.value })} />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => { setShowManual(false); setEditingRecord(null); }}
-                className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#5B5F73]"
-              >
-                បោះបង់
-              </button>
-              <button
-                onClick={saveManualEntry}
-                disabled={!manualForm.employeeId}
-                className="flex-1 text-white rounded-xl py-2.5 text-sm font-semibold"
-                style={{ background: COLORS.primary }}
-              >
-                រក្សាទុក
-              </button>
             </div>
           </div>
         </div>

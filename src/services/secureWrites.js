@@ -20,10 +20,6 @@ async function workerRequest(path, body, authenticated = true) {
   return result;
 }
 
-export function secureCollectionMutation(collectionName, upserts, deletes = []) {
-  return workerRequest("/api/admin/secure-collection/mutate", { collectionName, upserts, deletes });
-}
-
 export function resolveVerifiedLogin(identifier, password) {
   return workerRequest("/api/auth/resolve-login", { identifier, password }, false);
 }
@@ -32,6 +28,3 @@ export function requestSecurePasswordReset(identifier) {
   return workerRequest("/api/auth/password-reset", { identifier }, false);
 }
 
-export function secureLeaveMutation(action, payload) {
-  return workerRequest("/api/admin/leave/mutate", { action, payload });
-}

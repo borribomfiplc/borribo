@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { todayISO } from "../utils/attendance";
 import {
   Banknote, Ban, CheckCircle2, ChevronDown, ChevronUp, Download, FileText, History,
   Loader2, Paperclip, Pencil, Plus, Trash2, WalletCards, X, XCircle,
@@ -13,7 +14,7 @@ import {
   deleteLoanAttachment, downloadLoanAttachment, uploadLoanFiles, validateLoanFiles,
 } from "../services/loanAttachments";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayISO();
 const emptyLoan = (employees = []) => ({
   employeeId: employees[0]?.id || "", amount: "", monthlyPayment: "",
   startDate: today(), purpose: "",
@@ -133,6 +134,15 @@ export default function StaffLoanPage({ employees = [], loans = [] }) {
     await cancelStaffLoan(selected.loanId, note);
   });
 
+  const handleDownloadAttachment = async (attachment) => {
+    setError("");
+    try {
+      await downloadLoanAttachment(attachment);
+    } catch (downloadError) {
+      setError(downloadError?.message || "មិនអាចទាញយកឯកសារភ្ជាប់បានទេ");
+    }
+  };
+
   return <>
     <div className="flex items-start justify-between mb-5 sm:mb-6 gap-3 flex-wrap">
       <div><h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">កម្ចីបុគ្គលិក</h1><p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">Workflow អនុម័ត ការសងប្រាក់ និងប្រវត្តិប្រតិបត្តិការ</p></div>
@@ -167,7 +177,7 @@ export default function StaffLoanPage({ employees = [], loans = [] }) {
               <button onClick={() => setExpanded(isOpen ? "" : loan.loanId)} className="p-2 rounded-lg hover:bg-[#F5F6FA]" aria-label="បង្ហាញប្រវត្តិ">{isOpen ? <ChevronUp size={17}/> : <ChevronDown size={17}/>}</button>
             </div>
           </div>
-          {isOpen && <LoanDetails loan={loan}/>}
+          {isOpen && <LoanDetails loan={loan} onDownloadAttachment={handleDownloadAttachment}/>}
         </div>;
       })}
       {!loans.length && <div className="bg-white rounded-2xl border border-[#EBEDF3] text-center py-14 text-[#8A8FA3]">មិនទាន់មានកម្ចីបុគ្គលិកទេ។</div>}
@@ -210,14 +220,14 @@ export default function StaffLoanPage({ employees = [], loans = [] }) {
   </>;
 }
 
-function LoanDetails({ loan }) {
+function LoanDetails({ loan, onDownloadAttachment }) {
   const payments = [...(Array.isArray(loan.payments) ? loan.payments : [])].reverse();
   const history = [...(Array.isArray(loan.history) ? loan.history : [])].reverse();
   const attachments = Array.isArray(loan.attachments) ? loan.attachments : [];
   return <div className="border-t border-[#EBEDF3] bg-[#FAFBFD] p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
     <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><WalletCards size={16}/>ប្រវត្តិសងប្រាក់</h3><div className="space-y-2">{payments.map((payment) => <div key={payment.paymentId} className="bg-white border border-[#EBEDF3] rounded-xl p-3 flex justify-between gap-3 text-sm"><div><div>{payment.date} · {payment.note || "ការសងប្រាក់"}</div><div className="text-xs text-[#8A8FA3] mt-1">ដោយ {payment.recordedByEmail || "—"}</div></div><strong>{Number(payment.amount || 0).toLocaleString()} $</strong></div>)}{!payments.length && <p className="text-xs text-[#8A8FA3]">មិនទាន់មានការសងប្រាក់។</p>}</div></div>
     <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><History size={16}/>Audit history</h3><div className="space-y-2">{history.map((item) => <div key={item.id} className="bg-white border border-[#EBEDF3] rounded-xl p-3 text-sm"><div className="font-medium">{item.label}</div><div className="text-xs text-[#8A8FA3] mt-1">{String(item.at || "").slice(0,16).replace("T"," ")} · {item.actorEmail || "—"}</div></div>)}{!history.length && <p className="text-xs text-[#8A8FA3]">Legacy record — មិនទាន់មាន audit history។</p>}</div></div>
-    <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><Paperclip size={16}/>ឯកសារភ្ជាប់</h3><div className="space-y-2">{attachments.map((attachment) => <button type="button" key={attachment.path} onClick={() => downloadLoanAttachment(attachment).catch(() => {})} className="w-full bg-white border border-[#EBEDF3] rounded-xl p-3 flex items-center gap-2 text-sm text-left hover:bg-[#F7F8FB]"><FileText size={16} className="text-[#2A3F8F]"/><span className="flex-1 truncate">{attachment.name}</span><Download size={15}/></button>)}{!attachments.length && <p className="text-xs text-[#8A8FA3]">មិនមានឯកសារភ្ជាប់។</p>}</div></div>
+    <div><h3 className="font-semibold text-sm text-[#1E2333] flex items-center gap-2 mb-3"><Paperclip size={16}/>ឯកសារភ្ជាប់</h3><div className="space-y-2">{attachments.map((attachment) => <button type="button" key={attachment.path} onClick={() => onDownloadAttachment(attachment)} className="w-full bg-white border border-[#EBEDF3] rounded-xl p-3 flex items-center gap-2 text-sm text-left hover:bg-[#F7F8FB]"><FileText size={16} className="text-[#2A3F8F]"/><span className="flex-1 truncate">{attachment.name}</span><Download size={15}/></button>)}{!attachments.length && <p className="text-xs text-[#8A8FA3]">មិនមានឯកសារភ្ជាប់។</p>}</div></div>
     <div className="text-sm text-[#5B5F73]"><strong>គោលបំណង៖</strong> {loan.purpose || "—"}{loan.decisionNote && <span className="block mt-1"><strong>កំណត់ចំណាំសេចក្តីសម្រេច៖</strong> {loan.decisionNote}</span>}{loan.cancellationReason && <span className="block mt-1"><strong>មូលហេតុលុបចោល៖</strong> {loan.cancellationReason}</span>}</div>
   </div>;
 }

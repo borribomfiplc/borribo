@@ -3,38 +3,28 @@ import { Power, Briefcase, Pencil } from "lucide-react";
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
+import { saveDepartment, toggleDepartmentStatus } from "../services/organization";
 
 export default function DepartmentPage({ employees, setEmployees, departments, setDepartments, jobRoles = [], setJobRoles }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", head: "", description: "", status: "សកម្ម" });
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !form.head.trim()) {
-      setError("សូមបំពេញឈ្មោះនាយកដ្ឋាន និងប្រធាននាយកដ្ឋាន");
-      return;
-    }
-    if (departments.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase())) { setError("ឈ្មោះនាយកដ្ឋាននេះមានរួចហើយ"); return; }
-    const existing = departments.find((item) => item.id === editingId);
-    await setDepartments((list) => editingId
-      ? list.map((item) => item.id === editingId ? { ...item, ...form, name: form.name.trim() } : item)
-      : [{ id: `DEPT-${String(list.length + 1).padStart(3, "0")}`, ...form, name: form.name.trim() }, ...list]);
-    if (existing && existing.name !== form.name.trim()) {
-      await setEmployees((list) => list.map((employee) => (employee.departmentId === existing.id || employee.dept === existing.name)
-        ? { ...employee, departmentId: existing.id, dept: form.name.trim() } : employee));
-      if (setJobRoles) await setJobRoles((list) => list.map((role) => (role.departmentId === existing.id || role.dept === existing.name)
-        ? { ...role, departmentId: existing.id, dept: form.name.trim() } : role));
-    }
-    setError("");
-    setForm({ name: "", head: "", description: "", status: "សកម្ម" });
-    setEditingId(null);
-    setShowNew(false);
+    if (!form.name.trim() || !form.head.trim()) { setError("សូមបំពេញឈ្មោះនាយកដ្ឋាន និងប្រធាននាយកដ្ឋាន"); return; }
+    setSaving(true); setError("");
+    try {
+      await saveDepartment(editingId, { ...form, name: form.name.trim(), head: form.head.trim(), description: form.description.trim() });
+      setForm({ name: "", head: "", description: "", status: "សកម្ម" }); setEditingId(null); setShowNew(false);
+    } catch (saveError) { setError(saveError.message || "មិនអាចរក្សាទុកនាយកដ្ឋានបានទេ"); }
+    finally { setSaving(false); }
   };
 
-  const toggleStatus = (id) => setDepartments((list) => list.map((department) => department.id === id ? { ...department, status: department.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : department));
+  const toggleStatus = async (id) => { setError(""); try { await toggleDepartmentStatus(id); } catch (toggleError) { setError(toggleError.message || "មិនអាចប្ដូរស្ថានភាពបានទេ"); } };
   const openAdd = () => { setEditingId(null); setForm({ name: "", head: "", description: "", status: "សកម្ម" }); setError(""); setShowNew(true); };
   const editDepartment = (department) => { setEditingId(department.id); setForm({ name: department.name || "", head: department.head || "", description: department.description || "", status: department.status || "សកម្ម" }); setError(""); setShowNew(true); };
 
@@ -75,7 +65,7 @@ export default function DepartmentPage({ employees, setEmployees, departments, s
       </div>
 
       {showNew && (
-        <OrgModal title={editingId ? "កែនាយកដ្ឋាន" : "បន្ថែមនាយកដ្ឋានថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកនាយកដ្ឋាន" error={error}>
+        <OrgModal title={editingId ? "កែនាយកដ្ឋាន" : "បន្ថែមនាយកដ្ឋានថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកនាយកដ្ឋាន" error={error} saving={saving}>
           <div>
             <FieldLabel required>ឈ្មោះនាយកដ្ឋាន</FieldLabel>
             <TextField value={form.name} onChange={update("name")} placeholder="ឧ. ទីផ្សារឌីជីថល" />

@@ -42,6 +42,7 @@ function formatDateTime(value) {
 export default function SystemSettingsPage() {
   const [settings, setSettings] = useState(DEFAULT_SYSTEM_SETTINGS);
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [action, setAction] = useState("");
@@ -62,13 +63,22 @@ export default function SystemSettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    loadSettingsDoc("system", DEFAULT_SYSTEM_SETTINGS).then((data) => {
-      if (!cancelled) {
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await loadSettingsDoc("system", DEFAULT_SYSTEM_SETTINGS);
+        if (cancelled) return;
         setSettings(normalizeSystemSettings(data));
-        setLoading(false);
-        refreshRuntime();
+        setSettingsLoaded(true);
+        await refreshRuntime();
+      } catch (loadError) {
+        if (!cancelled) { setSettingsLoaded(false); setError(loadError?.message || "មិនអាចទាញយកការកំណត់ប្រព័ន្ធបានទេ"); }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    });
+    };
+    load();
     return () => { cancelled = true; };
   }, []);
 
@@ -79,6 +89,7 @@ export default function SystemSettingsPage() {
   const set = (key) => (value) => setSettings((current) => ({ ...current, [key]: value }));
 
   const handleSave = async () => {
+    if (saving || !settingsLoaded) return;
     setSaving(true);
     setError("");
     setMessage("");
@@ -96,6 +107,7 @@ export default function SystemSettingsPage() {
   };
 
   const runAction = async (kind, callback, successMessage) => {
+    if (!settingsLoaded || action) return;
     setAction(kind);
     setError("");
     setMessage("");
@@ -139,8 +151,7 @@ export default function SystemSettingsPage() {
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ប្រព័ន្ធ</h1>
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">ការជូនដំណឹង សុវត្ថិភាព ការបង្ហាញ និងការបម្រុងទុកទិន្នន័យ</p>
       </div>
-      <SettingsSaveBar onSave={handleSave} saved={saved} disabled={saving} />
-      {saving && <div className="-mt-4 mb-4 text-xs text-[#8A8FA3]">កំពុងរក្សាទុក...</div>}
+      <SettingsSaveBar onSave={handleSave} saved={saved} saving={saving} disabled={!settingsLoaded} />
       {message && <div className="mb-4 rounded-xl bg-[#E9F7EF] px-4 py-3 text-sm text-[#277A4B]">{message}</div>}
       {error && <div className="mb-4 rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#B44335]">{error}</div>}
 

@@ -30,6 +30,7 @@ function logoExtension(file) {
 export default function CompanySettingsPage() {
   const [form, setForm] = useState(DEFAULT_COMPANY);
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [logoFile, setLogoFile] = useState(null);
@@ -38,13 +39,22 @@ export default function CompanySettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    loadSettingsDoc("company", DEFAULT_COMPANY).then((data) => {
-      if (!cancelled) {
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await loadSettingsDoc("company", DEFAULT_COMPANY);
+        if (cancelled) return;
         setForm(data);
         setLogoPreview(data.logoUrl || "");
-        setLoading(false);
+        setSettingsLoaded(true);
+      } catch (loadError) {
+        if (!cancelled) { setSettingsLoaded(false); setError(loadError?.message || "មិនអាចទាញយកព័ត៌មានក្រុមហ៊ុនបានទេ"); }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    });
+    };
+    load();
     return () => { cancelled = true; };
   }, []);
 
@@ -55,6 +65,7 @@ export default function CompanySettingsPage() {
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
 
   const handleSave = async () => {
+    if (saving || !settingsLoaded) return;
     setSaving(true);
     setError("");
     let uploadedPath = "";
@@ -120,8 +131,7 @@ export default function CompanySettingsPage() {
         <h1 className="text-lg sm:text-[22px] font-bold text-[#1E2333]">ក្រុមហ៊ុន</h1>
         <p className="text-xs sm:text-sm text-[#8A8FA3] mt-1">គ្រប់គ្រងព័ត៌មានទូទៅរបស់ក្រុមហ៊ុន</p>
       </div>
-      <SettingsSaveBar onSave={handleSave} saved={saved} disabled={saving} />
-      {saving && <div className="-mt-4 mb-4 text-xs text-[#8A8FA3]">កំពុងរក្សាទុក...</div>}
+      <SettingsSaveBar onSave={handleSave} saved={saved} saving={saving} disabled={!settingsLoaded} />
       {error && <div className="mb-4 rounded-xl bg-[#FBEBE8] px-4 py-3 text-sm text-[#B44335]">{error}</div>}
 
       <div className="flex flex-col gap-5">

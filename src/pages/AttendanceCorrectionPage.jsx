@@ -8,33 +8,23 @@ import { FieldLabel, TextField, SelectField } from "../components/shared/FormFie
 import { usePagination } from "../hooks/usePagination";
 import PaginationBar from "../components/shared/PaginationBar";
 import StatCard from "../components/shared/StatCard";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../firebase/config";
-import { calculateAttendanceMetrics, DEFAULT_WORKING_HOURS } from "../utils/attendance";
+import { isTime24, time24InputValue, todayISO } from "../utils/attendance";
+import { createAttendanceCorrection, decideAttendanceCorrection } from "../services/attendance";
 
 const formatKhmerDate = (dateISO) => new Intl.DateTimeFormat("km-KH", { year: "numeric", month: "long", day: "numeric" }).format(new Date(`${dateISO}T00:00:00`));
-const time24 = (value) => {
-  const raw = String(value || "").trim();
-  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(raw)) return raw;
-  const match = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) return "";
-  let hour = Number(match[1]) % 12;
-  if (match[3].toUpperCase() === "PM") hour += 12;
-  return `${String(hour).padStart(2, "0")}:${match[2]}`;
-};
-
 export default function AttendanceCorrectionPage({ employees, attendanceToday, setAttendanceToday, attendanceHistory, setAttendanceHistory, corrections, setCorrections, profile }) {
   const [statusFilter, setStatusFilter] = useState("ទាំងអស់");
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
     empId: employees[0]?.id || "",
-    date: "",
+    date: todayISO(),
     checkIn: "",
     checkOut: "",
     status: "មានវត្តមាន",
     reason: "",
   });
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const statuses = ["ទាំងអស់", "រង់ចាំពិនិត្យ", "បានអនុម័ត", "បានបដិសេធ"];
   const filtered = corrections.filter((c) => statusFilter === "ទាំងអស់" || c.status === statusFilter);
@@ -53,113 +43,36 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
     const reviewComment = window.prompt(decision === "បានបដិសេធ" ? "សូមបញ្ចូលមូលហេតុបដិសេធ៖" : "មតិអ្នកអនុម័ត (បើមាន)៖", "");
     if (reviewComment === null) return;
     if (decision === "បានបដិសេធ" && !reviewComment.trim()) { setError("ត្រូវបញ្ចូលមូលហេតុបដិសេធ"); return; }
-    let appliedMetrics = {};
-    if (decision === "បានអនុម័ត" && !["អវត្តមាន", "ច្បាប់"].includes(correction.newStatus)) {
-      const employee = employees.find((item) => item.id === correction.empId);
-      const checkIn = time24(correction.newCheckIn);
-      const checkOut = time24(correction.newCheckOut);
-      if (!checkIn || !checkOut) { setError("ម៉ោងក្នុងសំណើនេះមិនត្រឹមត្រូវ។ សូមបង្កើតសំណើថ្មីជា 24 ម៉ោង"); return; }
-      try {
-        const settings = await getDoc(doc(db, "settings", "workingHours"));
-        appliedMetrics = calculateAttendanceMetrics({
-          workingHours: settings.exists() ? settings.data() : DEFAULT_WORKING_HOURS,
-          checkInAt: new Date(`${correction.dateISO}T${checkIn}:00+07:00`),
-          checkOutAt: new Date(`${correction.dateISO}T${checkOut}:00+07:00`),
-          shift: employee?.shift,
-        });
-      } catch {
-        appliedMetrics = calculateAttendanceMetrics({
-          workingHours: DEFAULT_WORKING_HOURS,
-          checkInAt: new Date(`${correction.dateISO}T${checkIn}:00+07:00`),
-          checkOutAt: new Date(`${correction.dateISO}T${checkOut}:00+07:00`),
-          shift: employee?.shift,
-        });
-      }
-    }
-    await setCorrections((list) => list.map((item) => (item.id === id ? {
-      ...item, status: decision, decisionReason: reviewComment.trim(), decidedAt: new Date().toISOString(),
-      decidedBy: profile?.uid || "", decidedByName: profile?.name || "HR/Admin",
-      ...(decision === "បានអនុម័ត" ? { appliedHours: appliedMetrics.hours || "—", appliedStatus: appliedMetrics.status || correction.newStatus } : {}),
-    } : item)));
-    if (decision !== "បានអនុម័ត") return;
-
-    const dateISO = correction.dateISO || new Date().toISOString().slice(0, 10);
-    const docId = `${correction.empId}_${dateISO}`;
-    const changes = {
-      id: correction.empId,
-      name: correction.name,
-      role: correction.role,
-      branch: correction.branch,
-      dateISO,
-      date: correction.date || formatKhmerDate(dateISO),
-      shift: "ពេញម៉ោង",
-      checkIn: time24(correction.newCheckIn) || correction.newCheckIn,
-      checkOut: time24(correction.newCheckOut) || correction.newCheckOut,
-      hours: correction.newStatus === "អវត្តមាន" || correction.newStatus === "ច្បាប់" ? "—" : appliedMetrics.hours,
-      status: correction.newStatus === "អវត្តមាន" || correction.newStatus === "ច្បាប់" ? correction.newStatus : appliedMetrics.status,
-      ...appliedMetrics,
-      docId,
-      correctedAt: new Date().toISOString(),
-      correctionId: correction.id,
-      source: "correction",
-    };
-    await setAttendanceHistory((list) => {
-      const exists = list.some((record) => record.docId === docId);
-      return exists ? list.map((record) => record.docId === docId ? { ...record, ...changes } : record) : [changes, ...list];
-    });
-    const todayISO = new Date().toISOString().slice(0, 10);
-    if (dateISO === todayISO) {
-      await setAttendanceToday((list) => {
-        const todayRecord = { ...changes, recordId: `${correction.empId}_${todayISO}` };
-        return list.some((record) => record.id === correction.empId)
-          ? list.map((record) => record.id === correction.empId ? { ...record, ...todayRecord } : record)
-          : [todayRecord, ...list];
-      });
-    }
+    setSaving(true); setError("");
+    try {
+      await decideAttendanceCorrection(id, decision === "បានអនុម័ត" ? "approve" : "reject", reviewComment.trim());
+    } catch (decisionError) { setError(decisionError.message || "មិនអាចសម្រេចសំណើកែតម្រូវបានទេ"); }
+    finally { setSaving(false); }
   };
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleSubmit = () => {
-    if (!form.date || !form.reason.trim()) {
-      setError("សូមបំពេញកាលបរិច្ឆេទ និងហេតុផលនៃការកែតម្រូវ");
-      return;
-    }
-    if (!["អវត្តមាន", "ច្បាប់"].includes(form.status) && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.checkIn) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(form.checkOut))) {
-      setError("សូមបញ្ចូលម៉ោងចូល និងម៉ោងចេញជា 24 ម៉ោង (ឧ. 08:00 និង 17:00)");
-      return;
-    }
-    const emp = employees.find((e) => e.id === form.empId);
-    if (!emp) {
-      setError("មិនមានបុគ្គលិកសម្រាប់បង្កើតសំណើកែតម្រូវទេ");
-      return;
-    }
-    const existing = attendanceHistory.find((item) => item.id === form.empId && item.dateISO === form.date)
-      || (form.date === new Date().toISOString().slice(0, 10) ? attendanceToday.find((item) => item.id === form.empId) : null);
-    const newCorrection = {
-      id: `COR-${String(corrections.length + 1).padStart(3, "0")}`,
-      empId: emp.id,
-      name: emp.name,
-      role: emp.role,
-      branch: emp.branch,
-      date: formatKhmerDate(form.date),
-      dateISO: form.date,
-      originalCheckIn: existing ? existing.checkIn : "—",
-      originalCheckOut: existing ? existing.checkOut : "—",
-      originalStatus: existing ? existing.status : "អវត្តមាន",
-      newCheckIn: form.checkIn || "—",
-      newCheckOut: form.checkOut || "—",
-      newStatus: form.status,
-      reason: form.reason,
-      requestedBy: profile?.name || profile?.email || "HR/Admin",
-      requestedByUid: profile?.uid || "",
-      requestedAt: new Date().toISOString(),
-      status: "រង់ចាំពិនិត្យ",
-    };
-    setError("");
-    setCorrections((list) => [newCorrection, ...list]);
-    setForm({ empId: employees[0]?.id || "", date: new Date().toISOString().slice(0, 10), checkIn: "", checkOut: "", status: "មានវត្តមាន", reason: "" });
-    setShowNew(false);
+  const handleSubmit = async () => {
+    if (!form.date || !form.reason.trim()) { setError("សូមបំពេញកាលបរិច្ឆេទ និងហេតុផលនៃការកែតម្រូវ"); return; }
+    const noTime = ["អវត្តមាន", "ច្បាប់"].includes(form.status);
+    if (!noTime && (!isTime24(form.checkIn) || !isTime24(form.checkOut))) { setError("សូមបញ្ចូលម៉ោងចូល និងម៉ោងចេញជា 24 ម៉ោង"); return; }
+    if (!noTime && form.checkOut <= form.checkIn) { setError("ម៉ោងចេញត្រូវក្រោយម៉ោងចូល"); return; }
+    const emp = employees.find((employee) => employee.id === form.empId);
+    if (!emp) { setError("មិនមានបុគ្គលិកសម្រាប់បង្កើតសំណើកែតម្រូវទេ"); return; }
+    setSaving(true); setError("");
+    try {
+      await createAttendanceCorrection({
+        employeeId: emp.id,
+        dateISO: form.date,
+        newCheckIn: noTime ? "" : time24InputValue(form.checkIn),
+        newCheckOut: noTime ? "" : time24InputValue(form.checkOut),
+        newStatus: form.status,
+        reason: form.reason.trim(),
+      });
+      setForm({ empId: employees[0]?.id || "", date: todayISO(), checkIn: "", checkOut: "", status: "មានវត្តមាន", reason: "" });
+      setShowNew(false);
+    } catch (submitError) { setError(submitError.message || "មិនអាចដាក់សំណើកែតម្រូវបានទេ"); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -389,8 +302,8 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
       {/* New correction modal */}
       {showNew && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[92dvh] overflow-hidden flex flex-col">
+            <div className="sticky top-0 z-10 bg-white flex items-center justify-between p-4 sm:p-5 border-b border-[#EBEDF3]">
               <h3 className="font-bold text-[#1E2333] text-lg">សុំកែតម្រូវវត្តមាន</h3>
               <button
                 onClick={() => setShowNew(false)}
@@ -400,6 +313,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
               </button>
             </div>
 
+            <div className="overflow-y-auto p-4 sm:p-5 pb-[calc(1rem+env(safe-area-inset-bottom))]">
             {error && (
               <div className="text-xs text-[#D9614F] bg-[#FBEBE8] rounded-lg px-3 py-2 mb-3.5">{error}</div>
             )}
@@ -450,7 +364,7 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
               </div>
             </div>
 
-            <div className="flex gap-3 mt-6">
+            <div className="sticky bottom-0 bg-white flex gap-3 mt-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] border-t border-[#EBEDF3]">
               <button
                 onClick={() => setShowNew(false)}
                 className="flex-1 border border-[#EBEDF3] rounded-xl py-2.5 text-sm font-medium text-[#5B5F73]"
@@ -459,11 +373,13 @@ export default function AttendanceCorrectionPage({ employees, attendanceToday, s
               </button>
               <button
                 onClick={handleSubmit}
-                className="flex-1 text-white rounded-xl py-2.5 text-sm font-semibold"
+                disabled={saving}
+                className="flex-1 text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60"
                 style={{ background: COLORS.primary }}
               >
-                ដាក់ស្នើសំណើ
+                {saving ? "កំពុងដាក់ស្នើ..." : "ដាក់ស្នើសំណើ"}
               </button>
+            </div>
             </div>
           </div>
         </div>

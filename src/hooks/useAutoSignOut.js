@@ -67,7 +67,9 @@ export function useAutoSignOut(authUser, signOut, timeoutMs = AUTO_SIGN_OUT_MS) 
       clearTimer();
 
       try {
-        window.sessionStorage.setItem(AUTO_SIGN_OUT_NOTICE_KEY, "1");
+        window.sessionStorage.setItem(AUTO_SIGN_OUT_NOTICE_KEY, JSON.stringify({
+          timeoutMinutes: Math.max(1, Math.round(timeoutMs / 60000)),
+        }));
       } catch {
         // Auto sign-out must still work when browser storage is unavailable.
       }

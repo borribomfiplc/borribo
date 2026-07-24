@@ -57,7 +57,7 @@ service cloud.firestore {
       // It submits a PIN to the trusted Worker, which returns only the matched
       // employee's minimal display data after server-side verification.
       allow get, list: if manager() || (activeAccount() && resource.data.uid == request.auth.uid);
-      allow create, update, delete: if manager();
+      allow create, update, delete: if false;
     }
 
     // Immutable HR audit trail for transfers, promotions, job changes and
@@ -96,39 +96,14 @@ service cloud.firestore {
     // Transactional counter used to reserve unique employee numbers even
     // when two HR users add staff at the same time.
     match /counters/employees {
-      allow get, create, update: if manager();
-      allow list, delete: if false;
+      allow read, write: if false;
     }
 
     match /leaveRequests/{requestId} {
       allow get, list: if manager() || (activeAccount() && resource.data.employeeUid == request.auth.uid);
-      allow create: if hasRole('employee')
-        && request.resource.data.employeeUid == request.auth.uid
-        && request.resource.data.status == 'រង់ចាំពិនិត្យ'
-        && request.resource.data.days is number
-        && request.resource.data.days >= 0.5
-        && request.resource.data.days <= 365
-        && request.resource.data.keys().hasAll(['employeeUid', 'employeeId', 'name', 'branch', 'leaveType', 'startDate', 'endDate', 'days', 'reason', 'status']);
-      allow update: if manager() || (
-        hasRole('employee')
-        && resource.data.employeeUid == request.auth.uid
-        && request.resource.data.employeeUid == request.auth.uid
-        && resource.data.status == 'រង់ចាំពិនិត្យ'
-        && request.resource.data.status in ['រង់ចាំពិនិត្យ', 'បានលុបចោល']
-        && request.resource.data.employeeId == resource.data.employeeId
-        && request.resource.data.startDate == resource.data.startDate
-        && request.resource.data.endDate == resource.data.endDate
-        && request.resource.data.days == resource.data.days
-        && request.resource.data.leaveType == resource.data.leaveType
-        && request.resource.data.reason == resource.data.reason
-        && request.resource.data.name == resource.data.name
-        && request.resource.data.branch == resource.data.branch
-      );
-      allow delete: if manager() || (
-        hasRole('employee')
-        && resource.data.employeeUid == request.auth.uid
-        && resource.data.status == 'រង់ចាំពិនិត្យ'
-      );
+      // Identity, overlap, quota, date calculation and manager decisions are
+      // validated and committed atomically by the trusted Worker.
+      allow create, update, delete: if false;
     }
 
     // Attendance writes from employee and kiosk browsers are forbidden.
@@ -157,24 +132,53 @@ service cloud.firestore {
 
     match /branches/{branchId} {
       allow get, list: if activeAccount();
-      allow create, update, delete: if manager();
+      allow create, update, delete: if false;
     }
 
     match /holidays/{holidayId} {
       allow get, list: if activeAccount();
-      allow create, update, delete: if manager();
+      allow create, update, delete: if false;
     }
 
-    match /{collectionName}/{documentId} {
-      allow get, list, create, update, delete: if manager()
-        && collectionName in ['departments', 'jobRoles', 'calendarEvents'];
+    match /departments/{documentId} {
+      allow get, list: if manager();
+      allow create, update, delete: if false;
     }
 
-    // HR/Admin can append and inspect organization-transfer history, but
-    // existing audit records cannot be rewritten or deleted from the browser.
+    match /jobRoles/{documentId} {
+      allow get, list: if manager();
+      allow create, update, delete: if false;
+    }
+
+    match /calendarEvents/{documentId} {
+      allow get, list, create, update, delete: if manager();
+    }
+
+    // Organization/employment history is created only by the trusted Worker
+    // so browser users cannot forge audit records.
     match /organizationChanges/{changeId} {
-      allow get, list, create: if manager();
-      allow update, delete: if false;
+      allow get, list: if manager();
+      allow create, update, delete: if false;
+    }
+
+    // Backend-only transaction ledgers, reservations and distributed rate limits.
+    match /leaveDateReservations/{documentId} { allow read, write: if false; }
+    match /leaveBalanceLedgers/{documentId} { allow read, write: if false; }
+    match /rateLimitBuckets/{documentId} { allow read, write: if false; }
+    match /assetCodeUnique/{documentId} { allow read, write: if false; }
+    match /organizationUnique/{documentId} { allow read, write: if false; }
+
+    // Per-user notification read state syncs across devices. A user can only
+    // access their own compact state document.
+    match /notificationStates/{userId} {
+      allow get: if activeAccount() && request.auth.uid == userId;
+      allow list: if false;
+      allow create, update: if activeAccount()
+        && request.auth.uid == userId
+        && request.resource.data.uid == userId
+        && request.resource.data.readIds is list
+        && request.resource.data.readIds.size() <= 120;
+      allow delete: if activeAccount() && request.auth.uid == userId;
     }
 
     // The private document contains plaintext QR credentials and is never
@@ -182,27 +186,21 @@ service cloud.firestore {
     // and per-branch hashes/expiry values.
     match /settings/gpsQr {
       allow get: if manager();
-      allow create, update: if manager();
-      allow delete: if administrator();
+      // GPS coordinates, plaintext rotating QR credentials and branch
+      // geofences are validated and committed atomically by the Worker.
+      allow create, update, delete: if false;
     }
 
     match /settings/gpsQrPublic {
       allow get: if activeAccount();
       allow list: if false;
-      allow create, update: if manager();
-      allow delete: if administrator();
+      allow create, update, delete: if false;
     }
 
     match /qrTokens/{branchId} {
-      // QR token hashes are validated by the trusted Worker. Browsers no
-      // longer need access to this collection.
+      // QR token hashes are validated and rotated only by the trusted Worker.
       allow get, list: if manager();
-      allow create, update: if manager()
-        && request.resource.data.branchId == branchId
-        && request.resource.data.tokenHash is string
-        && request.resource.data.tokenHash.size() == 64
-        && request.resource.data.expiresAt is string;
-      allow delete: if administrator();
+      allow create, update, delete: if false;
     }
 
     match /settings/company {
@@ -229,8 +227,12 @@ service cloud.firestore {
       allow get: if manager()
         || (activeAccount() && settingId == 'workingHours');
       allow list: if false;
-      allow create, update: if manager();
-      allow delete: if administrator();
+      allow create, update: if manager()
+        && settingId != 'gpsQr'
+        && settingId != 'gpsQrPublic';
+      allow delete: if administrator()
+        && settingId != 'gpsQr'
+        && settingId != 'gpsQrPublic';
     }
 
     match /users/{userId} {

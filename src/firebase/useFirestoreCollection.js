@@ -1,123 +1,121 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { collection, doc, onSnapshot, writeBatch } from "firebase/firestore";
 import { db } from "./config";
-import { secureCollectionMutation } from "../services/secureWrites";
+
+const demoDataEnabled = import.meta.env.DEV && String(import.meta.env.VITE_USE_DEMO_DATA || "").toLowerCase() === "true";
 
 /**
- * Drop-in replacement for `useState(initialArray)` that is backed by a
- * Firestore collection instead of local memory, so every screen that reads
- * or writes this data stays in sync in real time (including across tabs/
- * devices) without changing how pages call the setter.
+ * Firestore-backed collection state.
  *
- * Usage is identical to useState:
- *   const [employees, setEmployees] = useFirestoreCollection("employees", initialEmployees);
- *   setEmployees((list) => [newEmployee, ...list]);   // add
- *   setEmployees((list) => list.map(...));            // update
- *   setEmployees((list) => list.filter(...));         // delete
+ * Demo records are never shown in a production build. To use local demo data
+ * during development, explicitly set VITE_USE_DEMO_DATA=true.
  *
- * How it works:
- * - Subscribes to the collection with onSnapshot for real-time data.
- * - Production data must be seeded by the admin script. The browser never
- *   writes demo records automatically: an authenticated employee must not be
- *   able to populate or overwrite a new database.
- * - The returned setter diffs the next array against the current one by
- *   `idField` and writes only the adds/updates/removes to Firestore in a
- *   single batch; the UI then updates from the next onSnapshot event, so
- *   all instances of this hook (e.g. other open tabs) stay consistent.
- *
- * @param {string} collectionName Firestore collection name.
- * @param {Array<object>} seedData Initial data used only to seed an empty collection.
- * @param {string} idField Field on each item that becomes the Firestore doc ID.
- * @returns {[Array<object>, Function, boolean, Error|null]} [data, setData, loading, error]
+ * @returns {[Array<object>, Function, boolean, Error|null]}
  */
 export function useFirestoreCollection(collectionName, seedData = [], idField = "id", enabled = true) {
-  const [data, setDataState] = useState(seedData);
-  const [loading, setLoading] = useState(true);
+  const seedDataRef = useRef(seedData);
+  const [data, setDataState] = useState(() => (demoDataEnabled ? seedDataRef.current : []));
+  const [loading, setLoading] = useState(Boolean(enabled));
   const [error, setError] = useState(null);
   const dataRef = useRef(data);
+  const readyRef = useRef(!enabled);
   dataRef.current = data;
 
   useEffect(() => {
+    readyRef.current = !enabled;
     if (!enabled) {
       setDataState([]);
       setLoading(false);
       setError(null);
       return undefined;
     }
-    const colRef = collection(db, collectionName);
 
+    setLoading(true);
+    setError(null);
+    const colRef = collection(db, collectionName);
     const unsubscribe = onSnapshot(
       colRef,
-      async (snapshot) => {
-        setDataState(snapshot.docs.map((d) => {
-          const value = d.data();
-          return value[idField] == null ? { ...value, [idField]: d.id } : value;
-        }));
+      (snapshot) => {
+        const rows = snapshot.docs.map((item) => {
+          const value = item.data();
+          return value[idField] == null ? { ...value, [idField]: item.id } : value;
+        });
+        setDataState(rows.length || !demoDataEnabled ? rows : seedDataRef.current);
+        readyRef.current = true;
         setLoading(false);
       },
-      (err) => {
-        // eslint-disable-next-line no-console
-        console.error(`[firestore] Listener error on "${collectionName}":`, err);
-        setError(err);
+      (listenerError) => {
+        console.error(`[firestore] Listener error on "${collectionName}":`, listenerError);
+        setDataState([]);
+        readyRef.current = false;
+        setError(listenerError);
         setLoading(false);
-      }
+      },
     );
 
     return () => unsubscribe();
   }, [collectionName, enabled, idField]);
 
-  const setData = useCallback(
-    async (updater) => {
-      if (!enabled) throw new Error(`No permission to write ${collectionName}`);
-      const prev = dataRef.current;
-      const next = typeof updater === "function" ? updater(prev) : updater;
+  const setData = useCallback(async (updater) => {
+    if (!enabled) throw new Error(`No permission to write ${collectionName}`);
+    if (!readyRef.current) throw new Error("ទិន្នន័យកំពុងផ្ទុក។ សូមរង់ចាំបន្តិច រួចព្យាយាមម្ដងទៀត។");
 
-      const prevIds = new Set(prev.map((item) => String(item[idField])));
-      const nextIds = new Set(next.map((item) => String(item[idField])));
+    const prev = dataRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    if (!Array.isArray(next)) throw new Error(`Invalid collection update for ${collectionName}`);
 
-      const protectedCollection = ["attendanceToday", "attendanceHistory", "corrections"].includes(collectionName);
-      const upserts = [];
-      const deletes = [];
-      const batch = protectedCollection ? null : writeBatch(db);
-      // Only write records that were added or actually changed. The previous
-      // implementation re-wrote the entire collection for every small edit,
-      // which was slow and could hit Firestore's 500-write batch limit.
-      const previousById = new Map(prev.map((item) => [String(item[idField]), item]));
-      next.forEach((item) => {
-        const id = String(item[idField]);
-        const previous = previousById.get(id);
-        if (!previous || JSON.stringify(previous) !== JSON.stringify(item)) {
-          if (protectedCollection) upserts.push({ id, data: item });
-          else batch.set(doc(db, collectionName, id), item);
+    const prevIds = new Set(prev.map((item) => String(item[idField])));
+    const nextIds = new Set(next.map((item) => String(item[idField])));
+    if ([...nextIds].some((id) => !id || id === "undefined" || id === "null")) {
+      throw new Error(`Missing ${idField} in ${collectionName}`);
+    }
+
+    const protectedCollection = [
+      "employees", "leaveRequests", "attendanceToday", "attendanceHistory", "corrections",
+      "branches", "departments", "jobRoles", "holidays", "kpis", "assets",
+      "staffLoans", "payrollRecords",
+    ].includes(collectionName);
+    if (protectedCollection) {
+      throw new Error(`ការកែ ${collectionName} ត្រូវធ្វើតាម Worker service ដែលមាន validation និង audit log។`);
+    }
+    const upserts = [];
+    const deletes = [];
+    const previousById = new Map(prev.map((item) => [String(item[idField]), item]));
+
+    next.forEach((item) => {
+      const id = String(item[idField]);
+      const previous = previousById.get(id);
+      if (!previous || JSON.stringify(previous) !== JSON.stringify(item)) upserts.push({ id, data: item });
+    });
+    prevIds.forEach((id) => { if (!nextIds.has(id)) deletes.push(id); });
+
+    setDataState(next);
+    try {
+      {
+        const operations = [
+          ...upserts.map(({ id, data: value }) => ({ type: "set", id, value })),
+          ...deletes.map((id) => ({ type: "delete", id })),
+        ];
+        // Firestore permits at most 500 writes per batch. Keep headroom for
+        // future metadata writes and commit safely in deterministic chunks.
+        for (let index = 0; index < operations.length; index += 450) {
+          const batch = writeBatch(db);
+          operations.slice(index, index + 450).forEach((operation) => {
+            const ref = doc(db, collectionName, operation.id);
+            if (operation.type === "delete") batch.delete(ref);
+            else batch.set(ref, operation.value);
+          });
+          await batch.commit();
         }
-      });
-      prevIds.forEach((id) => {
-        if (!nextIds.has(id)) {
-          if (protectedCollection) deletes.push(id);
-          else batch.delete(doc(db, collectionName, id));
-        }
-      });
-
-      // Optimistic local update so the UI feels instant; onSnapshot will
-      // reconcile with the server value shortly after.
-      setDataState(next);
-      try {
-        if (protectedCollection) await secureCollectionMutation(collectionName, upserts, deletes);
-        else await batch.commit();
-        return next;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(`[firestore] Write failed on "${collectionName}":`, err);
-        setError(err);
-        setDataState(prev); // roll back optimistic update
-        // Let the page that initiated the save display a useful error to the
-        // person using the system. Previously this error was swallowed, which
-        // made a failed Firebase write look like a successful save.
-        throw err;
       }
-    },
-    [collectionName, enabled, idField]
-  );
+      return next;
+    } catch (writeError) {
+      console.error(`[firestore] Write failed on "${collectionName}":`, writeError);
+      setError(writeError);
+      setDataState(prev);
+      throw writeError;
+    }
+  }, [collectionName, enabled, idField]);
 
   return [data, setData, loading, error];
 }

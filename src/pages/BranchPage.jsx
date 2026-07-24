@@ -3,6 +3,7 @@ import { Building2, Power, MapPin, Phone, CheckCircle2, AlertCircle, XCircle, Pe
 import { COLORS } from "../data/theme";
 import { FieldLabel, TextField, SelectField } from "../components/shared/FormFields";
 import { OrgHeader, OrgModal } from "../components/shared/OrgWidgets";
+import { saveBranch, toggleBranchStatus } from "../services/organization";
 
 const emptyBranchForm = {
   name: "", type: "សាខា", address: "", manager: "", phone: "", status: "សកម្ម",
@@ -34,6 +35,7 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
   const [form, setForm] = useState(emptyBranchForm);
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const latestDates = useMemo(() => [...new Set(attendanceHistory.map((item) => item.dateISO).filter(Boolean))]
     .sort((a, b) => b.localeCompare(a)).slice(0, 5), [attendanceHistory]);
@@ -54,58 +56,27 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !form.manager.trim()) {
-      setError("សូមបំពេញឈ្មោះសាខា និងអ្នកគ្រប់គ្រង");
-      return;
-    }
-    const duplicate = branches.some((item) => item.id !== editingId && item.name.trim().toLowerCase() === form.name.trim().toLowerCase());
-    if (duplicate) { setError("ឈ្មោះសាខានេះមានរួចហើយ"); return; }
+    if (!form.name.trim() || !form.manager.trim()) { setError("សូមបំពេញឈ្មោះសាខា និងអ្នកគ្រប់គ្រង"); return; }
     const hasLatitude = String(form.latitude).trim() !== "";
     const hasLongitude = String(form.longitude).trim() !== "";
-    if (hasLatitude !== hasLongitude) {
-      setError("សូមបំពេញ Latitude និង Longitude ទាំងពីរ");
-      return;
-    }
+    if (hasLatitude !== hasLongitude) { setError("សូមបំពេញ Latitude និង Longitude ទាំងពីរ"); return; }
     const latitude = hasLatitude ? Number(form.latitude) : "";
     const longitude = hasLongitude ? Number(form.longitude) : "";
     const gpsRadiusMeters = Number(form.gpsRadiusMeters);
-    if ((hasLatitude && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90))
-      || (hasLongitude && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))) {
-      setError("Latitude ឬ Longitude មិនត្រឹមត្រូវ");
-      return;
-    }
-    if (!Number.isFinite(gpsRadiusMeters) || gpsRadiusMeters < 20 || gpsRadiusMeters > 5000) {
-      setError("កាំ GPS ត្រូវនៅចន្លោះ 20 ដល់ 5,000 ម៉ែត្រ");
-      return;
-    }
-    const existing = branches.find((item) => item.id === editingId);
-    const nextBranch = {
-      ...form,
-      name: form.name.trim(),
-      address: form.address.trim(),
-      manager: form.manager.trim(),
-      phone: form.phone.trim(),
-      latitude,
-      longitude,
-      gpsRadiusMeters,
-    };
-    await setBranches((list) => editingId
-      ? list.map((item) => item.id === editingId ? { ...item, ...nextBranch } : item)
-      : [{ id: `BR-${String(list.length + 1).padStart(3, "0")}`, ...nextBranch }, ...list]);
-    if (existing && existing.name !== form.name.trim()) {
-      await setEmployees((list) => list.map((employee) => (employee.branchId === existing.id || employee.branch === existing.name)
-        ? { ...employee, branchId: existing.id, branch: form.name.trim() } : employee));
-    }
-    setError("");
-    setForm(emptyBranchForm);
-    setEditingId(null);
-    setShowNew(false);
+    if ((hasLatitude && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90)) || (hasLongitude && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))) { setError("Latitude ឬ Longitude មិនត្រឹមត្រូវ"); return; }
+    if (!Number.isFinite(gpsRadiusMeters) || gpsRadiusMeters < 20 || gpsRadiusMeters > 5000) { setError("កាំ GPS ត្រូវនៅចន្លោះ 20 ដល់ 5,000 ម៉ែត្រ"); return; }
+    setSaving(true); setError("");
+    try {
+      await saveBranch(editingId, { ...form, name: form.name.trim(), address: form.address.trim(), manager: form.manager.trim(), phone: form.phone.trim(), latitude, longitude, gpsRadiusMeters });
+      setForm(emptyBranchForm); setEditingId(null); setShowNew(false);
+    } catch (saveError) { setError(saveError.message || "មិនអាចរក្សាទុកសាខាបានទេ"); }
+    finally { setSaving(false); }
   };
 
   const openAdd = () => { setEditingId(null); setForm(emptyBranchForm); setError(""); setShowNew(true); };
   const editBranch = (branch) => { setEditingId(branch.id); setForm(branchForm(branch)); setError(""); setShowNew(true); };
 
-  const toggleStatus = (id) => setBranches((list) => list.map((branch) => branch.id === id ? { ...branch, status: branch.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម" } : branch));
+  const toggleStatus = async (id) => { setError(""); try { await toggleBranchStatus(id); } catch (toggleError) { setError(toggleError.message || "មិនអាចប្ដូរស្ថានភាពសាខាបានទេ"); } };
 
   return (
     <>
@@ -187,7 +158,7 @@ export default function BranchPage({ employees, setEmployees, branches, setBranc
         ))}
       </div>
 
-      {showNew && <OrgModal title={editingId ? "កែព័ត៌មានសាខា" : "បន្ថែមសាខាថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកសាខា" error={error}>
+      {showNew && <OrgModal title={editingId ? "កែព័ត៌មានសាខា" : "បន្ថែមសាខាថ្មី"} onClose={() => { setShowNew(false); setEditingId(null); }} onSubmit={handleSubmit} submitLabel="រក្សាទុកសាខា" error={error} saving={saving}>
         <div><FieldLabel required>ឈ្មោះសាខា</FieldLabel><TextField value={form.name} onChange={update("name")} placeholder="ឧ. សាខាចំការមន" /></div>
         <div><FieldLabel>ប្រភេទ</FieldLabel><SelectField options={["ការិយាល័យកណ្តាល", "សាខា"]} value={form.type} onChange={update("type")} /></div>
         <div><FieldLabel>អាសយដ្ឋាន</FieldLabel><TextField icon={MapPin} value={form.address} onChange={update("address")} placeholder="ផ្លូវ, សង្កាត់, ខណ្ឌ, ក្រុង" /></div>

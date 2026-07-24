@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { todayISO } from "../utils/attendance";
 import {
   Banknote, CheckCircle2, ChevronDown, ChevronUp, Download, History,
   Loader2, Pencil, Plus, RotateCcw, Send, WalletCards, X,
@@ -10,8 +11,8 @@ import {
   submitPayrollRecord, updatePayrollRecord,
 } from "../services/operations";
 
-const currentMonth = () => new Date().toISOString().slice(0, 7);
-const today = () => new Date().toISOString().slice(0, 10);
+const currentMonth = () => todayISO().slice(0, 7);
+const today = () => todayISO();
 const emptyPayroll = (employees = [], period = currentMonth()) => ({
   employeeId: employees[0]?.id || "", period, baseSalary: "", allowances: "0",
   bonus: "0", overtime: "0", deductions: "0", tax: "0", loanId: "",

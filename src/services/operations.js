@@ -31,6 +31,7 @@ export const createAsset = (asset) => operationsRequest("asset.create", { asset 
 export const updateAsset = (assetId, patch) => operationsRequest("asset.update", { assetId, patch });
 export const transferAsset = (assetId, transfer) => operationsRequest("asset.transfer", { assetId, transfer });
 export const recordAssetMaintenance = (assetId, maintenance) => operationsRequest("asset.maintenance", { assetId, maintenance });
+export const updateAssetMaintenance = (assetId, maintenanceId, maintenance) => operationsRequest("asset.maintenance.update", { assetId, maintenanceId, maintenance });
 export const submitAsset = (assetId) => operationsRequest("asset.submit", { assetId });
 export const reviewAsset = (assetId, decision, comment = "") => operationsRequest("asset.review", { assetId, decision, comment });
 

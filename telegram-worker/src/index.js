@@ -208,6 +208,9 @@ async function commitWrites(env, writes) {
       if (write.delete) return { delete: documentName(env, write.delete) };
       return {
         update: { name: documentName(env, write.path), fields: encodeFields(write.data) },
+        ...(Array.isArray(write.mask) && write.mask.length
+          ? { updateMask: { fieldPaths: write.mask } }
+          : {}),
         ...(write.updateTime
           ? { currentDocument: { updateTime: write.updateTime } }
           : write.exists === undefined
@@ -264,9 +267,12 @@ async function verifyFirebaseUser(request, env) {
     uid: result.users[0].localId,
     email: result.users[0].email || "",
     role: custom.role || payload.role || profile?.role || "",
-    employeeId: custom.employeeId || payload.employeeId || profile?.employeeId || "",
-    branch: custom.branch || payload.branch || profile?.branch || "",
-    branchId: custom.branchId || payload.branchId || profile?.branchId || "",
+    // Profile/employee linkage is updated atomically with organization changes;
+    // prefer it for operational identity so stale ID-token branch claims cannot
+    // keep a renamed branch active until the user's next token refresh.
+    employeeId: profile?.employeeId || custom.employeeId || payload.employeeId || "",
+    branch: profile?.branch || custom.branch || payload.branch || "",
+    branchId: profile?.branchId || custom.branchId || payload.branchId || "",
   };
 }
 
@@ -1476,7 +1482,7 @@ async function deliverEventEmail(user, env, body, row, text, state) {
 function backupOutputPrefix(env, now = new Date()) {
   const rawBucket = String(env.FIRESTORE_BACKUP_BUCKET || "").trim().replace(/^gs:\/\//, "").replace(/\/$/, "");
   if (!rawBucket) throw new Error("FIRESTORE_BACKUP_BUCKET is missing");
-  const date = now.toISOString().slice(0, 10).replace(/-/g, "/");
+  const date = currentCambodiaDateISO().replace(/-/g, "/");
   return `gs://${rawBucket}/borribo-hrms/${date}/backup-${now.toISOString().replace(/[:.]/g, "-")}`;
 }
 
@@ -2303,7 +2309,7 @@ function finiteNumber(value, label, { min = 0, max = 1_000_000_000 } = {}) {
 }
 
 function validIsoDate(value, label, allowMonth = false) {
-  const result = cleanText(value, 10);
+  const result = String(value || "").trim();
   const pattern = allowMonth ? /^\d{4}-\d{2}$/ : /^\d{4}-\d{2}-\d{2}$/;
   if (!pattern.test(result)) throw httpError(`${label} is invalid`, 400);
   return result;
@@ -2474,6 +2480,7 @@ async function handleLoanOperation(user, env, action, payload) {
 
   if (action === "loan.decide") {
     if (loan.status !== "រង់ចាំអនុម័ត") throw httpError("Only pending loans can be approved or rejected", 409);
+    assertIndependentReviewer(user, loan.createdByUid, "loan");
     const decision = cleanText(payload?.decision, 20);
     if (!["approve", "reject"].includes(decision)) throw httpError("Decision is invalid", 400);
     const note = cleanText(payload?.note, 500);
@@ -2505,6 +2512,7 @@ async function handleLoanOperation(user, env, action, payload) {
 
   if (action === "loan.payment") {
     if (loan.status !== "សកម្ម") throw httpError("Payments can only be recorded for active loans", 409);
+    assertIndependentReviewer(user, loan.createdByUid, "loan payment");
     const input = payload?.payment || {};
     const balance = Math.max(0, Number(loan.amount || 0) - Number(loan.paidAmount || 0));
     const amount = finiteNumber(input.amount, "Payment amount", { min: 0.01, max: balance });
@@ -2563,6 +2571,13 @@ async function handleLoanOperation(user, env, action, payload) {
   throw httpError("Unsupported loan action", 404);
 }
 
+async function assetCodeReservation(env, assetCode) {
+  const id = await hashKey(`asset-code:${String(assetCode || "").trim().toUpperCase()}`);
+  const path = `assetCodeUnique/${id}`;
+  const state = await getDocumentWithMetadata(env, path);
+  return { path, state };
+}
+
 async function handleAssetOperation(user, env, action, payload) {
   requireManager(user);
   const now = new Date().toISOString();
@@ -2575,6 +2590,10 @@ async function handleAssetOperation(user, env, action, payload) {
     let employee = null;
     if (input.assignedTo) employee = await requiredEmployee(env, input.assignedTo);
     const assetId = `AST-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+    const codeReservation = await assetCodeReservation(env, assetCode);
+    if (codeReservation.state?.active !== false) {
+      if (codeReservation.state) throw httpError("Asset code already exists", 409);
+    }
     const status = employee ? "កំពុងប្រើ" : (ASSET_STATUSES.has(input.status) ? input.status : "នៅស្តុក");
     const requestedApprovalStatus = ASSET_APPROVAL_STATUSES.has(input.approvalStatus) ? input.approvalStatus : "រង់ចាំអនុម័ត";
     const approvalStatus = requestedApprovalStatus === "បានអនុម័ត" ? "រង់ចាំអនុម័ត" : requestedApprovalStatus;
@@ -2585,7 +2604,7 @@ async function handleAssetOperation(user, env, action, payload) {
       fromEmployeeName: "",
       toEmployeeId: employee.id,
       toEmployeeName: employee.name || employee.id,
-      date: validIsoDate(input.assignmentDate || new Date().toISOString().slice(0, 10), "Assignment date"),
+      date: validIsoDate(input.assignmentDate || currentCambodiaDateISO(), "Assignment date"),
       note: "Initial assignment",
       recordedAt: now,
       recordedByUid: user.uid || "",
@@ -2621,6 +2640,11 @@ async function handleAssetOperation(user, env, action, payload) {
     };
     await commitWrites(env, [
       { path: `assets/${assetId}`, data: asset, exists: false },
+      {
+        path: codeReservation.path,
+        data: { assetId, assetCode, active: true, createdAt: now },
+        ...(codeReservation.state?.__updateTime ? { updateTime: codeReservation.state.__updateTime } : { exists: false }),
+      },
       operationalAuditWrite("asset_created", user, asset, { module: "assets", assetCode, approvalStatus }),
     ]);
     return { ok: true, asset };
@@ -2633,9 +2657,14 @@ async function handleAssetOperation(user, env, action, payload) {
     if (asset.approvalStatus === "រង់ចាំអនុម័ត") throw httpError("Return the asset for changes before editing", 409);
     const patch = payload?.patch || {};
     const assetCode = patch.assetCode === undefined ? asset.assetCode : requiredText(patch.assetCode, "Asset code", 80).toUpperCase();
+    let newCodeReservation = null;
+    let oldCodeReservation = null;
     if (assetCode !== String(asset.assetCode || "").toUpperCase()) {
       const existingAssets = await listDocuments(env, "assets");
-      if (existingAssets.some((item) => item.id !== asset.assetId && String(item.assetCode || "").toUpperCase() === assetCode)) throw httpError("Asset code already exists", 409);
+      if (existingAssets.some((item) => item.id !== (asset.assetId || payload.assetId) && String(item.assetCode || "").toUpperCase() === assetCode)) throw httpError("Asset code already exists", 409);
+      newCodeReservation = await assetCodeReservation(env, assetCode);
+      if (newCodeReservation.state?.active !== false && newCodeReservation.state?.assetId !== (asset.assetId || payload.assetId)) throw httpError("Asset code already exists", 409);
+      oldCodeReservation = await assetCodeReservation(env, asset.assetCode);
     }
     const status = patch.status === undefined ? asset.status : cleanText(patch.status, 40);
     if (!ASSET_STATUSES.has(status)) throw httpError("Asset status is invalid", 400);
@@ -2670,10 +2699,22 @@ async function handleAssetOperation(user, env, action, payload) {
       updatedByEmail: user.email || "",
     };
     next.history = appendOperationHistory(asset.history, operationHistory(user, "updated", acquisitionChanged && asset.approvalStatus === "បានអនុម័ត" ? "បានកែប្រែទិន្នន័យហិរញ្ញវត្ថុ និងដាក់ស្នើអនុម័តឡើងវិញ" : "បានកែប្រែព័ត៌មានទ្រព្យសម្បត្តិ", { status, approvalStatus }));
-    await commitWrites(env, [
+    const writes = [
       { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
       operationalAuditWrite("asset_updated", user, next, { module: "assets", status, approvalStatus }),
-    ]);
+    ];
+    if (newCodeReservation) {
+      writes.push({
+        path: newCodeReservation.path,
+        data: { assetId: asset.assetId || payload.assetId, assetCode, active: true, createdAt: now },
+        ...(newCodeReservation.state?.__updateTime ? { updateTime: newCodeReservation.state.__updateTime } : { exists: false }),
+      });
+      if (oldCodeReservation?.state) {
+        const { __updateTime, ...oldReservationData } = oldCodeReservation.state;
+        writes.push({ path: oldCodeReservation.path, data: { ...oldReservationData, active: false, releasedAt: now }, updateTime: __updateTime });
+      }
+    }
+    await commitWrites(env, writes);
     return { ok: true, asset: next };
   }
 
@@ -2699,6 +2740,7 @@ async function handleAssetOperation(user, env, action, payload) {
 
   if (action === "asset.review") {
     if (asset.approvalStatus !== "រង់ចាំអនុម័ត") throw httpError("Only submitted assets can be reviewed", 409);
+    assertIndependentReviewer(user, [asset.submittedByUid, asset.createdByUid], "asset");
     const decision = cleanText(payload?.decision, 20);
     if (!["approve", "return"].includes(decision)) throw httpError("Asset review decision is invalid", 400);
     const comment = cleanText(payload?.comment, 1000);
@@ -2761,38 +2803,64 @@ async function handleAssetOperation(user, env, action, payload) {
     return { ok: true, asset: next, transfer };
   }
 
-  if (action === "asset.maintenance") {
+  if (action === "asset.maintenance" || action === "asset.maintenance.update") {
     if (asset.approvalStatus !== "បានអនុម័ត") throw httpError("The asset must be approved before maintenance", 409);
     if (asset.status === "បាត់/លុបចេញ") throw httpError("Retired or lost assets cannot receive maintenance entries", 409);
     const input = payload?.maintenance || {};
     const maintenanceStatus = cleanText(input.status || "កំពុងជួសជុល", 40);
     if (!["កំពុងជួសជុល", "រួចរាល់"].includes(maintenanceStatus)) throw httpError("Maintenance status is invalid", 400);
+    const existingHistory = Array.isArray(asset.maintenanceHistory) ? asset.maintenanceHistory : [];
+    const updating = action === "asset.maintenance.update";
+    const maintenanceId = updating
+      ? requiredText(payload?.maintenanceId, "Maintenance record", 120)
+      : `MNT-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+    const existingIndex = updating
+      ? existingHistory.findIndex((item) => String(item.maintenanceId || "") === maintenanceId)
+      : -1;
+    if (updating && existingIndex < 0) throw httpError("Maintenance record was not found", 404);
+    const previous = existingIndex >= 0 ? existingHistory[existingIndex] : {};
     const maintenance = {
-      maintenanceId: `MNT-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      ...previous,
+      maintenanceId,
       date: validIsoDate(input.date, "Maintenance date"),
       type: requiredText(input.type, "Maintenance type", 160),
       cost: finiteNumber(input.cost || 0, "Maintenance cost", { min: 0, max: 1_000_000_000 }),
       vendor: cleanText(input.vendor, 200),
       note: cleanText(input.note, 1000),
       status: maintenanceStatus,
-      recordedAt: now,
-      recordedByUid: user.uid || "",
-      recordedByEmail: user.email || "",
-    };
-    const nextStatus = maintenanceStatus === "កំពុងជួសជុល" ? "ជួសជុល" : (asset.assignedTo ? "កំពុងប្រើ" : "នៅស្តុក");
-    const next = {
-      ...asset,
-      status: nextStatus,
-      maintenanceHistory: [...(Array.isArray(asset.maintenanceHistory) ? asset.maintenanceHistory : []), maintenance].slice(-300),
-      totalMaintenanceCost: Math.round((Number(asset.totalMaintenanceCost || 0) + maintenance.cost) * 100) / 100,
+      recordedAt: previous.recordedAt || now,
+      recordedByUid: previous.recordedByUid || user.uid || "",
+      recordedByEmail: previous.recordedByEmail || user.email || "",
       updatedAt: now,
       updatedByUid: user.uid || "",
       updatedByEmail: user.email || "",
     };
-    next.history = appendOperationHistory(asset.history, operationHistory(user, "maintenance", "បានកត់ត្រាការជួសជុល", { type: maintenance.type, cost: maintenance.cost, status: maintenanceStatus }));
+    const nextMaintenanceHistory = updating
+      ? existingHistory.map((item, index) => index === existingIndex ? maintenance : item)
+      : [...existingHistory, maintenance].slice(-300);
+    const hasOpenMaintenance = nextMaintenanceHistory.some((item) => item.status === "កំពុងជួសជុល");
+    const nextStatus = hasOpenMaintenance ? "ជួសជុល" : (asset.assignedTo ? "កំពុងប្រើ" : "នៅស្តុក");
+    const totalMaintenanceCost = Math.round(nextMaintenanceHistory.reduce((sum, item) => sum + Number(item.cost || 0), 0) * 100) / 100;
+    const next = {
+      ...asset,
+      status: nextStatus,
+      maintenanceHistory: nextMaintenanceHistory,
+      totalMaintenanceCost,
+      updatedAt: now,
+      updatedByUid: user.uid || "",
+      updatedByEmail: user.email || "",
+    };
+    next.history = appendOperationHistory(asset.history, operationHistory(
+      user,
+      updating ? "maintenance_updated" : "maintenance",
+      updating ? "បានកែប្រែការជួសជុល" : "បានកត់ត្រាការជួសជុល",
+      { type: maintenance.type, cost: maintenance.cost, previousCost: Number(previous.cost || 0), status: maintenanceStatus },
+    ));
     await commitWrites(env, [
       { path: `assets/${asset.assetId || payload.assetId}`, data: next, updateTime },
-      operationalAuditWrite("asset_maintenance_recorded", user, next, { module: "assets", cost: maintenance.cost, maintenanceStatus }),
+      operationalAuditWrite(updating ? "asset_maintenance_updated" : "asset_maintenance_recorded", user, next, {
+        module: "assets", maintenanceId, cost: maintenance.cost, previousCost: Number(previous.cost || 0), maintenanceStatus,
+      }),
     ]);
     return { ok: true, asset: next, maintenance };
   }
@@ -2950,6 +3018,7 @@ async function handleKpiOperation(user, env, action, payload) {
 
   if (action === "kpi.review") {
     if (kpi.status !== "រង់ចាំអនុម័ត") throw httpError("Only submitted KPIs can be reviewed", 409);
+    assertIndependentReviewer(user, [kpi.submittedByUid, kpi.createdByUid], "KPI");
     const decision = cleanText(payload?.decision, 20);
     if (!["approve", "return"].includes(decision)) throw httpError("Review decision is invalid", 400);
     const comment = cleanText(payload?.comment, 1000);
@@ -3108,6 +3177,7 @@ async function handlePayrollOperation(user, env, action, payload) {
 
   if (action === "payroll.review") {
     if (payroll.status !== "រង់ចាំអនុម័ត") throw httpError("Only submitted payroll can be reviewed", 409);
+    assertIndependentReviewer(user, [payroll.submittedByUid, payroll.createdByUid], "payroll");
     const decision = cleanText(payload?.decision, 20);
     if (!["approve", "return"].includes(decision)) throw httpError("Payroll review decision is invalid", 400);
     const comment = cleanText(payload?.comment, 1000);
@@ -3134,6 +3204,7 @@ async function handlePayrollOperation(user, env, action, payload) {
 
   if (action === "payroll.pay") {
     if (payroll.status !== "បានអនុម័ត") throw httpError("Only approved payroll can be marked paid", 409);
+    assertIndependentReviewer(user, [payroll.submittedByUid, payroll.createdByUid], "payroll payment");
     const payment = payload?.payment || {};
     const paymentDate = validIsoDate(payment.date, "Payment date");
     const paymentReference = cleanText(payment.reference, 200);
@@ -3196,6 +3267,1014 @@ async function handlePayrollOperation(user, env, action, payload) {
 }
 
 
+
+const LEAVE_TYPES = new Set(["ច្បាប់ប្រចាំឆ្នាំ", "ច្បាប់ឈឺ", "ច្បាប់ផ្ទាល់ខ្លួន", "ច្បាប់សម្រាលកូន", "ច្បាប់គ្មានប្រាក់ខែ"]);
+const LEAVE_PORTIONS = new Set(["ពេញថ្ងៃ", "ពេលព្រឹក", "ពេលរសៀល"]);
+const LEAVE_QUOTAS = {
+  "ច្បាប់ប្រចាំឆ្នាំ": 18,
+  "ច្បាប់ឈឺ": 7,
+  "ច្បាប់ផ្ទាល់ខ្លួន": 7,
+  "ច្បាប់សម្រាលកូន": 90,
+  "ច្បាប់គ្មានប្រាក់ខែ": 0,
+};
+const ATTENDANCE_ADMIN_STATUSES = new Set(["មានវត្តមាន", "យឺត", "អវត្តមាន", "ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"]);
+
+function strictIsoDate(value, label = "Date") {
+  const result = validIsoDate(value, label);
+  const parsed = new Date(`${result}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== result) throw httpError(`${label} is invalid`, 400);
+  return result;
+}
+
+function enumerateIsoDates(startDate, endDate, maxDays = 200) {
+  const start = new Date(`${strictIsoDate(startDate, "Start date")}T00:00:00Z`);
+  const end = new Date(`${strictIsoDate(endDate, "End date")}T00:00:00Z`);
+  if (end < start) throw httpError("End date must be on or after start date", 400);
+  const dates = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    if (dates.length > maxDays) throw httpError(`Date range cannot exceed ${maxDays} days`, 400);
+  }
+  return dates;
+}
+
+function leaveWorkingDates(startDate, endDate, holidays = []) {
+  const holidaySet = new Set(holidays.map((item) => item.dateISO || item.date).filter(Boolean));
+  return enumerateIsoDates(startDate, endDate).filter((dateISO) => {
+    const weekday = new Date(`${dateISO}T00:00:00Z`).getUTCDay();
+    return weekday !== 0 && !holidaySet.has(dateISO);
+  });
+}
+
+function normalizedLeaveWorkingDates(request, holidays = [], strict = true) {
+  const rawDates = Array.isArray(request?.workingDates) ? request.workingDates : [];
+  try {
+    const startDate = strictIsoDate(request?.startDate, "Start date");
+    const endDate = strictIsoDate(request?.endDate, "End date");
+    const allowed = new Set(enumerateIsoDates(startDate, endDate));
+    const stored = [...new Set(rawDates.map((value) => strictIsoDate(value, "Working date")))]
+      .filter((dateISO) => allowed.has(dateISO))
+      .sort();
+    if (stored.length) return stored;
+    return leaveWorkingDates(startDate, endDate, holidays);
+  } catch (error) {
+    if (strict) throw error;
+    return [];
+  }
+}
+
+function leaveUnitsForDates(dates, portion) {
+  return dates.length === 1 && portion !== "ពេញថ្ងៃ" ? 0.5 : dates.length;
+}
+
+function leaveSlot(portion) {
+  if (portion === "ពេលព្រឹក") return "morningRequestId";
+  if (portion === "ពេលរសៀល") return "afternoonRequestId";
+  return "fullRequestId";
+}
+
+function leaveReservationConflict(data, portion, ownRequestId = "") {
+  const full = data?.fullRequestId && data.fullRequestId !== ownRequestId;
+  const morning = data?.morningRequestId && data.morningRequestId !== ownRequestId;
+  const afternoon = data?.afternoonRequestId && data.afternoonRequestId !== ownRequestId;
+  if (portion === "ពេញថ្ងៃ") return Boolean(full || morning || afternoon);
+  if (portion === "ពេលព្រឹក") return Boolean(full || morning);
+  return Boolean(full || afternoon);
+}
+
+async function leaveReservationState(env, employeeId, dateISO) {
+  const key = await hashKey(`leave-date:${employeeId}:${dateISO}`);
+  const path = `leaveDateReservations/${key}`;
+  const stored = await getDocumentWithMetadata(env, path);
+  if (!stored) return { path, data: { employeeId, dateISO }, exists: false, updateTime: "" };
+  const { __updateTime, ...data } = stored;
+  return { path, data, exists: true, updateTime: __updateTime || "" };
+}
+
+function reservationWrite(state, data) {
+  return {
+    path: state.path,
+    data,
+    ...(state.exists ? { updateTime: state.updateTime } : { exists: false }),
+  };
+}
+
+async function leaveQuotaState(env, employeeId, leaveType, year, approvedRequests, holidays) {
+  const key = await hashKey(`leave-quota:${employeeId}:${leaveType}:${year}`);
+  const path = `leaveBalanceLedgers/${key}`;
+  const stored = await getDocumentWithMetadata(env, path);
+  if (stored) {
+    const { __updateTime, ...data } = stored;
+    return { path, data, exists: true, updateTime: __updateTime || "" };
+  }
+  const approvedUnits = approvedRequests
+    .filter((request) => request.status === "បានអនុម័ត" && request.leaveType === leaveType)
+    .reduce((total, request) => {
+      const dates = normalizedLeaveWorkingDates(request, holidays, false).filter((dateISO) => dateISO.startsWith(`${year}-`));
+      const portion = LEAVE_PORTIONS.has(request.portion) ? request.portion : "ពេញថ្ងៃ";
+      return total + leaveUnitsForDates(dates, portion);
+    }, 0);
+  return { path, data: { employeeId, leaveType, year, approvedUnits }, exists: false, updateTime: "" };
+}
+
+function leaveAttendanceData(request, employee, dateISO, user, now) {
+  const recordId = `${employee.id}_${dateISO}`;
+  return {
+    id: employee.id,
+    uid: employee.uid || request.employeeUid || "",
+    name: employee.name || employee.id,
+    role: employee.role || employee.jobRole || "បុគ្គលិក",
+    branch: employee.branch || "",
+    branchId: employee.branchId || "",
+    shift: employee.shift || "ពេញម៉ោង",
+    dateISO,
+    date: attendanceDateLabel(dateISO),
+    checkIn: "—",
+    checkOut: "—",
+    hours: "—",
+    status: "ច្បាប់",
+    source: "leave",
+    leaveRequestId: request.id,
+    leaveType: request.leaveType,
+    leavePortion: request.portion || "ពេញថ្ងៃ",
+    leaveUnits: 1,
+    leaveStatus: "ច្បាប់",
+    recordId,
+    docId: recordId,
+    updatedAt: now,
+    updatedBy: user.uid || "",
+    updatedByName: user.email || "HR/Admin",
+  };
+}
+
+async function handleLeaveMutation(user, env, body) {
+  const action = cleanText(body?.action, 80);
+  const payload = body?.payload || {};
+  const now = new Date().toISOString();
+  const holidays = await listDocuments(env, "holidays");
+
+  if (action === "leave.create") {
+    const employee = await employeeForAuthenticatedUser(user, env);
+    const input = payload?.request || {};
+    const leaveType = requiredText(input.leaveType, "Leave type", 80);
+    if (!LEAVE_TYPES.has(leaveType)) throw httpError("Leave type is invalid", 400);
+    const portion = cleanText(input.portion || "ពេញថ្ងៃ", 40);
+    if (!LEAVE_PORTIONS.has(portion)) throw httpError("Leave portion is invalid", 400);
+    const startDate = strictIsoDate(input.startDate, "Start date");
+    const endDate = strictIsoDate(input.endDate, "End date");
+    if (portion !== "ពេញថ្ងៃ" && startDate !== endDate) throw httpError("Half-day leave must use one date", 400);
+    const reason = requiredText(input.reason, "Reason", 1000);
+    const dates = leaveWorkingDates(startDate, endDate, holidays);
+    if (!dates.length) throw httpError("The selected range has no working day", 400);
+    const units = leaveUnitsForDates(dates, portion);
+    const existingRequests = await queryDocuments(env, "leaveRequests", "employeeId", employee.id);
+    const quota = LEAVE_QUOTAS[leaveType];
+    if (quota > 0) {
+      const years = [...new Set(dates.map((dateISO) => dateISO.slice(0, 4)))];
+      for (const year of years) {
+        const requestedUnits = leaveUnitsForDates(dates.filter((dateISO) => dateISO.startsWith(`${year}-`)), portion);
+        const used = existingRequests.filter((request) => request.status === "បានអនុម័ត" && request.leaveType === leaveType)
+          .reduce((total, request) => {
+            const requestDates = normalizedLeaveWorkingDates(request, holidays, false).filter((dateISO) => dateISO.startsWith(`${year}-`));
+            const requestPortion = LEAVE_PORTIONS.has(request.portion) ? request.portion : "ពេញថ្ងៃ";
+            return total + leaveUnitsForDates(requestDates, requestPortion);
+          }, 0);
+        if (used + requestedUnits > quota) throw httpError(`Leave balance for ${year} is insufficient`, 409);
+      }
+    }
+
+    const requestId = `LEV-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const slot = leaveSlot(portion);
+    const reservationStates = await Promise.all(dates.map((dateISO) => leaveReservationState(env, employee.id, dateISO)));
+    for (const state of reservationStates) {
+      if (leaveReservationConflict(state.data, portion)) throw httpError(`A leave request already overlaps ${state.data.dateISO}`, 409);
+    }
+    const documentRequired = leaveType === "ច្បាប់ឈឺ" && units > 1;
+    const request = {
+      id: requestId,
+      employeeUid: user.uid,
+      employeeId: employee.id,
+      name: employee.name || user.email,
+      branch: employee.branch || "",
+      branchId: employee.branchId || "",
+      role: employee.role || employee.jobRole || "បុគ្គលិក",
+      leaveType,
+      startDate,
+      endDate,
+      days: units,
+      leaveYear: startDate.slice(0, 4),
+      workingDates: dates,
+      portion,
+      reason,
+      status: "រង់ចាំពិនិត្យ",
+      requestedOn: currentCambodiaDateISO(),
+      requestedAt: now,
+      documentRequired,
+      documentReceiptStatus: documentRequired ? "មិនទាន់ទទួល" : "មិនត្រូវការ",
+    };
+    const writes = [
+      { path: `leaveRequests/${requestId}`, data: request, exists: false },
+      ...reservationStates.map((state) => reservationWrite(state, { ...state.data, employeeId: employee.id, dateISO: state.data.dateISO, [slot]: requestId, updatedAt: now })),
+      auditLogWrite("leave_request_created", user, employee, { module: "leaveRequests", requestId, units, startDate, endDate }),
+    ];
+    await commitWrites(env, writes);
+    await handleEvent(user, env, { type: "leave_request", recordId: requestId }).catch(() => null);
+    return { ok: true, request };
+  }
+
+  const requestId = requiredText(payload?.requestId, "Leave request", 160);
+  const requestState = await getDocumentWithMetadata(env, `leaveRequests/${requestId}`);
+  if (!requestState) throw httpError("Leave request was not found", 404);
+  const { __updateTime: requestUpdateTime, ...request } = requestState;
+  const storedEmployee = await getDocument(env, `employees/${request.employeeId}`);
+  const employee = storedEmployee || {
+    id: request.employeeId || "unknown", uid: request.employeeUid || "", name: request.name || "Unknown employee",
+    branch: request.branch || "", branchId: request.branchId || "", role: request.role || "បុគ្គលិក",
+  };
+
+  if (action === "leave.cancel") {
+    if (user.role !== "employee" || request.employeeUid !== user.uid) throw httpError("You can cancel only your own leave request", 403);
+    if (request.status !== "រង់ចាំពិនិត្យ") throw httpError("Only pending leave requests can be cancelled", 409);
+    const dates = normalizedLeaveWorkingDates(request, holidays, false);
+    const states = await Promise.all(dates.map((dateISO) => leaveReservationState(env, request.employeeId, dateISO)));
+    const writes = [{ path: `leaveRequests/${requestId}`, data: { ...request, status: "បានលុបចោល", cancelledOn: currentCambodiaDateISO(), cancelledAt: now }, updateTime: requestUpdateTime }];
+    states.forEach((state) => {
+      const nextReservation = { ...state.data, updatedAt: now };
+      let changed = false;
+      ["fullRequestId", "morningRequestId", "afternoonRequestId"].forEach((field) => {
+        if (nextReservation[field] === requestId) { nextReservation[field] = ""; changed = true; }
+      });
+      if (changed) writes.push(reservationWrite(state, nextReservation));
+    });
+    writes.push(auditLogWrite("leave_request_cancelled", user, employee, { module: "leaveRequests", requestId }));
+    await commitWrites(env, writes);
+    return { ok: true };
+  }
+
+  requireManager(user);
+
+  if (action === "leave.document-receipt") {
+    const received = Boolean(payload?.received);
+    const next = {
+      ...request,
+      documentReceiptStatus: request.documentRequired ? (received ? "បានទទួល" : "មិនទាន់ទទួល") : "មិនត្រូវការ",
+      documentReceiptUpdatedAt: now,
+      documentReceiptUpdatedBy: user.uid || "",
+      documentReceiptUpdatedByName: user.email || "HR/Admin",
+    };
+    await commitWrites(env, [
+      { path: `leaveRequests/${requestId}`, data: next, updateTime: requestUpdateTime },
+      auditLogWrite("leave_document_receipt_updated", user, employee, { module: "leaveRequests", requestId, received }),
+    ]);
+    return { ok: true, request: next };
+  }
+
+  if (action === "leave.decide") {
+    if (request.status !== "រង់ចាំពិនិត្យ") throw httpError("Only pending leave requests can be decided", 409);
+    const decision = cleanText(payload?.decision, 20);
+    if (!["approve", "reject"].includes(decision)) throw httpError("Decision is invalid", 400);
+    const reason = cleanText(payload?.reason, 1000);
+    if (decision === "reject" && !reason) throw httpError("A rejection reason is required", 400);
+    assertIndependentReviewer(user, request.employeeUid, "leave request");
+
+    const fallbackDates = normalizedLeaveWorkingDates(request, holidays, false);
+    const rejectionWrites = [];
+    if (decision === "reject") {
+      const nextRequest = {
+        ...request,
+        status: "បានបដិសេធ",
+        decisionReason: reason,
+        decidedOn: currentCambodiaDateISO(),
+        decidedAt: now,
+        decidedBy: user.uid || "",
+        decidedByName: user.email || "HR/Admin",
+      };
+      rejectionWrites.push({ path: `leaveRequests/${requestId}`, data: nextRequest, updateTime: requestUpdateTime });
+      const reservationStates = await Promise.all(fallbackDates.map((dateISO) => leaveReservationState(env, request.employeeId, dateISO)));
+      reservationStates.forEach((state) => {
+        const nextReservation = { ...state.data, employeeId: request.employeeId, dateISO: state.data.dateISO, updatedAt: now };
+        let changed = false;
+        ["fullRequestId", "morningRequestId", "afternoonRequestId"].forEach((field) => {
+          if (nextReservation[field] === requestId) { nextReservation[field] = ""; changed = true; }
+        });
+        if (changed) rejectionWrites.push(reservationWrite(state, nextReservation));
+      });
+      rejectionWrites.push(auditLogWrite("leave_request_rejected", user, employee, { module: "leaveRequests", requestId, reason, legacyDateRecovery: !fallbackDates.length }));
+      await commitWrites(env, rejectionWrites);
+      await handleEvent(user, env, { type: "leave_decision", recordId: requestId }).catch(() => null);
+      return { ok: true, request: nextRequest };
+    }
+
+    if (!storedEmployee) throw httpError("Employee was not found", 404);
+    if (!LEAVE_TYPES.has(request.leaveType)) throw httpError("Leave type is invalid", 409);
+    const portion = LEAVE_PORTIONS.has(request.portion) ? request.portion : "ពេញថ្ងៃ";
+    if (request.documentRequired && request.documentReceiptStatus !== "បានទទួល") {
+      throw httpError("Required medical document has not been received", 409);
+    }
+    const dates = normalizedLeaveWorkingDates(request, holidays, true);
+    if (!dates.length) throw httpError("The selected range has no working day", 409);
+    if (portion !== "ពេញថ្ងៃ" && dates.length !== 1) throw httpError("Half-day leave must use one working date", 409);
+    const units = leaveUnitsForDates(dates, portion);
+    const slot = leaveSlot(portion);
+    const reservationStates = await Promise.all(dates.map((dateISO) => leaveReservationState(env, request.employeeId, dateISO)));
+    for (const state of reservationStates) {
+      if (leaveReservationConflict(state.data, portion, requestId)) throw httpError(`Another leave request overlaps ${state.data.dateISO}`, 409);
+    }
+
+    const writes = [];
+    const allRequests = await queryDocuments(env, "leaveRequests", "employeeId", request.employeeId);
+    if (LEAVE_QUOTAS[request.leaveType] > 0) {
+      const years = [...new Set(dates.map((dateISO) => dateISO.slice(0, 4)))];
+      for (const year of years) {
+        const yearDates = dates.filter((dateISO) => dateISO.startsWith(`${year}-`));
+        const yearUnits = leaveUnitsForDates(yearDates, portion);
+        const ledger = await leaveQuotaState(env, request.employeeId, request.leaveType, year, allRequests.filter((item) => item.id !== requestId), holidays);
+        const nextUsed = Number(ledger.data.approvedUnits || 0) + yearUnits;
+        if (nextUsed > LEAVE_QUOTAS[request.leaveType]) throw httpError(`Leave balance for ${year} is insufficient`, 409);
+        writes.push({
+          path: ledger.path,
+          data: { ...ledger.data, employeeId: request.employeeId, leaveType: request.leaveType, year, approvedUnits: nextUsed, updatedAt: now },
+          ...(ledger.exists ? { updateTime: ledger.updateTime } : { exists: false }),
+        });
+      }
+    }
+
+    const nextRequest = {
+      ...request,
+      status: "បានអនុម័ត",
+      decisionReason: reason,
+      decidedOn: currentCambodiaDateISO(),
+      decidedAt: now,
+      decidedBy: user.uid || "",
+      decidedByName: user.email || "HR/Admin",
+      days: units,
+      workingDates: dates,
+      leaveYear: dates[0].slice(0, 4),
+      portion,
+    };
+    writes.unshift({ path: `leaveRequests/${requestId}`, data: nextRequest, updateTime: requestUpdateTime });
+
+    reservationStates.forEach((state) => {
+      const nextReservation = { ...state.data, employeeId: request.employeeId, dateISO: state.data.dateISO, updatedAt: now, [slot]: requestId };
+      writes.push(reservationWrite(state, nextReservation));
+    });
+
+    if (portion === "ពេញថ្ងៃ") {
+      for (const dateISO of dates) {
+        const recordId = `${employee.id}_${dateISO}`;
+        const historyState = await getDocumentWithMetadata(env, `attendanceHistory/${recordId}`);
+        if (historyState && historyState.checkIn && historyState.checkIn !== "—" && historyState.source !== "leave") {
+          throw httpError(`Attendance already exists for ${dateISO}`, 409);
+        }
+        const record = leaveAttendanceData(nextRequest, employee, dateISO, user, now);
+        writes.push({ path: `attendanceHistory/${recordId}`, data: record, ...(historyState?.__updateTime ? { updateTime: historyState.__updateTime } : { exists: false }) });
+        if (dateISO === currentCambodiaDateISO()) {
+          const todayState = await getDocumentWithMetadata(env, `attendanceToday/${recordId}`);
+          if (todayState && todayState.checkIn && todayState.checkIn !== "—" && todayState.source !== "leave") throw httpError("Employee already checked in today", 409);
+          writes.push({ path: `attendanceToday/${recordId}`, data: record, ...(todayState?.__updateTime ? { updateTime: todayState.__updateTime } : { exists: false }) });
+        }
+      }
+    }
+    writes.push(auditLogWrite("leave_request_approved", user, employee, { module: "leaveRequests", requestId, units, reason }));
+    if (writes.length > 490) throw httpError("Leave range is too long for one atomic decision", 413);
+    await commitWrites(env, writes);
+    await handleEvent(user, env, { type: "leave_decision", recordId: requestId }).catch(() => null);
+    return { ok: true, request: nextRequest };
+  }
+
+  throw httpError("Unsupported leave action", 404);
+}
+
+function validTime24(value, label = "Time") {
+  const result = String(value || "").trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(result)) throw httpError(`${label} must use HH:mm`, 400);
+  return result;
+}
+
+function normalizeTime24(value) {
+  const text = String(value || "").trim();
+  if (/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(text)) return text;
+  const match = text.match(/^(\d{1,2}):([0-5]\d)\s*(AM|PM)$/i);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  if (hour < 1 || hour > 12) return "";
+  if (match[3].toUpperCase() === "PM" && hour !== 12) hour += 12;
+  if (match[3].toUpperCase() === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+}
+
+function attendanceTimestamp(dateISO, time) {
+  return `${dateISO}T${time}:00+07:00`;
+}
+
+function attendanceAdminRecord(employee, input, workingHours, source, user, now) {
+  const dateISO = strictIsoDate(input.dateISO || currentCambodiaDateISO(), "Attendance date");
+  const requestedStatus = cleanText(input.status, 40);
+  if (!ATTENDANCE_ADMIN_STATUSES.has(requestedStatus)) throw httpError("Attendance status is invalid", 400);
+  const absent = ["អវត្តមាន", "ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"].includes(requestedStatus);
+  let checkIn = "—";
+  let checkOut = "—";
+  let metrics = { hours: "—", status: requestedStatus, lateMinutes: 0, earlyLeaveMinutes: 0, isLate: false, isEarlyLeave: false };
+  let checkInAt = null;
+  let checkOutAt = null;
+  if (!absent) {
+    checkIn = validTime24(input.checkIn, "Check-in");
+    checkOut = validTime24(input.checkOut, "Check-out");
+    if (minutesFromTime(checkOut) <= minutesFromTime(checkIn)) throw httpError("Check-out must be after check-in", 400);
+    checkInAt = attendanceTimestamp(dateISO, checkIn);
+    checkOutAt = attendanceTimestamp(dateISO, checkOut);
+    metrics = attendanceMetrics({ workingHours, checkInAt, checkOutAt });
+    metrics.status = requestedStatus;
+    metrics.isLate = requestedStatus === "យឺត" || metrics.isLate;
+  }
+  const recordId = `${employee.id}_${dateISO}`;
+  return {
+    id: employee.id,
+    uid: employee.uid || "",
+    name: employee.name || employee.id,
+    role: employee.role || employee.jobRole || "បុគ្គលិក",
+    branch: employee.branch || "",
+    branchId: employee.branchId || "",
+    shift: employee.shift || metrics.shift || "ពេញម៉ោង",
+    dateISO,
+    date: attendanceDateLabel(dateISO),
+    checkIn,
+    checkOut,
+    checkInClientAt: checkInAt,
+    checkOutClientAt: checkOutAt,
+    ...metrics,
+    status: requestedStatus,
+    recordId,
+    docId: recordId,
+    source,
+    manualEntry: source === "manual",
+    updatedAt: now,
+    updatedByUid: user.uid || "",
+    updatedByEmail: user.email || "",
+  };
+}
+
+async function commitAttendanceRecords(env, records, user, auditType) {
+  const today = currentCambodiaDateISO();
+  let committed = 0;
+  for (let index = 0; index < records.length; index += 200) {
+    const chunk = records.slice(index, index + 200);
+    const writes = [];
+    for (const record of chunk) {
+      const historyState = await getDocumentWithMetadata(env, `attendanceHistory/${record.recordId}`);
+      writes.push({ path: `attendanceHistory/${record.recordId}`, data: record, ...(historyState?.__updateTime ? { updateTime: historyState.__updateTime } : { exists: false }) });
+      if (record.dateISO === today) {
+        const todayState = await getDocumentWithMetadata(env, `attendanceToday/${record.recordId}`);
+        writes.push({ path: `attendanceToday/${record.recordId}`, data: record, ...(todayState?.__updateTime ? { updateTime: todayState.__updateTime } : { exists: false }) });
+      }
+    }
+    writes.push({ path: `auditLogs/${Date.now()}_${crypto.randomUUID()}`, data: { type: auditType, module: "attendance", actorUid: user.uid || "", actorEmail: user.email || "", recordCount: chunk.length, createdAt: new Date().toISOString() }, exists: false });
+    await commitWrites(env, writes);
+    committed += chunk.length;
+  }
+  return committed;
+}
+
+async function handleAdminAttendanceMutation(user, env, body) {
+  requireManager(user);
+  const action = cleanText(body?.action, 80);
+  const payload = body?.payload || {};
+  const now = new Date().toISOString();
+  const workingHours = await getDocument(env, "settings/workingHours") || ATTENDANCE_DEFAULT_WORKING_HOURS;
+
+  if (action === "attendance.manual-upsert") {
+    const input = payload?.record || {};
+    const employee = await requiredEmployee(env, input.employeeId);
+    const record = attendanceAdminRecord(employee, input, workingHours, "manual", user, now);
+    await commitAttendanceRecords(env, [record], user, "attendance_manual_upsert");
+    return { ok: true, record };
+  }
+
+  if (action === "attendance.daily-close") {
+    const inputs = Array.isArray(payload?.records) ? payload.records : [];
+    if (!inputs.length || inputs.length > 2000) throw httpError("Daily close record list is invalid", 400);
+    const records = [];
+    for (const input of inputs) {
+      const employee = await requiredEmployee(env, input.employeeId || input.id);
+      const status = ["ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"].includes(input.status) ? input.status : "អវត្តមាន";
+      records.push(attendanceAdminRecord(employee, { dateISO: input.dateISO || currentCambodiaDateISO(), status }, workingHours, status.startsWith("ច្បាប់") ? "leave" : "daily-close", user, now));
+    }
+    const committed = await commitAttendanceRecords(env, records, user, "attendance_daily_closed");
+    return { ok: true, committed };
+  }
+
+  if (action === "attendance.fingerprint-import") {
+    const inputs = Array.isArray(payload?.rows) ? payload.rows : [];
+    if (!inputs.length || inputs.length > 5000) throw httpError("Fingerprint rows must be between 1 and 5,000", 400);
+    const employees = await listDocuments(env, "employees");
+    const employeeMap = new Map(employees.map((employee) => [String(employee.id).toLowerCase(), employee]));
+    const groups = new Map();
+    for (const raw of inputs) {
+      const employeeId = requiredText(raw.employeeId, "Employee ID", 80);
+      const employee = employeeMap.get(employeeId.toLowerCase());
+      if (!employee) throw httpError(`Employee ${employeeId} was not found`, 404);
+      const dateISO = strictIsoDate(raw.date, "Fingerprint date");
+      const time = validTime24(raw.time, "Fingerprint time");
+      const actionValue = String(raw.action || "").trim().toUpperCase();
+      if (!["IN", "OUT"].includes(actionValue)) throw httpError(`Fingerprint action must be IN or OUT (line ${raw.line || "?"})`, 400);
+      const key = `${employee.id}_${dateISO}`;
+      if (!groups.has(key)) groups.set(key, { employee, dateISO, events: [] });
+      groups.get(key).events.push({ action: actionValue, time });
+    }
+    const records = [];
+    for (const [recordId, group] of groups) {
+      const existing = await getDocument(env, `attendanceHistory/${recordId}`);
+      let checkIn = existing?.checkIn && existing.checkIn !== "—" ? normalizeTime24(existing.checkIn) : "";
+      let checkOut = existing?.checkOut && existing.checkOut !== "—" ? normalizeTime24(existing.checkOut) : "";
+      group.events.sort((a, b) => a.time.localeCompare(b.time));
+      group.events.forEach((event) => {
+        if (event.action === "IN" && (!checkIn || event.time < checkIn)) checkIn = event.time;
+        if (event.action === "OUT" && (!checkOut || event.time > checkOut)) checkOut = event.time;
+      });
+      if (!checkIn) throw httpError(`Fingerprint OUT has no matching IN for ${group.employee.id} on ${group.dateISO}`, 409);
+      if (checkOut && minutesFromTime(checkOut) <= minutesFromTime(checkIn)) throw httpError(`Fingerprint OUT must be after IN for ${group.employee.id} on ${group.dateISO}`, 409);
+      const metrics = attendanceMetrics({ workingHours, checkInAt: attendanceTimestamp(group.dateISO, checkIn), checkOutAt: checkOut ? attendanceTimestamp(group.dateISO, checkOut) : null });
+      records.push({
+        id: group.employee.id,
+        uid: group.employee.uid || "",
+        name: group.employee.name || group.employee.id,
+        role: group.employee.role || group.employee.jobRole || "បុគ្គលិក",
+        branch: group.employee.branch || "",
+        branchId: group.employee.branchId || "",
+        dateISO: group.dateISO,
+        date: attendanceDateLabel(group.dateISO),
+        checkIn,
+        checkOut: checkOut || "—",
+        checkInClientAt: attendanceTimestamp(group.dateISO, checkIn),
+        checkOutClientAt: checkOut ? attendanceTimestamp(group.dateISO, checkOut) : null,
+        ...metrics,
+        recordId,
+        docId: recordId,
+        source: "fingerprint",
+        updatedAt: now,
+        updatedByUid: user.uid || "",
+        updatedByEmail: user.email || "",
+      });
+    }
+    const committed = await commitAttendanceRecords(env, records, user, "attendance_fingerprint_imported");
+    return { ok: true, committed, sourceRows: inputs.length };
+  }
+
+  if (action === "correction.create") {
+    const input = payload?.correction || {};
+    const employee = await requiredEmployee(env, input.employeeId || input.empId);
+    const dateISO = strictIsoDate(input.dateISO || input.date, "Correction date");
+    const status = cleanText(input.status || input.newStatus, 40);
+    if (!ATTENDANCE_ADMIN_STATUSES.has(status)) throw httpError("Correction status is invalid", 400);
+    const reason = requiredText(input.reason, "Reason", 1000);
+    const existing = await getDocument(env, `attendanceHistory/${employee.id}_${dateISO}`);
+    const correctionId = `COR-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const absent = ["អវត្តមាន", "ច្បាប់", "ច្បាប់កន្លះថ្ងៃ"].includes(status);
+    const correction = {
+      id: correctionId,
+      empId: employee.id,
+      employeeId: employee.id,
+      name: employee.name || employee.id,
+      role: employee.role || employee.jobRole || "បុគ្គលិក",
+      branch: employee.branch || "",
+      branchId: employee.branchId || "",
+      date: attendanceDateLabel(dateISO),
+      dateISO,
+      originalCheckIn: existing?.checkIn || "—",
+      originalCheckOut: existing?.checkOut || "—",
+      originalStatus: existing?.status || "អវត្តមាន",
+      newCheckIn: absent ? "—" : validTime24(input.checkIn || input.newCheckIn, "New check-in"),
+      newCheckOut: absent ? "—" : validTime24(input.checkOut || input.newCheckOut, "New check-out"),
+      newStatus: status,
+      reason,
+      requestedBy: user.email || "HR/Admin",
+      requestedByUid: user.uid || "",
+      requestedAt: now,
+      status: "រង់ចាំពិនិត្យ",
+    };
+    if (!absent && minutesFromTime(correction.newCheckOut) <= minutesFromTime(correction.newCheckIn)) throw httpError("Check-out must be after check-in", 400);
+    await commitWrites(env, [
+      { path: `corrections/${correctionId}`, data: correction, exists: false },
+      auditLogWrite("attendance_correction_created", user, employee, { module: "corrections", correctionId, dateISO }),
+    ]);
+    return { ok: true, correction };
+  }
+
+  if (action === "correction.decide") {
+    const correctionId = requiredText(payload?.correctionId, "Correction", 160);
+    const state = await getDocumentWithMetadata(env, `corrections/${correctionId}`);
+    if (!state) throw httpError("Correction was not found", 404);
+    const { __updateTime, ...correction } = state;
+    if (correction.status !== "រង់ចាំពិនិត្យ") throw httpError("Only pending corrections can be decided", 409);
+    if (correction.requestedByUid && correction.requestedByUid === user.uid) throw httpError("The requester cannot approve or reject the same correction", 403);
+    const decision = cleanText(payload?.decision, 20);
+    if (!["approve", "reject"].includes(decision)) throw httpError("Decision is invalid", 400);
+    const reason = cleanText(payload?.reason, 1000);
+    if (decision === "reject" && !reason) throw httpError("A rejection reason is required", 400);
+    const employee = await requiredEmployee(env, correction.empId || correction.employeeId);
+    const nextCorrection = { ...correction, status: decision === "approve" ? "បានអនុម័ត" : "បានបដិសេធ", decisionReason: reason, decidedAt: now, decidedBy: user.uid || "", decidedByName: user.email || "HR/Admin" };
+    const writes = [{ path: `corrections/${correctionId}`, data: nextCorrection, updateTime: __updateTime }];
+    if (decision === "approve") {
+      const record = attendanceAdminRecord(employee, { dateISO: correction.dateISO, status: correction.newStatus, checkIn: correction.newCheckIn, checkOut: correction.newCheckOut }, workingHours, "correction", user, now);
+      record.correctionId = correctionId;
+      const historyState = await getDocumentWithMetadata(env, `attendanceHistory/${record.recordId}`);
+      writes.push({ path: `attendanceHistory/${record.recordId}`, data: record, ...(historyState?.__updateTime ? { updateTime: historyState.__updateTime } : { exists: false }) });
+      if (record.dateISO === currentCambodiaDateISO()) {
+        const todayState = await getDocumentWithMetadata(env, `attendanceToday/${record.recordId}`);
+        writes.push({ path: `attendanceToday/${record.recordId}`, data: record, ...(todayState?.__updateTime ? { updateTime: todayState.__updateTime } : { exists: false }) });
+      }
+    }
+    writes.push(auditLogWrite(decision === "approve" ? "attendance_correction_approved" : "attendance_correction_rejected", user, employee, { module: "corrections", correctionId, reason }));
+    await commitWrites(env, writes);
+    return { ok: true, correction: nextCorrection };
+  }
+
+  throw httpError("Unsupported attendance action", 404);
+}
+
+function organizationId(prefix) {
+  return `${prefix}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+}
+
+async function organizationUniqueReservation(env, kind, value) {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  const id = await hashKey(`organization-unique:${kind}:${normalizedValue}`);
+  const path = `organizationUnique/${id}`;
+  return { path, state: await getDocumentWithMetadata(env, path), kind, normalizedValue };
+}
+
+function ensureOrganizationReservationAvailable(reservation, recordId) {
+  const state = reservation.state;
+  if (state && state.active !== false && String(state.recordId || "") !== String(recordId || "")) {
+    throw httpError("Name or date already exists", 409);
+  }
+}
+
+function activateOrganizationReservation(reservation, recordId, displayValue, now) {
+  return {
+    path: reservation.path,
+    data: { kind: reservation.kind, normalizedValue: reservation.normalizedValue, recordId, displayValue, active: true, updatedAt: now },
+    ...(reservation.state?.__updateTime ? { updateTime: reservation.state.__updateTime } : { exists: false }),
+  };
+}
+
+function releaseOrganizationReservation(reservation, recordId, now) {
+  if (!reservation?.state || String(reservation.state.recordId || "") !== String(recordId || "")) return null;
+  const { __updateTime, ...data } = reservation.state;
+  return { path: reservation.path, data: { ...data, active: false, releasedAt: now, updatedAt: now }, updateTime: __updateTime };
+}
+
+async function assertUniqueOrganizationName(env, collectionName, name, excludeId = "") {
+  const normalized = name.trim().toLowerCase();
+  const records = await listDocuments(env, collectionName);
+  if (records.some((record) => record.id !== excludeId && String(record.name || "").trim().toLowerCase() === normalized)) throw httpError("Name already exists", 409);
+}
+
+async function handleOrganizationMutation(user, env, body) {
+  requireManager(user);
+  const action = cleanText(body?.action, 80);
+  const payload = body?.payload || {};
+  const now = new Date().toISOString();
+
+  if (action === "gps-qr.save") {
+    const input = payload.configuration && typeof payload.configuration === "object" ? payload.configuration : {};
+    const requireQr = Boolean(input.requireQr);
+    const requireGps = Boolean(input.requireGps);
+    const maxGpsAccuracy = finiteNumber(input.maxGpsAccuracy ?? 100, "GPS accuracy", { min: 10, max: 500 });
+    const qrInterval = cleanText(input.qrInterval || "ប្រចាំថ្ងៃ", 40);
+    if (!["ប្រចាំថ្ងៃ", "ប្រចាំសប្តាហ៍", "ប្រចាំខែ"].includes(qrInterval)) throw httpError("QR interval is invalid", 400);
+
+    const branches = (await listDocuments(env, "branches")).filter((branch) => branch.status !== "អសកម្ម");
+    if (!branches.length) throw httpError("No active branch is available for GPS/QR configuration", 409);
+    if (branches.length > 200) throw httpError("Too many active branches for one atomic GPS/QR update", 413);
+
+    const radii = {};
+    const locations = {};
+    const branchGeofences = {};
+    const qrTokens = {};
+    const qrDocuments = [];
+    const branchStates = await Promise.all(branches.map((branch) => getDocumentWithMetadata(env, `branches/${branch.id}`)));
+
+    for (let index = 0; index < branches.length; index += 1) {
+      const branch = branches[index];
+      const state = branchStates[index];
+      if (!state) throw httpError(`Branch ${branch.id} was not found`, 404);
+      const radius = finiteNumber(input.radii?.[branch.id] ?? branch.gpsRadiusMeters ?? 100, "GPS radius", { min: 20, max: 5000 });
+      const rawLocation = input.locations?.[branch.id] || {};
+      const latitudeText = String(rawLocation.latitude ?? "").trim();
+      const longitudeText = String(rawLocation.longitude ?? "").trim();
+      if ((latitudeText === "") !== (longitudeText === "")) throw httpError(`Latitude and longitude must be provided together for ${branch.name || branch.id}`, 400);
+      if (requireGps && (!latitudeText || !longitudeText)) throw httpError(`GPS coordinates are required for ${branch.name || branch.id}`, 400);
+      const latitude = latitudeText === "" ? "" : finiteNumber(latitudeText, "Latitude", { min: -90, max: 90 });
+      const longitude = longitudeText === "" ? "" : finiteNumber(longitudeText, "Longitude", { min: -180, max: 180 });
+      const credential = input.qrTokens?.[branch.id];
+      if (!credential || typeof credential !== "object") throw httpError(`QR credential is required for ${branch.name || branch.id}`, 400);
+      if (String(credential.branchId || "") !== String(branch.id)) throw httpError(`QR branch does not match ${branch.name || branch.id}`, 400);
+      const token = requiredText(credential.token, "QR token", 220);
+      if (token.length < 12) throw httpError("QR token is too short", 400);
+      const issuedAt = requiredText(credential.issuedAt, "QR issued time", 80);
+      const expiresAt = requiredText(credential.expiresAt, "QR expiry time", 80);
+      const issuedMs = Date.parse(issuedAt);
+      const expiresMs = Date.parse(expiresAt);
+      if (!Number.isFinite(issuedMs) || !Number.isFinite(expiresMs) || expiresMs <= issuedMs || expiresMs <= Date.now()) throw httpError(`QR expiry is invalid for ${branch.name || branch.id}`, 400);
+
+      radii[branch.id] = String(radius);
+      locations[branch.id] = { latitude, longitude };
+      branchGeofences[branch.id] = { branchId: branch.id, name: branch.name || branch.id, latitude, longitude, radiusMeters: radius, active: true };
+      qrTokens[branch.id] = { branchId: branch.id, token, issuedAt: new Date(issuedMs).toISOString(), expiresAt: new Date(expiresMs).toISOString() };
+      const tokenState = await getDocumentWithMetadata(env, `qrTokens/${branch.id}`);
+      qrDocuments.push({
+        path: `qrTokens/${branch.id}`,
+        data: { branchId: branch.id, tokenHash: await hashKey(token), issuedAt: new Date(issuedMs).toISOString(), expiresAt: new Date(expiresMs).toISOString(), interval: qrInterval, version: 1, updatedAt: now },
+        ...(tokenState?.__updateTime ? { updateTime: tokenState.__updateTime } : { exists: false }),
+      });
+    }
+
+    const privateState = await getDocumentWithMetadata(env, "settings/gpsQr");
+    const publicState = await getDocumentWithMetadata(env, "settings/gpsQrPublic");
+    const { __updateTime: privateUpdateTime, ...previousPrivate } = privateState || {};
+    const { __updateTime: publicUpdateTime, ...previousPublic } = publicState || {};
+    const privateSettings = { ...previousPrivate, radii, requireQr, requireGps, maxGpsAccuracy: String(maxGpsAccuracy), qrInterval, qrTokens, locations, branchGeofences, updatedAt: now, updatedByUid: user.uid || "" };
+    const publicSettings = { ...previousPublic, radii, requireQr, requireGps, maxGpsAccuracy: String(maxGpsAccuracy), qrInterval, locations, branchGeofences, updatedAt: now };
+    const writes = [
+      { path: "settings/gpsQr", data: privateSettings, ...(privateUpdateTime ? { updateTime: privateUpdateTime } : { exists: false }) },
+      { path: "settings/gpsQrPublic", data: publicSettings, ...(publicUpdateTime ? { updateTime: publicUpdateTime } : { exists: false }) },
+      ...qrDocuments,
+    ];
+    branchStates.forEach((state, index) => {
+      const { __updateTime, ...branch } = state;
+      const location = locations[branch.id];
+      writes.push({
+        path: `branches/${branch.id}`,
+        data: { latitude: location.latitude, longitude: location.longitude, gpsRadiusMeters: Number(radii[branch.id]), gpsUpdatedAt: now, updatedAt: now, updatedByUid: user.uid || "" },
+        mask: ["latitude", "longitude", "gpsRadiusMeters", "gpsUpdatedAt", "updatedAt", "updatedByUid"],
+        updateTime: __updateTime,
+      });
+    });
+    writes.push(operationalAuditWrite("gps_qr_configuration_updated", user, { id: "gpsQr", name: "GPS/QR" }, { module: "settings", activeBranchCount: branches.length, requireQr, requireGps, qrInterval }));
+    if (writes.length > 490) throw httpError("Too many GPS/QR writes for one atomic update", 413);
+    await commitWrites(env, writes);
+    return { ok: true, branchCount: branches.length, updatedAt: now };
+  }
+
+  if (action === "branch.create") {
+    const input = payload.branch || {};
+    const name = requiredText(input.name, "Branch name", 160);
+    await assertUniqueOrganizationName(env, "branches", name);
+    const id = organizationId("BR");
+    const nameReservation = await organizationUniqueReservation(env, "branches:name", name);
+    ensureOrganizationReservationAvailable(nameReservation, id);
+    const latitude = String(input.latitude ?? "").trim() === "" ? "" : finiteNumber(input.latitude, "Latitude", { min: -90, max: 90 });
+    const longitude = String(input.longitude ?? "").trim() === "" ? "" : finiteNumber(input.longitude, "Longitude", { min: -180, max: 180 });
+    if ((latitude === "") !== (longitude === "")) throw httpError("Latitude and longitude must be provided together", 400);
+    const branch = { id, name, type: cleanText(input.type || "សាខា", 80), address: cleanText(input.address, 500), manager: requiredText(input.manager, "Manager", 160), phone: cleanText(input.phone, 80), status: input.status === "អសកម្ម" ? "អសកម្ម" : "សកម្ម", latitude, longitude, gpsRadiusMeters: finiteNumber(input.gpsRadiusMeters || 100, "GPS radius", { min: 20, max: 5000 }), createdAt: now, updatedAt: now, updatedByUid: user.uid || "" };
+    await commitWrites(env, [
+      { path: `branches/${id}`, data: branch, exists: false },
+      activateOrganizationReservation(nameReservation, id, name, now),
+      operationalAuditWrite("branch_created", user, branch, { module: "branches" }),
+    ]);
+    return { ok: true, branch };
+  }
+
+  if (action.startsWith("branch.")) {
+    const id = requiredText(payload.branchId, "Branch", 120);
+    const state = await getDocumentWithMetadata(env, `branches/${id}`);
+    if (!state) throw httpError("Branch was not found", 404);
+    const { __updateTime, ...branch } = state;
+    if (action === "branch.toggle-status") {
+      const next = { ...branch, status: branch.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម", updatedAt: now, updatedByUid: user.uid || "" };
+      await commitWrites(env, [{ path: `branches/${id}`, data: next, updateTime: __updateTime }, operationalAuditWrite("branch_status_changed", user, next, { module: "branches", status: next.status })]);
+      return { ok: true, branch: next };
+    }
+    if (action === "branch.update") {
+      const input = payload.branch || {};
+      const name = requiredText(input.name, "Branch name", 160);
+      await assertUniqueOrganizationName(env, "branches", name, id);
+      const uniqueNameChanged = String(branch.name || "").trim().toLowerCase() !== name.trim().toLowerCase();
+      const newNameReservation = uniqueNameChanged ? await organizationUniqueReservation(env, "branches:name", name) : null;
+      const oldNameReservation = uniqueNameChanged ? await organizationUniqueReservation(env, "branches:name", branch.name) : null;
+      if (newNameReservation) ensureOrganizationReservationAvailable(newNameReservation, id);
+      const latitude = String(input.latitude ?? "").trim() === "" ? "" : finiteNumber(input.latitude, "Latitude", { min: -90, max: 90 });
+      const longitude = String(input.longitude ?? "").trim() === "" ? "" : finiteNumber(input.longitude, "Longitude", { min: -180, max: 180 });
+      if ((latitude === "") !== (longitude === "")) throw httpError("Latitude and longitude must be provided together", 400);
+      const next = { ...branch, name, type: cleanText(input.type || branch.type || "សាខា", 80), address: cleanText(input.address, 500), manager: requiredText(input.manager, "Manager", 160), phone: cleanText(input.phone, 80), status: input.status === "អសកម្ម" ? "អសកម្ម" : "សកម្ម", latitude, longitude, gpsRadiusMeters: finiteNumber(input.gpsRadiusMeters || 100, "GPS radius", { min: 20, max: 5000 }), updatedAt: now, updatedByUid: user.uid || "" };
+      const writes = [{ path: `branches/${id}`, data: next, updateTime: __updateTime }];
+      if (branch.name !== name) {
+        const employees = (await listDocuments(env, "employees")).filter((employee) => employee.branchId === id || (!employee.branchId && employee.branch === branch.name));
+        for (const employee of employees) {
+          writes.push({ path: `employees/${employee.id}`, data: { branchId: id, branch: name, updatedAt: now }, mask: ["branchId", "branch", "updatedAt"], exists: true });
+          if (employee.uid) {
+            const profile = await getDocument(env, `profiles/${employee.uid}`);
+            const userRecord = await getDocument(env, `users/${employee.uid}`);
+            if (profile) writes.push({ path: `profiles/${employee.uid}`, data: { branchId: id, branch: name, updatedAt: now }, mask: ["branchId", "branch", "updatedAt"], exists: true });
+            if (userRecord) writes.push({ path: `users/${employee.uid}`, data: { branchId: id, branch: name, updatedAt: now }, mask: ["branchId", "branch", "updatedAt"], exists: true });
+          }
+        }
+      }
+      if (newNameReservation) {
+        writes.push(activateOrganizationReservation(newNameReservation, id, name, now));
+        const release = releaseOrganizationReservation(oldNameReservation, id, now);
+        if (release) writes.push(release);
+      }
+      writes.push(operationalAuditWrite("branch_updated", user, next, { module: "branches", previousName: branch.name }));
+      if (writes.length > 490) throw httpError("Too many linked employees for one atomic branch rename", 413);
+      await commitWrites(env, writes);
+      return { ok: true, branch: next };
+    }
+  }
+
+  if (action === "department.create") {
+    const input = payload.department || {};
+    const name = requiredText(input.name, "Department name", 160);
+    await assertUniqueOrganizationName(env, "departments", name);
+    const id = organizationId("DEPT");
+    const nameReservation = await organizationUniqueReservation(env, "departments:name", name);
+    ensureOrganizationReservationAvailable(nameReservation, id);
+    const department = { id, name, head: requiredText(input.head, "Department head", 160), description: cleanText(input.description, 1000), status: input.status === "អសកម្ម" ? "អសកម្ម" : "សកម្ម", createdAt: now, updatedAt: now };
+    await commitWrites(env, [
+      { path: `departments/${id}`, data: department, exists: false },
+      activateOrganizationReservation(nameReservation, id, name, now),
+      operationalAuditWrite("department_created", user, department, { module: "departments" }),
+    ]);
+    return { ok: true, department };
+  }
+
+  if (action.startsWith("department.")) {
+    const id = requiredText(payload.departmentId, "Department", 120);
+    const state = await getDocumentWithMetadata(env, `departments/${id}`);
+    if (!state) throw httpError("Department was not found", 404);
+    const { __updateTime, ...department } = state;
+    if (action === "department.toggle-status") {
+      const next = { ...department, status: department.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម", updatedAt: now };
+      await commitWrites(env, [{ path: `departments/${id}`, data: next, updateTime: __updateTime }, operationalAuditWrite("department_status_changed", user, next, { module: "departments", status: next.status })]);
+      return { ok: true, department: next };
+    }
+    if (action === "department.update") {
+      const input = payload.department || {};
+      const name = requiredText(input.name, "Department name", 160);
+      await assertUniqueOrganizationName(env, "departments", name, id);
+      const uniqueNameChanged = String(department.name || "").trim().toLowerCase() !== name.trim().toLowerCase();
+      const newNameReservation = uniqueNameChanged ? await organizationUniqueReservation(env, "departments:name", name) : null;
+      const oldNameReservation = uniqueNameChanged ? await organizationUniqueReservation(env, "departments:name", department.name) : null;
+      if (newNameReservation) ensureOrganizationReservationAvailable(newNameReservation, id);
+      const next = { ...department, name, head: requiredText(input.head, "Department head", 160), description: cleanText(input.description, 1000), status: input.status === "អសកម្ម" ? "អសកម្ម" : "សកម្ម", updatedAt: now };
+      const writes = [{ path: `departments/${id}`, data: next, updateTime: __updateTime }];
+      if (department.name !== name) {
+        const employees = (await listDocuments(env, "employees")).filter((employee) => employee.departmentId === id || (!employee.departmentId && employee.dept === department.name));
+        const roles = (await listDocuments(env, "jobRoles")).filter((role) => role.departmentId === id || (!role.departmentId && role.dept === department.name));
+        employees.forEach((employee) => writes.push({ path: `employees/${employee.id}`, data: { departmentId: id, dept: name, updatedAt: now }, mask: ["departmentId", "dept", "updatedAt"], exists: true }));
+        roles.forEach((role) => writes.push({ path: `jobRoles/${role.id}`, data: { departmentId: id, dept: name, updatedAt: now }, mask: ["departmentId", "dept", "updatedAt"], exists: true }));
+      }
+      if (newNameReservation) {
+        writes.push(activateOrganizationReservation(newNameReservation, id, name, now));
+        const release = releaseOrganizationReservation(oldNameReservation, id, now);
+        if (release) writes.push(release);
+      }
+      writes.push(operationalAuditWrite("department_updated", user, next, { module: "departments", previousName: department.name }));
+      if (writes.length > 490) throw httpError("Too many linked records for one atomic department rename", 413);
+      await commitWrites(env, writes);
+      return { ok: true, department: next };
+    }
+  }
+
+  if (action === "job-role.create") {
+    const input = payload.role || {};
+    const name = requiredText(input.name, "Job role name", 160);
+    await assertUniqueOrganizationName(env, "jobRoles", name);
+    const department = input.departmentId ? await getDocument(env, `departments/${input.departmentId}`) : (await listDocuments(env, "departments")).find((item) => item.name === input.dept);
+    if (!department) throw httpError("Department was not found", 404);
+    const id = organizationId("ROLE");
+    const nameReservation = await organizationUniqueReservation(env, "jobRoles:name", name);
+    ensureOrganizationReservationAvailable(nameReservation, id);
+    const role = { id, name, dept: department.name, departmentId: department.id, level: input.level === "គ្រប់គ្រង" ? "គ្រប់គ្រង" : "បុគ្គលិក", status: input.status === "អសកម្ម" ? "អសកម្ម" : "សកម្ម", createdAt: now, updatedAt: now };
+    await commitWrites(env, [
+      { path: `jobRoles/${id}`, data: role, exists: false },
+      activateOrganizationReservation(nameReservation, id, name, now),
+      operationalAuditWrite("job_role_created", user, role, { module: "jobRoles" }),
+    ]);
+    return { ok: true, role };
+  }
+
+  if (action.startsWith("job-role.")) {
+    const id = requiredText(payload.roleId, "Job role", 120);
+    const state = await getDocumentWithMetadata(env, `jobRoles/${id}`);
+    if (!state) throw httpError("Job role was not found", 404);
+    const { __updateTime, ...role } = state;
+    if (action === "job-role.toggle-status") {
+      const next = { ...role, status: role.status === "អសកម្ម" ? "សកម្ម" : "អសកម្ម", updatedAt: now };
+      await commitWrites(env, [{ path: `jobRoles/${id}`, data: next, updateTime: __updateTime }, operationalAuditWrite("job_role_status_changed", user, next, { module: "jobRoles", status: next.status })]);
+      return { ok: true, role: next };
+    }
+    if (action === "job-role.update") {
+      const input = payload.role || {};
+      const name = requiredText(input.name, "Job role name", 160);
+      await assertUniqueOrganizationName(env, "jobRoles", name, id);
+      const uniqueNameChanged = String(role.name || "").trim().toLowerCase() !== name.trim().toLowerCase();
+      const newNameReservation = uniqueNameChanged ? await organizationUniqueReservation(env, "jobRoles:name", name) : null;
+      const oldNameReservation = uniqueNameChanged ? await organizationUniqueReservation(env, "jobRoles:name", role.name) : null;
+      if (newNameReservation) ensureOrganizationReservationAvailable(newNameReservation, id);
+      const department = input.departmentId ? await getDocument(env, `departments/${input.departmentId}`) : (await listDocuments(env, "departments")).find((item) => item.name === input.dept);
+      if (!department) throw httpError("Department was not found", 404);
+      const next = { ...role, name, dept: department.name, departmentId: department.id, level: input.level === "គ្រប់គ្រង" ? "គ្រប់គ្រង" : "បុគ្គលិក", status: input.status === "អសកម្ម" ? "អសកម្ម" : "សកម្ម", updatedAt: now };
+      const writes = [{ path: `jobRoles/${id}`, data: next, updateTime: __updateTime }];
+      if (role.name !== name || role.departmentId !== department.id) {
+        const employees = (await listDocuments(env, "employees")).filter((employee) => employee.roleId === id || (!employee.roleId && employee.role === role.name));
+        employees.forEach((employee) => writes.push({ path: `employees/${employee.id}`, data: { roleId: id, role: name, departmentId: department.id, dept: department.name, updatedAt: now }, mask: ["roleId", "role", "departmentId", "dept", "updatedAt"], exists: true }));
+      }
+      if (newNameReservation) {
+        writes.push(activateOrganizationReservation(newNameReservation, id, name, now));
+        const release = releaseOrganizationReservation(oldNameReservation, id, now);
+        if (release) writes.push(release);
+      }
+      writes.push(operationalAuditWrite("job_role_updated", user, next, { module: "jobRoles", previousName: role.name }));
+      if (writes.length > 490) throw httpError("Too many linked employees for one atomic job-role rename", 413);
+      await commitWrites(env, writes);
+      return { ok: true, role: next };
+    }
+  }
+
+  if (action === "holiday.create") {
+    const input = payload.holiday || {};
+    const dateISO = strictIsoDate(input.dateISO || input.date, "Holiday date");
+    const existing = await listDocuments(env, "holidays");
+    if (existing.some((holiday) => holiday.dateISO === dateISO)) throw httpError("A holiday already exists on this date", 409);
+    const id = organizationId("HOL");
+    const dateReservation = await organizationUniqueReservation(env, "holidays:date", dateISO);
+    ensureOrganizationReservationAvailable(dateReservation, id);
+    const holiday = { id, dateISO, name: requiredText(input.name, "Holiday name", 200), createdAt: now, updatedAt: now };
+    await commitWrites(env, [
+      { path: `holidays/${id}`, data: holiday, exists: false },
+      activateOrganizationReservation(dateReservation, id, dateISO, now),
+      operationalAuditWrite("holiday_created", user, holiday, { module: "holidays" }),
+    ]);
+    return { ok: true, holiday };
+  }
+
+  if (action.startsWith("holiday.")) {
+    const id = requiredText(payload.holidayId, "Holiday", 120);
+    const state = await getDocumentWithMetadata(env, `holidays/${id}`);
+    if (!state) throw httpError("Holiday was not found", 404);
+    const { __updateTime, ...holiday } = state;
+    if (action === "holiday.delete") {
+      const dateReservation = await organizationUniqueReservation(env, "holidays:date", holiday.dateISO);
+      const writes = [{ delete: `holidays/${id}` }];
+      const release = releaseOrganizationReservation(dateReservation, id, now);
+      if (release) writes.push(release);
+      writes.push(operationalAuditWrite("holiday_deleted", user, holiday, { module: "holidays" }));
+      await commitWrites(env, writes);
+      return { ok: true };
+    }
+    if (action === "holiday.update") {
+      const input = payload.holiday || {};
+      const dateISO = strictIsoDate(input.dateISO || input.date, "Holiday date");
+      const existing = await listDocuments(env, "holidays");
+      if (existing.some((item) => item.id !== id && item.dateISO === dateISO)) throw httpError("A holiday already exists on this date", 409);
+      const dateChanged = holiday.dateISO !== dateISO;
+      const newDateReservation = dateChanged ? await organizationUniqueReservation(env, "holidays:date", dateISO) : null;
+      const oldDateReservation = dateChanged ? await organizationUniqueReservation(env, "holidays:date", holiday.dateISO) : null;
+      if (newDateReservation) ensureOrganizationReservationAvailable(newDateReservation, id);
+      const next = { ...holiday, dateISO, name: requiredText(input.name, "Holiday name", 200), updatedAt: now };
+      const writes = [{ path: `holidays/${id}`, data: next, updateTime: __updateTime }];
+      if (newDateReservation) {
+        writes.push(activateOrganizationReservation(newDateReservation, id, dateISO, now));
+        const release = releaseOrganizationReservation(oldDateReservation, id, now);
+        if (release) writes.push(release);
+      }
+      writes.push(operationalAuditWrite("holiday_updated", user, next, { module: "holidays" }));
+      await commitWrites(env, writes);
+      return { ok: true, holiday: next };
+    }
+  }
+
+  throw httpError("Unsupported organization action", 404);
+}
+
+function assertIndependentReviewer(user, actorUids, label = "record") {
+  const blocked = (Array.isArray(actorUids) ? actorUids : [actorUids]).filter(Boolean).map(String);
+  if (blocked.includes(String(user.uid || ""))) throw httpError(`The creator or submitter cannot approve or finalize the same ${label}`, 403);
+}
+
+async function enforcePersistentPublicRateLimit(request, env, scope, limit = 12, windowMs = 15 * 60 * 1000) {
+  const ip = String(request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
+  const key = await hashKey(`rate:${scope}:${ip}`);
+  const path = `rateLimitBuckets/${key}`;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const state = await getDocumentWithMetadata(env, path);
+    const now = Date.now();
+    const resetAtMs = state?.resetAt ? new Date(state.resetAt).getTime() : 0;
+    const active = Number.isFinite(resetAtMs) && resetAtMs > now;
+    const count = active ? Number(state.count || 0) : 0;
+    if (count >= limit) throw Object.assign(new Error("Too many requests"), { status: 429, code: "auth/too-many-requests" });
+    const next = { scope, count: count + 1, resetAt: new Date(active ? resetAtMs : now + windowMs).toISOString(), updatedAt: new Date(now).toISOString() };
+    try {
+      await commitWrites(env, [{ path, data: next, ...(state?.__updateTime ? { updateTime: state.__updateTime } : { exists: false }) }]);
+      return;
+    } catch (error) {
+      if (attempt === 3) throw httpError("Rate-limit service is temporarily unavailable", 503);
+    }
+  }
+}
+
 async function handleOperationsMutation(user, env, body) {
   const action = cleanText(body?.action, 80);
   const payload = body?.payload || {};
@@ -3207,23 +4286,6 @@ async function handleOperationsMutation(user, env, body) {
 }
 
 
-const publicRateLimits = new Map();
-function clientKey(request, scope) {
-  const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
-  return `${scope}:${ip}`;
-}
-function enforcePublicRateLimit(request, scope, limit = 12, windowMs = 15 * 60 * 1000) {
-  const key = clientKey(request, scope);
-  const now = Date.now();
-  const entry = publicRateLimits.get(key);
-  if (!entry || entry.resetAt <= now) {
-    publicRateLimits.set(key, { count: 1, resetAt: now + windowMs });
-    return;
-  }
-  entry.count += 1;
-  if (entry.count > limit) throw Object.assign(new Error("Too many requests"), { status: 429, code: "auth/too-many-requests" });
-}
-
 async function resolveAccountEmail(env, identifier) {
   const value = String(identifier || "").trim().toLowerCase();
   if (!value) return "";
@@ -3234,7 +4296,7 @@ async function resolveAccountEmail(env, identifier) {
 }
 
 async function handlePublicLogin(request, env, body) {
-  enforcePublicRateLimit(request, "login", 15);
+  await enforcePersistentPublicRateLimit(request, env, "login", 15);
   if (!env.FIREBASE_WEB_API_KEY) throw new Error("FIREBASE_WEB_API_KEY is missing");
   const email = await resolveAccountEmail(env, body?.identifier);
   const password = String(body?.password || "");
@@ -3258,7 +4320,7 @@ async function handlePublicLogin(request, env, body) {
 }
 
 async function handlePublicPasswordReset(request, env, body) {
-  enforcePublicRateLimit(request, "password-reset", 6, 60 * 60 * 1000);
+  await enforcePersistentPublicRateLimit(request, env, "password-reset", 6, 60 * 60 * 1000);
   const email = await resolveAccountEmail(env, body?.identifier);
   if (email && env.FIREBASE_WEB_API_KEY) {
     const directory = await getDocument(env, `passwordResetEmails/${email}`);
@@ -3272,41 +4334,6 @@ async function handlePublicPasswordReset(request, env, body) {
   // Always return the same response so callers cannot discover accounts.
   return { ok: true, accepted: true };
 }
-
-function safeDocumentId(value) {
-  const id = String(value || "").trim();
-  if (!id || id.length > 180 || id.includes("/") || id === "." || id === "..") throw Object.assign(new Error("Invalid document id"), { status: 400 });
-  return id;
-}
-
-async function handleSecureCollectionMutation(user, env, body) {
-  if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
-  const collectionName = String(body?.collectionName || "");
-  if (!["attendanceToday", "attendanceHistory", "corrections"].includes(collectionName)) throw Object.assign(new Error("Collection is not allowed"), { status: 403 });
-  const upserts = Array.isArray(body?.upserts) ? body.upserts : [];
-  const deletes = Array.isArray(body?.deletes) ? body.deletes : [];
-  if (upserts.length + deletes.length > 450) throw Object.assign(new Error("Too many records in one request"), { status: 413 });
-  if (collectionName !== "corrections" && deletes.length) throw Object.assign(new Error("Attendance records cannot be hard-deleted"), { status: 409 });
-  const now = new Date().toISOString();
-  const writes = [];
-  for (const row of upserts) {
-    const id = safeDocumentId(row?.id);
-    const data = row?.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : null;
-    if (!data) throw Object.assign(new Error("Invalid record data"), { status: 400 });
-    if (collectionName.startsWith("attendance") && !data.dateISO) throw Object.assign(new Error("Attendance date is required"), { status: 400 });
-    writes.push({ path: `${collectionName}/${id}`, data: { ...data, securityUpdatedAt: now, securityUpdatedByUid: user.uid, securityUpdatedByEmail: user.email } });
-  }
-  for (const rawId of deletes) writes.push({ delete: `${collectionName}/${safeDocumentId(rawId)}` });
-  if (writes.length) {
-    writes.push({ path: `auditLogs/${Date.now()}_${crypto.randomUUID()}`, data: {
-      type: "secure_collection_mutation", module: collectionName, actorUid: user.uid, actorEmail: user.email,
-      upsertCount: upserts.length, deleteCount: deletes.length, createdAt: now,
-    }, exists: false });
-    await commitWrites(env, writes);
-  }
-  return { ok: true, upserted: upserts.length, deleted: deletes.length };
-}
-
 
 async function handleRequest(request, env) {
   const origin = allowedOrigin(request, env);
@@ -3346,8 +4373,10 @@ async function handleRequest(request, env) {
     else if (url.pathname === "/api/admin/system/status" && request.method === "POST") result = await handleSystemStatus(user, env);
     else if (url.pathname === "/api/admin/system/backup" && request.method === "POST") result = await handleSystemBackup(user, env);
     else if (url.pathname === "/api/admin/system/test-email" && request.method === "POST") result = await handleSystemTestEmail(user, env);
+    else if (url.pathname === "/api/leave/mutate" && request.method === "POST") result = await handleLeaveMutation(user, env, await request.json());
+    else if (url.pathname === "/api/admin/attendance/mutate" && request.method === "POST") result = await handleAdminAttendanceMutation(user, env, await request.json());
+    else if (url.pathname === "/api/admin/organization/mutate" && request.method === "POST") result = await handleOrganizationMutation(user, env, await request.json());
     else if (url.pathname === "/api/admin/operations/mutate" && request.method === "POST") result = await handleOperationsMutation(user, env, await request.json());
-    else if (url.pathname === "/api/admin/secure-collection/mutate" && request.method === "POST") result = await handleSecureCollectionMutation(user, env, await request.json());
     else if (url.pathname === "/api/telegram/daily-summary" && request.method === "POST") {
       if (!manager(user)) throw Object.assign(new Error("Admin or HR role is required"), { status: 403 });
       result = await sendDailySummary(env, true);

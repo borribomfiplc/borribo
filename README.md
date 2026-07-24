@@ -1,12 +1,34 @@
-# MFI វត្តមានបុគ្គលិក — Attendance Dashboard
+# BORRIBO HRMS — Attendance & Human Resources
 
-> v59 adds secure Staff Loan, Asset, KPI and Payroll workflows with approvals,
-> audit history, attachments, depreciation and atomic loan deductions. Deploy
-> Firestore/Storage rules and the Telegram Worker before the frontend.
+> **v64** includes all v63 data-integrity hardening and adds reliability/UI fixes:
+> synchronized release labels, accurate auto-lock notices, safer settings loading,
+> broader dark-mode coverage, polished reports/notifications, editable asset
+> maintenance and visible async errors. See `RELEASE-v63.md` and `RELEASE-v64.md`.
 
 React + Vite + Tailwind CSS project for the MFI staff attendance dashboard,
 backed by **Firebase** (Firestore + Auth) and deployed on **Cloudflare
 Pages**.
+
+
+## Upgrade from v61 to v64
+
+Back up Firestore before upgrading. Keep `serviceAccountKey.json` local and never
+commit or deploy it. Run the data migrations before applying the new restrictive
+rules:
+
+```bash
+npm ci
+npm run migrate-attendance
+npm run migrate-organization-ids
+npm run deploy:telegram
+npm run deploy
+npx firebase-tools deploy --only firestore:rules
+```
+
+The Worker and v64 frontend must be deployed before the Firestore rules. Hard-refresh
+all browsers and reload/reinstall the PWA after deployment. Approval/finalization
+workflows require two distinct Admin/HR accounts because the creator/requester may
+not approve their own record.
 
 ## ដំណើរការ (Getting started)
 
@@ -41,7 +63,12 @@ cp .env.example .env
 ```
 Fill in `.env` with the config values from step 1 (`VITE_FIREBASE_*`).
 
-### 4. Seed initial data (run once for a new project)
+### 4. Seed initial data (development/test projects only)
+
+> Do not run `npm run seed` against a live production database. v64 never shows
+> demo records automatically; this optional script intentionally writes sample
+> records into the selected Firebase project.
+
 1. Firebase Console → **Project settings (gear icon) → Service accounts →
    Generate new private key** → save the downloaded file as
    `serviceAccountKey.json` in the project root (already gitignored).
